@@ -1,0 +1,8 @@
+SentencePiece
+datasets==2.8.0
+numpy>=1.17
+packaging>=20.0
+psutil
+pyyaml
+transformers==4.25.1
+accelerate
