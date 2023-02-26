@@ -256,27 +256,14 @@ class PEFTTrainer:
                 # gpt2 model
                 m_tokenizer.add_special_tokens({'pad_token': '[PAD]'})
                 m.resize_token_embeddings(len(m_tokenizer))
+            
             if self.arguments.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
-                print("Model parallel on", self.arguments.model_parallel_gpus, "GPU:")
-
+                if torch.cuda.device_count() != self.arguments.model_parallel_gpus:
+                    print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
                 if hasattr(m, "parallelize"):
                     m.parallelize()
                 else:
                     print(f"Model {m_name_or_path} cannot be parallelized")
-                # self.model.parallelize()
-                if self.arguments.embedding_on_cpu:
-                    for el in self.get_embedding_layers():
-                        el = el.to("cpu")
-            elif self.arguments.embedding_on_cpu:
-                raise NotImplementedError(
-                    "Haven'ts checked the code"
-                )
-                print("Moving embedding layer to CPU, others to GPU 0")
-                device_map = {0: list(range(self.config.num_layers))}
-                m.parallelize(device_map)
-                for el in self.get_embedding_layers():
-                    el = el.to("cpu")
-                self.model_parallel = True
             self.padding = "max_length" if self.arguments.pad_to_max_length else False
             
             print('gpt2 requires padding to max length')
@@ -585,7 +572,7 @@ class PEFTTrainer:
             labels = [[label.strip().lower()] for label in labels]
             return preds, labels
         result = metrics
-        
+
         if not is_pred_logits:
             # based on predicted tokens to compute metrics
             decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
@@ -631,6 +618,8 @@ class PEFTTrainer:
             result[f"true_ratio_{model_idx}"] = true_cnt / len(eval_dataset)
             result[f"false_ratio_{model_idx}"] = false_cnt / len(eval_dataset)
         else:
+            
+            
             model = self.trainer.model
             encoder = model.get_encoder()
         
@@ -642,14 +631,18 @@ class PEFTTrainer:
             
             correct = 0
             for idx, data in enumerate(dataloader):
+                import pdb; pdb.set_trace()
+                print('check eval metrics')   
                 model_verbalizer_logits = [None, None]
                 # batch_size = data["input_ids_0"].size(0)
                 # input_ids = data["input_ids_0"]
                 batch_size = data["input_ids"].size(0)
                 input_ids = data["input_ids"]
                 
-                attention_mask = data["attention_mask_0"]
-                labels = data["labels_0"]
+                # attention_mask = data["attention_mask_0"]
+                # labels = data["labels_0"]
+                attention_mask = data["attention_mask"]
+                labels = data["labels"]
                 class_ids = data["class_ids"]
 
                 for j in range(len(self.verbalizers)):

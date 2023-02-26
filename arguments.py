@@ -29,7 +29,6 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     mode: Optional[str] = field(default=None)
     optimizer: Optional[torch.optim.Optimizer] = field(default=None)
     torch_ort: Optional[bool] = field(default=False)
-    embedding_on_cpu: Optional[bool] = field(default=False)
     deepspeed: Optional[str] = field(default=None)
     dataset_cache: Optional[bool] = field(default=True)
     callbacks: Optional[list] = field(default_factory=list)

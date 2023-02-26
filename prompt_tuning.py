@@ -123,6 +123,7 @@ trainer_args = TrainerArguments(
     output_dir = "./",
     pad_to_max_length = True,
     predict_with_generate = False,
+    # predict_with_generate = True,
     model_parallel_gpus = 6
 )
 trainer = PEFTTrainer(trainer_args)
