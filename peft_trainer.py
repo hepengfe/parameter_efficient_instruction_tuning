@@ -643,8 +643,10 @@ class PEFTTrainer:
             correct = 0
             for idx, data in enumerate(dataloader):
                 model_verbalizer_logits = [None, None]
-                batch_size = data["input_ids_0"].size(0)
-                input_ids = data["input_ids_0"]
+                # batch_size = data["input_ids_0"].size(0)
+                # input_ids = data["input_ids_0"]
+                batch_size = data["input_ids"].size(0)
+                input_ids = data["input_ids"]
                 
                 attention_mask = data["attention_mask_0"]
                 labels = data["labels_0"]
