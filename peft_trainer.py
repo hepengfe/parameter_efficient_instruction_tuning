@@ -618,8 +618,6 @@ class PEFTTrainer:
             result[f"true_ratio_{model_idx}"] = true_cnt / len(eval_dataset)
             result[f"false_ratio_{model_idx}"] = false_cnt / len(eval_dataset)
         else:
-            
-            
             model = self.trainer.model
             encoder = model.get_encoder()
         
@@ -631,8 +629,6 @@ class PEFTTrainer:
             
             correct = 0
             for idx, data in enumerate(dataloader):
-                import pdb; pdb.set_trace()
-                print('check eval metrics')   
                 model_verbalizer_logits = [None, None]
                 # batch_size = data["input_ids_0"].size(0)
                 # input_ids = data["input_ids_0"]
