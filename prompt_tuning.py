@@ -1,12 +1,13 @@
 from transformers import AutoModelForSeq2SeqLM
-from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig
+# from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
 from transformers import Seq2SeqTrainingArguments
 from peft_trainer import PEFTTrainer
-
+import datetime
 from arguments import TrainerArguments
-
+import argparse
+import os
 model_name_or_path = "t5-large"
 tokenizer_name_or_path = "t5-large"
 
@@ -72,7 +73,7 @@ def get_soft_prompt_token_list(num_soft_prompt_tokens):
 #             return_tensors='pt', padding="max_length", 
 #             max_length=128,
 #             # padding=self.padding,
-#             truncation=True,
+#       =      truncation=True,
 #         )
 
 #     labels["input_ids"][labels["input_ids"]==0] = -100
@@ -107,29 +108,69 @@ def get_soft_prompt_token_list(num_soft_prompt_tokens):
 #                     desc="Running tokenizer on validation dataset",
 #                 )
 
-# dataset_names= ("super_glue","boolq")
-dataset_names = ("sst2", None)
+# dataset_names = ("sst2", None)
+if __name__ == "__main__":
+    arg_parser = argparse.ArgumentParser()
+    
+    # arg_parser.add_argument("--config", type=str, default="configs/gpt2.yaml")
+    arg_parser.add_argument("--dataset", type=str, default="wikitext")
+    arg_parser.add_argument("--models", type=str, default="google/t5-large-lm-adapt")
+    arg_parser.add_argument("--mode", type=str, default="prompt_tuning")
+    arg_parser.add_argument("--dev", action="store_true")
+    arg_parser.add_argument("--max_steps", type=int, default=30000)
+    arg_parser.add_argument("--eval_save_steps", type=int, default=2500)
+    arg_parser.add_argument("--per_device_train_batch_size", type=int, default=12)
+    arg_parser.add_argument("--per_device_eval_batch_size", type=int, default=6)
+    arg_parser.add_argument("--lr", type=float, default=0.3)
+    arg_parser.add_argument("--num_soft_tokens", type=int, default=5)
+    arg_parser.add_argument("--early_stop", action="store_true")
+    arg_parser.add_argument("--test_train", action="store_true")
+    arg_parser.add_argument("--paper_mode", action="store_true")
+    arg_parser.add_argument("--eval", action="store_true")
+    args = arg_parser.parse_args()
+    args.models = args.models.split(",")
+    args.models = [m.strip() for m in args.models]
+    # dataset_names= ("sst2", None)
+    dataset_names= ("super_glue","boolq")
+    cache_path = "~/tmp/cache"
+    EXPR_DIR = "~/tmp/"
+    time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_path = os.path.join(EXPR_DIR, time)
+    default_optimizer_n_scheduler = False
+    if args.dev:
+        default_optimizer_n_scheduler = True
+    
+    trainer_args = TrainerArguments(
+        model_names_or_paths = args.models,
+        dataset_name = dataset_names[0],
+        dataset_config_name = dataset_names[1],
+        evaluation_strategy="steps",
+        eval_steps =  args.eval_save_steps,
+        logging_strategy="steps",
+        logging_steps=10,
+        save_total_limit=1,
+        save_steps = args.eval_save_steps,
+        max_steps=args.max_steps,
+        per_device_train_batch_size = args.per_device_train_batch_size,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
+        output_dir = output_path,
+        pad_to_max_length = True,
+        predict_with_generate = False,
+        # predict_with_generate = True,
+        model_parallel_gpus = 6,
+        eval_accumulation_steps = 1,
+        gradient_accumulation_steps = 1,
+        cache_dir = cache_path,
+        mode = args.mode,
+        num_soft_tokens = args.num_soft_tokens,
+        dev = args.dev,
+        learning_rate = args.lr,
+        default_optimizer_n_scheduler = default_optimizer_n_scheduler
+    )
+    trainer = PEFTTrainer(trainer_args)
+    # train_dataset.set_format(type="torch")
+    # trainer.train_dataset = train_dataset
+    # eval_dataset.set_format(type="torch")
+    # trainer.eval_dataset = eval_dataset
 
-trainer_args = TrainerArguments(
-    model_names_or_paths = [model_name_or_path],
-    dataset_name = dataset_names[0],
-    dataset_config_name = dataset_names[1],
-    evaluation_strategy="steps",
-    eval_steps = 1,
-    logging_strategy="steps",
-    logging_steps=10,
-    per_device_train_batch_size = 1,
-    per_device_eval_batch_size=1,
-    output_dir = "./",
-    pad_to_max_length = True,
-    predict_with_generate = False,
-    # predict_with_generate = True,
-    model_parallel_gpus = 6
-)
-trainer = PEFTTrainer(trainer_args)
-# train_dataset.set_format(type="torch")
-# trainer.train_dataset = train_dataset
-# eval_dataset.set_format(type="torch")
-# trainer.eval_dataset = eval_dataset
-
-trainer.train()
+    trainer.train()

@@ -32,7 +32,7 @@ from transformers import get_linear_schedule_with_warmup, get_constant_schedule_
 from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_params, round_up
 import transformers
-
+from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig
 
 class PEFTTrainer:
     def __init__(self, arguments):
@@ -49,11 +49,19 @@ class PEFTTrainer:
         self.load_models()
         self.org_vocab_size = self.tokenizers[0].vocab_size
         assert len(self.models) == len(self.tokenizers) == len(self.configs)
+
+        self.new_vocab_sizes = [self.org_vocab_size]
+        # temp set
+        self.model = self.models[0]
+        
+        self.default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
+        
         if arguments.mode == "prompt_tuning":
             # self.convert_to_prompt_tuning(self.num_soft_tokens)
             peft_config = PromptTuningConfig(
-                task_type=TaskType.SEQ_2_SEQ_LM,num_virtual_tokens=self.num_soft_tokens, inference_mode=False
+                task_type=TaskType.SEQ_2_SEQ_LM,num_virtual_tokens=self.num_soft_tokens, inference_mode=False, device= self.arguments.device
             )
+            assert self.num_soft_tokens > 0, "num_soft_tokens should be greater than 0 in prompt tuning mode"
             self.convert_to_peft(peft_config)
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
@@ -62,13 +70,96 @@ class PEFTTrainer:
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
         else:
             self.num_soft_tokens = 0
-        self.new_vocab_sizes = [self.org_vocab_size]
-        # temp set
-        self.model = self.models[0]
+        
         self.tokenizer = self.tokenizers[0]
+        
+
+        # self.set_up_hf_trainer()
+        
+        
+        
+        # optimizer = Adafactor(
+        #     self.model.parameters(),
+        #     # filter(lambda p: p.requires_grad, self.model.parameters()),
+        #     lr= arguments.learning_rate,
+        #     eps=(1e-30, 1e-3),
+        #     clip_threshold=1.0,
+        #     decay_rate=-0.8,
+        #     beta1=None,
+        #     weight_decay=1e-5,
+        #     # fixed learning rate
+        #     scale_parameter=False,
+        #     relative_step=False,
+        #     warmup_init=False,
+        # )
+
+        
+        
+        # lr_scheduler = get_constant_schedule(optimizer)
+        
+        
+        # # load dataset when needed
+        # self.train_dataset = None
+        # self.eval_dataset = None # usually val dataset
+
+
+        # if "t5" in self.arguments.model_names_or_paths[0]:
+        #     # self.trainer = MultiModelTrainer(
+        #     #     models = self.models,
+        #     #     tokenizer = self.tokenizers[0],
+        #     #     train_dataset = None,
+        #     #     eval_dataset = None,
+        #     #     # train_dataset = self.train_dataset,
+        #     #     # eval_dataset = self.val_dataset,
+        #     #     args = arguments,
+        #     #     optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
+        #     #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
+        #     #     # data_collator=DataCollatorForSeq2Seq,
+        #     #     verbalizer_info={'verbalizers': self.verbalizers,
+        #     #                 'max_verbalizer_token_len': self.arguments.max_target_length
+        #     #                 },
+        #     # )
+            
+        #     self.trainer = Seq2SeqTrainer(
+        #         model = self.models[0],
+        #         tokenizer = self.tokenizers[0],
+        #         train_dataset = None,
+        #         eval_dataset = None,
+        #         # train_dataset = self.train_dataset,
+        #         # eval_dataset = self.val_dataset,
+        #         args = arguments,
+        #         optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
+        #         compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
+        #         data_collator=default_data_collator,
+        #         # verbalizer_info={'verbalizers': self.verbalizers,
+        #         #             'max_verbalizer_token_len': self.arguments.max_target_length
+        #         #             },
+        #     )
+            
+        # elif "bloom" in self.arguments.model_names_or_paths[0] or "opt" in self.arguments.model_names_or_paths[0]:
+        #     # diff data collate function for decoder-only model
+        #     self.trainer = Trainer(
+        #         model = self.models[0],
+        #         tokenizer = self.tokenizers[0],
+        #         train_dataset = None,
+        #         eval_dataset = None,
+        #         # train_dataset = self.train_dataset,
+        #         # eval_dataset = self.val_dataset,
+        #         args = arguments,
+        #         data_collator=default_data_collator,
+        #         optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
+        #         compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
+        #     )
+        # else:
+        #     raise NotImplementedError("model type not supported", self.arguments.model_names_or_paths[0])
+        # self.trainer.model = self.model
+        
+        
+    def set_up_hf_trainer(self):
         optimizer = Adafactor(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr= arguments.lr,
+            self.model.parameters(),
+            # filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr= self.arguments.learning_rate,
             eps=(1e-30, 1e-3),
             clip_threshold=1.0,
             decay_rate=-0.8,
@@ -80,63 +171,23 @@ class PEFTTrainer:
             warmup_init=False,
         )
         lr_scheduler = get_constant_schedule(optimizer)
-        default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
-
-        
-        # load dataset when needed
-        self.train_dataset = None
-        self.eval_dataset = None # usually val dataset
-
-
-        if "t5" in self.arguments.model_names_or_paths[0]:
-            # self.trainer = MultiModelTrainer(
-            #     models = self.models,
-            #     tokenizer = self.tokenizers[0],
-            #     train_dataset = None,
-            #     eval_dataset = None,
-            #     # train_dataset = self.train_dataset,
-            #     # eval_dataset = self.val_dataset,
-            #     args = arguments,
-            #     optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
-            #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
-            #     # data_collator=DataCollatorForSeq2Seq,
-            #     verbalizer_info={'verbalizers': self.verbalizers,
-            #                 'max_verbalizer_token_len': self.arguments.max_target_length
-            #                 },
-            # )
-            
-            self.trainer = Seq2SeqTrainer(
-                model = self.models[0],
+        self.trainer = Seq2SeqTrainer(
+                model = self.model,
                 tokenizer = self.tokenizers[0],
                 train_dataset = None,
                 eval_dataset = None,
                 # train_dataset = self.train_dataset,
                 # eval_dataset = self.val_dataset,
-                args = arguments,
-                optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
-                compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
+                args = self.arguments,
+                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
                 data_collator=default_data_collator,
                 # verbalizer_info={'verbalizers': self.verbalizers,
                 #             'max_verbalizer_token_len': self.arguments.max_target_length
                 #             },
-            )
-            
-        elif "bloom" in self.arguments.model_names_or_paths[0] or "opt" in self.arguments.model_names_or_paths[0]:
-            # diff data collate function for decoder-only model
-            self.trainer = Trainer(
-                model = self.models[0],
-                tokenizer = self.tokenizers[0],
-                train_dataset = None,
-                eval_dataset = None,
-                # train_dataset = self.train_dataset,
-                # eval_dataset = self.val_dataset,
-                args = arguments,
-                data_collator=default_data_collator,
-                optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
-                compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
-            )
-        else:
-            raise NotImplementedError("model type not supported", self.arguments.model_names_or_paths[0])
+        )
+        self.trainer.model = self.model
+        
     def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
         prompts = [""] * len(source_strs)
         prompts = [""]* len(source_strs)
@@ -272,6 +323,7 @@ class PEFTTrainer:
             self.models.append(m)
             self.configs.append(m_config)
             self.tokenizers.append(m_tokenizer)
+            
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
@@ -324,9 +376,7 @@ class PEFTTrainer:
                                     verbal_targets,
                                     self.arguments.include_labels_in_input,
         )
-        for input in formatted_inputs:
-            if self.arguments.mode == "prompt_tuning":
-                assert "softprompt" in input, "softprompt not found in input under prompt tuning mode"
+
                 
         def add_idx_to_inputs_keys(model_inputs, model_idx):
             # add model_idx to the keys of model_inputs
@@ -475,15 +525,18 @@ class PEFTTrainer:
     def convert_to_peft(self, peft_config):
         
         
-        soft_prompt_list = get_soft_prompt_token_list(num_soft_tokens)
+        soft_prompt_list = get_soft_prompt_token_list(self.num_soft_tokens)
 
         # convert text to token ids
         verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
         
         # add tokens in models and tokenizers + freeze model
-        for idx, (m, t) in enumerate(zip(self.models, self.tokenizers)):
-            m = get_peft_model(model, peft_config)
-            m.print_trainable_parameters()
+        # for idx, (m, t) in enumerate(zip(self.models, self.tokenizers)):
+        self.model.enable_input_require_grads()
+        self.model = get_peft_model(self.model, peft_config)
+        self.model.print_trainable_parameters()
+        print("reset trainer after loading peft module")
+        self.set_up_hf_trainer()
 
     
     
@@ -614,6 +667,8 @@ class PEFTTrainer:
                 else:
                     print("missed pred: ", pred, " label: ", label)
                     missed_pred.append(pred)
+
+            
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
             result[f"true_ratio_{model_idx}"] = true_cnt / len(eval_dataset)
             result[f"false_ratio_{model_idx}"] = false_cnt / len(eval_dataset)
@@ -646,11 +701,10 @@ class PEFTTrainer:
                     v_ids = v_ids[:1] # ONLY USE THE FIRST TOKEN
                     v_logits =  torch.zeros(batch_size)
                     decoder_input_ids = torch.zeros(input_ids.size(0),1).long().cuda()
-                    out = model(
-                        attention_mask=attention_mask.cuda(),
-                        decoder_input_ids = decoder_input_ids,
-                        encoder_outputs = encoder(input_ids.cuda())
-                    )
+                    # get out with encoder outputs
+                    # decoder input ids are just pad tokens as <bos>
+                    # out = model(input_ids = input_ids.cuda(), attention_mask=attention_mask.cuda(), decoder_input_ids=decoder_input_ids)
+                    out = model(input_ids = input_ids.cuda(), attention_mask=attention_mask.cuda(), labels=labels.cuda())
                     logits = out.logits.cpu()
                     
                     for seq_step, vid in enumerate(v_ids):
@@ -662,11 +716,10 @@ class PEFTTrainer:
                 # compute probability using softmax
                 model_verbalizer_logits = torch.stack(model_verbalizer_logits, dim=1)
                 probs = torch.softmax(model_verbalizer_logits, dim=-1)
-                # print(f"probs {model_idx}: ", probs)
+                print(f"probs {model_idx}: ", probs)
 
                 predict_label = torch.argmax(probs, dim=1)
                 correct += (predict_label == class_ids).sum()
-            
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
 
         return result

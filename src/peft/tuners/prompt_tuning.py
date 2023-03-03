@@ -57,6 +57,10 @@ class PromptTuningConfig(PromptLearningConfig):
             "help": "The tokenizer to use for prompt tuning initialization. Only used if prompt_tuning_init is `TEXT`"
         },
     )
+    
+    device: Optional[torch.device] = field(
+        default="cpu",
+    )
 
     def __post_init__(self):
         self.peft_type = PeftType.PROMPT_TUNING
@@ -92,8 +96,8 @@ class PromptEmbedding(torch.nn.Module):
 
     def __init__(self, config, word_embeddings):
         super().__init__()
-
         total_virtual_tokens = config.num_virtual_tokens * config.num_transformer_submodules
+
         self.embedding = torch.nn.Embedding(total_virtual_tokens, config.token_dim)
         if config.prompt_tuning_init == PromptTuningInit.TEXT:
             from transformers import AutoTokenizer
@@ -113,8 +117,12 @@ class PromptEmbedding(torch.nn.Module):
             word_embedding_weights = word_embeddings(torch.LongTensor(init_token_ids)).detach().clone()
             word_embedding_weights = word_embedding_weights.to(torch.float32)
             self.embedding.weight = torch.nn.Parameter(word_embedding_weights)
+        self.embedding.to(config.device)
 
     def forward(self, indices):
+        # import pdb; pdb.set_trace()
+        # print('expect to use forward even in training mode')
+        
         # Just get embeddings
         prompt_embeddings = self.embedding(indices)
         return prompt_embeddings

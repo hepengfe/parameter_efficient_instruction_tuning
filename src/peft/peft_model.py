@@ -667,7 +667,14 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 **kwargs,
             )
 
-        batch_size = input_ids.shape[0]
+        if input_ids is not None:
+            batch_size = input_ids.shape[0]
+        elif decoder_input_ids is not None:
+            batch_size = decoder_input_ids.shape[0]
+        elif labels is not None:
+            batch_size = labels.shape[0]
+        else:
+            raise ValueError("Either input_ids or decoder_input_ids or labels should be provided")
         if decoder_attention_mask is not None:
             # concat prompt attention mask
             prefix_attention_mask = torch.ones(batch_size, self.peft_config.num_virtual_tokens).to(self.device)
@@ -697,7 +704,13 @@ class PeftModelForSeq2SeqLM(PeftModel):
             )
         else:
             if inputs_embeds is None:
-                inputs_embeds = self.word_embeddings(input_ids)
+                if input_ids is not None:
+                    inputs_embeds = self.word_embeddings(input_ids)
+                else:
+                    # no inputs and no inputs_embeds
+                    return self.base_model(inputs_embeds=inputs_embeds, 
+                                           decoder_input_ids=decoder_input_ids, 
+                                           decoder_inputs_embeds=decoder_inputs_embeds, **kwargs)
             if decoder_inputs_embeds is None and decoder_input_ids is None:
                 decoder_input_ids = shift_tokens_right(
                     labels, self.config.pad_token_id, self.config.decoder_start_token_id

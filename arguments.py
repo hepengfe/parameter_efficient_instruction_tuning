@@ -40,5 +40,3 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     dev: Optional[bool] = field(default=False)
     default_optimizer_n_scheduler: Optional[bool] = field(default=True)
     include_labels_in_input: Optional[bool] = field(default=False)
-    lr: Optional[float] = field(default=0.3)
-    eval_accumulation_steps: Optional[int] = field(default=1)
