@@ -130,8 +130,8 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
     args.models = args.models.split(",")
     args.models = [m.strip() for m in args.models]
-    # dataset_names= ("sst2", None)
-    dataset_names= ("super_glue","boolq")
+    dataset_names= ("sst2", None)
+    # dataset_names= ("super_glue","boolq")
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -165,7 +165,8 @@ if __name__ == "__main__":
         num_soft_tokens = args.num_soft_tokens,
         dev = args.dev,
         learning_rate = args.lr,
-        default_optimizer_n_scheduler = default_optimizer_n_scheduler
+        default_optimizer_n_scheduler = default_optimizer_n_scheduler,
+        report_to = "wandb",
     )
     trainer = PEFTTrainer(trainer_args)
     # train_dataset.set_format(type="torch")

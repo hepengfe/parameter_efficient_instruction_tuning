@@ -32,7 +32,7 @@ from transformers import get_linear_schedule_with_warmup, get_constant_schedule_
 from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_params, round_up
 import transformers
-from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig
+from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig,PrefixTuningConfig
 
 class PEFTTrainer:
     def __init__(self, arguments):
@@ -63,6 +63,15 @@ class PEFTTrainer:
             )
             assert self.num_soft_tokens > 0, "num_soft_tokens should be greater than 0 in prompt tuning mode"
             self.convert_to_peft(peft_config)
+        elif arguments.mode == "prefix_tuning":
+            peft_config = PrefixTuningConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, num_virtual_tokens=20)
+            self.convert_to_peft(peft_config)
+        
+        elif arguments.mode == "lora":
+            peft_config = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
+            self.convert_to_peft(peft_config)
+        
+        
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
