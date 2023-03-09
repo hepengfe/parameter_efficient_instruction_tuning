@@ -40,6 +40,7 @@ class PrefixTuningConfig(PromptLearningConfig):
         metadata={"help": "Whether to project the prefix tokens"},
     )
 
+
     def __post_init__(self):
         self.peft_type = PeftType.PREFIX_TUNING
 
@@ -89,13 +90,25 @@ class PrefixEncoder(torch.nn.Module):
                 torch.nn.Tanh(),
                 torch.nn.Linear(encoder_hidden_size, num_layers * 2 * token_dim),
             )
+
         else:
             self.embedding = torch.nn.Embedding(num_virtual_tokens, num_layers * 2 * token_dim)
+            
 
     def forward(self, prefix: torch.Tensor):
+        device = 1
+        self.embedding = self.embedding.to(device)
+        prefix = prefix.to(device)
+        
+        
+        prefix = prefix.to(device)
+        if self.prefix_projection:
+            self.transform.to(device)
+        
         if self.prefix_projection:
             prefix_tokens = self.embedding(prefix)
             past_key_values = self.transform(prefix_tokens)
         else:
             past_key_values = self.embedding(prefix)
+     
         return past_key_values

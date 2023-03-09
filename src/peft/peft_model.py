@@ -708,8 +708,20 @@ class PeftModelForSeq2SeqLM(PeftModel):
 
         if self.peft_config.peft_type == PeftType.PREFIX_TUNING:
             past_key_values = self.get_prompt(batch_size)
+            # move past_key_values to device based on base model's device map
+            # import pdb; pdb.set_trace()
+            # print('get device map of model')
+            
+            new_past_key_values = []
+            if len(self.base_model.device_map) > 0:
+                for device_k, module_v in self.base_model.device_map.items():
+                    for module in module_v:
+                        new_past_key_values.append(past_key_values[module].to(device_k))
+            new_past_key_values = tuple(new_past_key_values)
+
+            
             return self.base_model(
-                input_ids=input_ids, decoder_input_ids=decoder_input_ids, past_key_values=past_key_values, **kwargs
+                input_ids=input_ids, decoder_input_ids=decoder_input_ids, past_key_values=new_past_key_values, **kwargs
             )
         else:
             if inputs_embeds is None:

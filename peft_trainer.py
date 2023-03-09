@@ -684,9 +684,7 @@ class PEFTTrainer:
         else:
             model = self.trainer.model
             encoder = model.get_encoder()
-        
-            
-            
+
             dataloader = DataLoader(eval_dataset,
                                     # collate_fn=collate_fn,
                                     batch_size=4)
