@@ -1,4 +1,4 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer
+from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification
 
 from arguments import TrainerArguments
 from datasets import load_dataset, load_metric, concatenate_datasets
@@ -79,7 +79,7 @@ class PEFTTrainer:
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
         else:
             self.num_soft_tokens = 0
-        
+            self.set_up_hf_trainer()
         self.tokenizer = self.tokenizers[0]
         
 
@@ -179,21 +179,24 @@ class PEFTTrainer:
             relative_step=False,
             warmup_init=False,
         )
+
         lr_scheduler = get_constant_schedule(optimizer)
+
+        
         self.trainer = Seq2SeqTrainer(
-                model = self.model,
-                tokenizer = self.tokenizers[0],
-                train_dataset = None,
-                eval_dataset = None,
-                # train_dataset = self.train_dataset,
-                # eval_dataset = self.val_dataset,
-                args = self.arguments,
-                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
-                data_collator=default_data_collator,
-                # verbalizer_info={'verbalizers': self.verbalizers,
-                #             'max_verbalizer_token_len': self.arguments.max_target_length
-                #             },
+            model = self.model,
+            tokenizer = self.tokenizers[0],
+            train_dataset = None,
+            eval_dataset = None,
+            # train_dataset = self.train_dataset,
+            # eval_dataset = self.val_dataset,
+            args = self.arguments,
+            optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+            compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+            data_collator=default_data_collator,
+            # verbalizer_info={'verbalizers': self.verbalizers,
+            #             'max_verbalizer_token_len': self.arguments.max_target_length
+            #             },
         )
         self.trainer.model = self.model
         
@@ -276,6 +279,7 @@ class PEFTTrainer:
         print(
             "Ensure this directory is persistent if you do not want to download model files again!"
         )
+        
         for m_name_or_path in self.model_names_or_paths:
             from transformers import AutoModelForSeq2SeqLM
             m_config = AutoConfig.from_pretrained(
@@ -301,6 +305,8 @@ class PEFTTrainer:
                 #     # config=m_config,
                 #     cache_dir=self.arguments.cache_dir,
                 # )
+            elif "roberta" in m_name_or_path:
+                m = AutoModelForSequenceClassification.from_pretrained(m_name_or_path)
             elif "gpt2" in m_name_or_path or "bloom" in m_name_or_path or "opt" in m_name_or_path:
                 from transformers import AutoModelForCausalLM
                 m = AutoModelForCausalLM.from_pretrained(
@@ -309,6 +315,8 @@ class PEFTTrainer:
                     # config=m_config,
                     cache_dir=self.arguments.cache_dir,
                 )
+            else:
+                raise NotImplementedError("Model not supported: " + m_name_or_path)
 
 
             if m_tokenizer.pad_token is None:
@@ -336,25 +344,31 @@ class PEFTTrainer:
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
-        prefix_prompt = "".join(get_soft_prompt_token_list(self.num_soft_tokens))
+        # disable prefix prompt
+        # prefix_prompt = "".join(get_soft_prompt_token_list(self.num_soft_tokens))
+        prefix_prompt = ""
         if self.num_soft_tokens ==0:
             assert prefix_prompt == ""
-        
+        if self.arguments.model_arch == "encoder":
+            add_prompt_for_gen = False
+        else:
+            add_prompt_for_gen = True
         if self.arguments.dataset_name == "sst2":
-            inputs =["Sentence: " + sent + "Sentiment:" for sent, label_id in zip(examples["sentence"], examples["label"]) if label_id in class_ids]
+            prompt_for_gen = "Sentiment:"
+            inputs =["Sentence: " + sent for sent, label_id in zip(examples["sentence"], examples["label"]) if label_id in class_ids]
             
             # verbalize the sentiment id to tokens
             # it's not used for t5 evaluation though (label id is used instead)
             verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
         elif self.arguments.dataset_name == "yelp_review_full":
-
-            inputs =["Sentence: " + sent + "give the review score from 1-5 stars:" for sent, label_id in zip(examples["text"], examples["label"]) if label_id in class_ids]
+            prompt_for_gen = "give the review score from 1-5 stars:"
+            inputs =["Sentence: " + sent for sent, label_id in zip(examples["text"], examples["label"]) if label_id in class_ids]
             verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
             
         elif self.arguments.dataset_name == "super_glue":
-
+            prompt_for_gen = "Answer:"
             if self.arguments.dataset_config_name in['axb', 'axg'] :
                 raise NotImplementedError("axb and axg are not implemented yet")
                 inputs = ["Premise: " + premise + " Hypothesis: " + hypothesis + "Given the premise, is the hypothesis correct? Answer: " for premise, hypothesis in zip(examples["premise"], examples["hypothesis"])]
@@ -362,22 +376,25 @@ class PEFTTrainer:
                     for l in examples["label"] if l in class_ids]
             elif self.arguments.dataset_config_name in ["boolq", "multirc"]:
                 if self.arguments.dataset_config_name == "boolq":
-                    inputs = ["Passage: " + passage +" Question: " + question + "? Answer: " for question, passage, label_id in zip(examples["question"], examples["passage"], examples["label"]) if label_id in class_ids]
+                    inputs = ["Question: " + question + "Passage: " + passage for question, passage, label_id in zip(examples["question"], examples["passage"], examples["label"]) if label_id in class_ids]
                 elif self.arguments.dataset_config_name == "multirc":
-                    inputs = ["Question: " + question + "Paragraph: " + paragraph + "? Answer: " for question, paragraph, label_id in zip(examples["question"], examples["paragraph"], examples["label"]) if label_id in class_ids]
+                    inputs = ["Question: " + question + "Paragraph: " + paragraph  for question, paragraph, label_id in zip(examples["question"], examples["paragraph"], examples["label"]) if label_id in class_ids]
                     # inputs = ["" for question, paragraph in zip(examples["question"], examples["paragraph"])]
                 # inputs = ["Passage: " + passage + " Question: " + question for question, passage in zip(examples["question"], examples["passage"])]
                 verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
             elif self.arguments.dataset_config_name in ["wic"]:
+                prompt_for_gen = "" # NOTE: wic has a special format
                 inputs = ["Sentence1: " + sentence1 + " Sentence2: " + sentence2 + f" Question: does the word '{word}' have the same meaning in the two sentences? Answer: " for sentence1, sentence2, word, label_id in zip(examples["sentence1"], examples["sentence2"], examples["word"], examples["label"])  if label_id in class_ids]
                 verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["label"], examples["label"])  if label_id in class_ids]
         elif self.arguments.dataset_name in ["trec"]:
-            inputs = ["Question: " + t + f" What's the type of the question? " for t, label_id in zip(examples["text"],examples["coarse_label"]) if label_id in class_ids]
+            prompt_for_gen = " What's the type of the question? "
+            inputs = ["Question: " + t for t, label_id in zip(examples["text"],examples["coarse_label"]) if label_id in class_ids]
             verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["coarse_label"], examples["coarse_label"])  if label_id in class_ids]
         else:
             raise NotImplementedError("Dataset not supported: " + self.arguments.dataset_name)
-
+        if add_prompt_for_gen:
+                inputs = [inp + " " + prompt_for_gen for inp in inputs]
         formatted_inputs, verbal_targets =\
                 self._format_prompts(prefix_prompt,
                                     inputs,
@@ -385,8 +402,9 @@ class PEFTTrainer:
                                     verbal_targets,
                                     self.arguments.include_labels_in_input,
         )
+        print("Sample input: ", formatted_inputs[0])
 
-                
+                        
         def add_idx_to_inputs_keys(model_inputs, model_idx):
             # add model_idx to the keys of model_inputs
             # to avoid key conflict when merging model_inputs into one dict
@@ -423,7 +441,13 @@ class PEFTTrainer:
                 #     for l in label]
                 #     for label in labels["input_ids"]
                 # ]
-            model_inputs["labels"] = labels["input_ids"]
+            
+            # if encoder only model
+            if self.arguments.model_arch == "encoder":
+                # for SequenceClassificationModel
+                model_inputs["labels"] = [l for l in examples["label"] if l in class_ids]
+            else:
+                model_inputs["labels"] = labels["input_ids"]
         
             # if evaluation:
             #     model_inputs["class_ids"] = torch.tensor(class_ids)
@@ -453,12 +477,8 @@ class PEFTTrainer:
         
         """
         raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
-        # raw_datasets =  load_dataset("sst2")
-        # raw_datasets = load_dataset("super_glue", "boolq")
         column_names = raw_datasets["train"].column_names
-        # import pdb; pdb.set_trace()
-        # print('colu names', column_names)
-        
+
         if train:
             self.train_dataset = raw_datasets["train"].map(
                 self.preprocess,
@@ -533,9 +553,6 @@ class PEFTTrainer:
 
     def convert_to_peft(self, peft_config):
         
-        
-        soft_prompt_list = get_soft_prompt_token_list(self.num_soft_tokens)
-
         # convert text to token ids
         verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
         
@@ -547,51 +564,13 @@ class PEFTTrainer:
         print("reset trainer after loading peft module")
         self.set_up_hf_trainer()
 
-    
-    
-    # def convert_to_prompt_tuning(self, num_soft_tokens, freeze_model = True):
-    #     soft_prompt_list = get_soft_prompt_token_list(num_soft_tokens)
-    #     # import pdb; pdb.set_trace()
-    #     # print('check special_tokens_dict')
 
-    #     # convert text to token ids
-    #     verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
-        
-    #     # add tokens in models and tokenizers + freeze model
-    #     for idx, (m, t) in enumerate(zip(self.models, self.tokenizers)):
-    #         m.convert_to_prompt_tuning(num_soft_tokens, self.org_vocab_size, verbalizer_ids, idx, self.tokenizers[idx])
-    #         special_tokens_dict = {
-    #                 "additional_special_tokens": soft_prompt_list}
-    #         t.add_special_tokens(special_tokens_dict)
-    #         # freeze all non-embedding parameters
-    #         if freeze_model:
-    #             m.freeze_model()
-
-    # def convert_to_embedding_tuning(self):
-    #     # freeze model only
-    #     for m in self.models:
-    #         m.freeze_model()
 
 
     def train(self):
         
         self.load_dataset(train = True, valid = True)
         self.trainer.train()
-        # soft_embedding_weight_before = self.model.shared.soft_embedding.weight.detach().cpu().numpy()
-        # # model weight sample
-        # model_weight_sample_before = self.model.get_encoder().block[0].layer[0].SelfAttention.q.weight[:2, :10].detach().cpu().numpy()
-        # # self.trainer.train()
-        # soft_embedding_weight_after = self.model.shared.soft_embedding.weight.detach().cpu().numpy()
-        # model_weight_sample_after = self.model.get_encoder().block[0].layer[0].SelfAttention.q.weight[:2, :10].detach().cpu().numpy()
-        
-        # print("Soft embedding weight should have changed: ")
-        # print("Before: ", soft_embedding_weight_before[:, :10])
-        # print("After: ", soft_embedding_weight_after[:, :10])
-        
-        # print("Model weight should not have changed: ")
-        # print("Before: ", model_weight_sample_before)
-        # print("After: ", model_weight_sample_after)
-
     
     def evaluate(self, eval_dataset=None):
         if eval_dataset is None:
@@ -683,6 +662,15 @@ class PEFTTrainer:
             result[f"false_ratio_{model_idx}"] = false_cnt / len(eval_dataset)
         else:
             model = self.trainer.model
+            
+            if self.arguments.model_arch == "encoder":
+                import evaluate
+                accuracy = evaluate.load("accuracy")
+                print("preds: ", preds)
+                preds = np.argmax(preds, axis=1)
+                
+                return accuracy.compute(predictions=preds, references=labels)
+            
             encoder = model.get_encoder()
 
             dataloader = DataLoader(eval_dataset,

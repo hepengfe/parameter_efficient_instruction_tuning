@@ -115,6 +115,7 @@ if __name__ == "__main__":
     # arg_parser.add_argument("--config", type=str, default="configs/gpt2.yaml")
     arg_parser.add_argument("--dataset", type=str, default="wikitext")
     arg_parser.add_argument("--models", type=str, default="google/t5-large-lm-adapt")
+    arg_parser.add_argument("--model_arch", type=str, default="encoder-decoder")
     arg_parser.add_argument("--mode", type=str, default="prompt_tuning")
     arg_parser.add_argument("--dev", action="store_true")
     arg_parser.add_argument("--max_steps", type=int, default=30000)
@@ -137,11 +138,12 @@ if __name__ == "__main__":
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = os.path.join(EXPR_DIR, time)
     default_optimizer_n_scheduler = False
-    if args.dev:
-        default_optimizer_n_scheduler = True
+    # if args.dev:
+    #     default_optimizer_n_scheduler = True
     
     trainer_args = TrainerArguments(
         model_names_or_paths = args.models,
+        model_arch = args.model_arch,
         dataset_name = dataset_names[0],
         dataset_config_name = dataset_names[1],
         evaluation_strategy="steps",

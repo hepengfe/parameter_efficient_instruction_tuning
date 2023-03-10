@@ -40,3 +40,4 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     dev: Optional[bool] = field(default=False)
     default_optimizer_n_scheduler: Optional[bool] = field(default=True)
     include_labels_in_input: Optional[bool] = field(default=False)
+    model_arch: Optional[str] = field(default="encoder_decoder")

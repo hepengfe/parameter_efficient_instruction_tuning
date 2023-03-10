@@ -6,3 +6,5 @@ psutil
 pyyaml
 transformers==4.25.1
 accelerate
+evaluate
+scikit-learn

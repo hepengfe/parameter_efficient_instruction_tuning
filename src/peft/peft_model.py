@@ -662,6 +662,20 @@ class PeftModelForSeq2SeqLM(PeftModel):
         **kwargs,
     ):
         if not isinstance(self.peft_config, PromptLearningConfig):
+            
+            # check model to see if it encoder only model
+            if self.base_model.config.decoder_start_token_id is None:
+                return self.base_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    inputs_embeds=inputs_embeds,
+                    output_attentions=output_attentions,
+                    output_hidden_states=output_hidden_states,
+                    labels=labels,
+                    return_dict=return_dict,
+                    **kwargs,
+                )
+            
             return self.base_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -713,12 +727,17 @@ class PeftModelForSeq2SeqLM(PeftModel):
             # print('get device map of model')
             
             new_past_key_values = []
-            if len(self.base_model.device_map) > 0:
+            # check if base model has device map attribute
+            if hasattr(self.base_model, 'device_map') and len(self.base_model.device_map) > 0:
                 for device_k, module_v in self.base_model.device_map.items():
                     for module in module_v:
                         new_past_key_values.append(past_key_values[module].to(device_k))
-            new_past_key_values = tuple(new_past_key_values)
+                new_past_key_values = tuple(new_past_key_values)
+            else:
+                new_past_key_values = past_key_values
 
+            import pdb; pdb.set_trace()
+            print('check base model forward for encoder only model')
             
             return self.base_model(
                 input_ids=input_ids, decoder_input_ids=decoder_input_ids, past_key_values=new_past_key_values, **kwargs
@@ -732,11 +751,18 @@ class PeftModelForSeq2SeqLM(PeftModel):
                     return self.base_model(inputs_embeds=inputs_embeds, 
                                            decoder_input_ids=decoder_input_ids, 
                                            decoder_inputs_embeds=decoder_inputs_embeds, **kwargs)
-            if decoder_inputs_embeds is None and decoder_input_ids is None:
-                decoder_input_ids = shift_tokens_right(
-                    labels, self.config.pad_token_id, self.config.decoder_start_token_id
-                )
-                decoder_inputs_embeds = self.word_embeddings(decoder_input_ids)
+            if self.config.decoder_start_token_id is None:
+                # assume it's encoder only model
+                # import pdb; pdb.set_trace()
+                # print('check encoder only model')
+                kwargs.pop("decoder_attention_mask", None)
+                return self.base_model(inputs_embeds=inputs_embeds,  **kwargs)
+            else:
+                if decoder_inputs_embeds is None and decoder_input_ids is None:
+                    decoder_input_ids = shift_tokens_right(
+                        labels, self.config.pad_token_id, self.config.decoder_start_token_id
+                    )
+                    decoder_inputs_embeds = self.word_embeddings(decoder_input_ids)
 
             if attention_mask is not None:
                 # concat prompt attention mask
