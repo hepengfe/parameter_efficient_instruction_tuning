@@ -736,9 +736,12 @@ class PeftModelForSeq2SeqLM(PeftModel):
             else:
                 new_past_key_values = past_key_values
 
-            import pdb; pdb.set_trace()
-            print('check base model forward for encoder only model')
-            
+
+            if self.config.decoder_start_token_id is None:
+                # assume it's encoder only model
+                # roberta doesn't require past key values, and decoder_attention_mask
+                kwargs.pop("decoder_attention_mask", None)
+                return self.base_model(input_ids=input_ids,  **kwargs)
             return self.base_model(
                 input_ids=input_ids, decoder_input_ids=decoder_input_ids, past_key_values=new_past_key_values, **kwargs
             )
