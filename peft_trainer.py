@@ -1,4 +1,4 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification
+from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification, Seq2SeqAdapterTrainer
 
 from arguments import TrainerArguments
 from datasets import load_dataset, load_metric, concatenate_datasets
@@ -56,6 +56,12 @@ class PEFTTrainer:
         
         self.default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
         
+        """
+        Model is loaded, now we need to set up the trainer
+        1. prepare peft model
+        2. set up trainer
+        """
+        
         if arguments.mode == "prompt_tuning":
             # self.convert_to_prompt_tuning(self.num_soft_tokens)
             peft_config = PromptTuningConfig(
@@ -71,7 +77,8 @@ class PEFTTrainer:
             peft_config = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
             self.convert_to_peft(peft_config)
         
-        
+        elif arguments.mode == "adapter":
+            self.convert_to_peft()
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
@@ -182,22 +189,42 @@ class PEFTTrainer:
 
         lr_scheduler = get_constant_schedule(optimizer)
 
+        if self.arguments.mode == "adapter":
+            self.trainer = Seq2SeqAdapterTrainer(
+                model = self.model,
+                tokenizer = self.tokenizers[0],
+                train_dataset = None,
+                eval_dataset = None,
+                # train_dataset = self.train_dataset,
+                # eval_dataset = self.val_dataset,
+                args = self.arguments,
+                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+                data_collator=default_data_collator,
+                # verbalizer_info={'verbalizers': self.verbalizers,
+                #             'max_verbalizer_token_len': self.arguments.max_target_length
+                #             },
+            )
+        else:
+            self.trainer = Seq2SeqTrainer(
+                model = self.model,
+                tokenizer = self.tokenizers[0],
+                train_dataset = None,
+                eval_dataset = None,
+                # train_dataset = self.train_dataset,
+                # eval_dataset = self.val_dataset,
+                args = self.arguments,
+                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+                data_collator=default_data_collator,
+                # verbalizer_info={'verbalizers': self.verbalizers,
+                #             'max_verbalizer_token_len': self.arguments.max_target_length
+                #             },
+            )
         
-        self.trainer = Seq2SeqTrainer(
-            model = self.model,
-            tokenizer = self.tokenizers[0],
-            train_dataset = None,
-            eval_dataset = None,
-            # train_dataset = self.train_dataset,
-            # eval_dataset = self.val_dataset,
-            args = self.arguments,
-            optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-            compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
-            data_collator=default_data_collator,
-            # verbalizer_info={'verbalizers': self.verbalizers,
-            #             'max_verbalizer_token_len': self.arguments.max_target_length
-            #             },
-        )
+        
+        
+        
         self.trainer.model = self.model
         
     def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
@@ -281,7 +308,7 @@ class PEFTTrainer:
         )
         
         for m_name_or_path in self.model_names_or_paths:
-            from transformers import AutoModelForSeq2SeqLM
+            from transformers import AutoModelForSeq2SeqLM, AutoAdapterModel
             m_config = AutoConfig.from_pretrained(
                 m_name_or_path,
                 cache_dir=self.arguments.cache_dir,
@@ -318,6 +345,9 @@ class PEFTTrainer:
             else:
                 raise NotImplementedError("Model not supported: " + m_name_or_path)
 
+            # NOTE: temp implementation
+            if self.arguments.mode == "adapter":
+                m = AutoAdapterModel.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
 
             if m_tokenizer.pad_token is None:
                 assert m_name_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
@@ -551,17 +581,32 @@ class PEFTTrainer:
             self.eval_dataset.set_format(type="torch")
             self.trainer.eval_dataset = self.eval_dataset
 
-    def convert_to_peft(self, peft_config):
+    def convert_to_peft(self, peft_config=None):
+        """
+        1. prepare peft model
+        2. set up trainer
+
+        Args:
+            peft_config (_type_): _description_
+        """
         
-        # convert text to token ids
-        verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
-        
-        # add tokens in models and tokenizers + freeze model
-        # for idx, (m, t) in enumerate(zip(self.models, self.tokenizers)):
-        self.model.enable_input_require_grads()
-        self.model = get_peft_model(self.model, peft_config)
-        self.model.print_trainable_parameters()
-        print("reset trainer after loading peft module")
+        if self.arguments.mode == "adapter":
+            self.model.add_adapter("sst-2")
+            self.model.train_adapter("sst-2")
+            self.model.add_classification_head("sst-2", num_labels=2)
+            self.model.set_active_adapters("sst-2")
+
+        else:
+            assert peft_config is not None, "peft config should be provided for non-adapter peft method"
+            # convert text to token ids
+            verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
+            
+            # add tokens in models and tokenizers + freeze model
+            # for idx, (m, t) in enumerate(zip(self.models, self.tokenizers)):
+            self.model.enable_input_require_grads()
+            self.model = get_peft_model(self.model, peft_config)
+            self.model.print_trainable_parameters()
+            print("reset trainer after loading peft module")
         self.set_up_hf_trainer()
 
 
