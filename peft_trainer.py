@@ -70,8 +70,13 @@ class PEFTTrainer:
             assert self.num_soft_tokens > 0, "num_soft_tokens should be greater than 0 in prompt tuning mode"
             self.convert_to_peft(peft_config)
         elif arguments.mode == "prefix_tuning":
-            peft_config = PrefixTuningConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, num_virtual_tokens=20)
-            self.convert_to_peft(peft_config)
+            # peft version
+            # peft_config = PrefixTuningConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, num_virtual_tokens=20)
+            # self.convert_to_peft(peft_config)
+            
+            
+            # adapter-prefix-tuning version
+            self.convert_to_peft()
         
         elif arguments.mode == "lora":
             peft_config = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
@@ -79,6 +84,9 @@ class PEFTTrainer:
         
         elif arguments.mode == "adapter":
             self.convert_to_peft()
+        elif arguments.mode == "bitfit":
+            self.convert_to_peft()
+            
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
@@ -581,6 +589,26 @@ class PEFTTrainer:
             self.eval_dataset.set_format(type="torch")
             self.trainer.eval_dataset = self.eval_dataset
 
+
+    def _deactivate_relevant_gradients(self, trainable_components):
+        """
+        https://github.com/benzakenelad/BitFit/blob/7ead19a8350a01d5701f9e2df896a1c5b42c3723/glue_evaluator.py#L612
+        """
+        
+        
+        
+        for param in self.model.parameters():
+            param.requires_grad = False
+        if trainable_components:
+            trainable_components = trainable_components + ['pooler.dense.bias']
+        trainable_components = trainable_components + ['classifier']
+        for name, param in self.model.named_parameters():
+            for component in trainable_components:
+                if component in name:
+                    param.requires_grad = True
+                    break
+
+
     def convert_to_peft(self, peft_config=None):
         """
         1. prepare peft model
@@ -591,11 +619,30 @@ class PEFTTrainer:
         """
         
         if self.arguments.mode == "adapter":
+            # add and activate adapter
             self.model.add_adapter("sst-2")
             self.model.train_adapter("sst-2")
             self.model.add_classification_head("sst-2", num_labels=2)
             self.model.set_active_adapters("sst-2")
-
+        elif self.arguments.mode == "bitfit":
+            # deactivate gradients except for bias terms
+            BIAS_TERMS_DICT = {
+                'intermediate': 'intermediate.dense.bias',
+                'key': 'attention.self.key.bias',
+                'query': 'attention.self.query.bias',
+                'value': 'attention.self.value.bias',
+                'output': 'output.dense.bias',
+                'output_layernorm': 'output.LayerNorm.bias',
+                'attention_layernorm': 'attention.output.LayerNorm.bias',
+                'all': 'bias',
+            }
+            def convert_to_actual_components(components):
+                return [BIAS_TERMS_DICT[component] for component in components]
+            assert "roberta" in self.arguments.model_names_or_paths[0], "bitfit only supports roberta model (other model might have different dictionary for bias?) "
+            trainable_components = convert_to_actual_components(self.arguments.trainable_components)
+            self._deactivate_relevant_gradients(trainable_components)
+        elif self.arguments.mode == "prefix_tuning":
+            raise NotImplementedError("prefix tuning is not implemented yet"")        
         else:
             assert peft_config is not None, "peft config should be provided for non-adapter peft method"
             # convert text to token ids
