@@ -354,7 +354,7 @@ class PEFTTrainer:
                 raise NotImplementedError("Model not supported: " + m_name_or_path)
 
             # NOTE: temp implementation
-            if self.arguments.mode == "adapter":
+            if self.arguments.mode == "adapter" or self.arguments.mode == "prefix_tuning":
                 m = AutoAdapterModel.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
 
             if m_tokenizer.pad_token is None:
@@ -483,10 +483,12 @@ class PEFTTrainer:
             # if encoder only model
             if self.arguments.model_arch == "encoder":
                 # for SequenceClassificationModel
+                # model_inputs["label"] = [l for l in examples["label"] if l in class_ids]
                 model_inputs["labels"] = [l for l in examples["label"] if l in class_ids]
             else:
+                # model_inputs["label"] = labels["input_ids"]
                 model_inputs["labels"] = labels["input_ids"]
-        
+            
             # if evaluation:
             #     model_inputs["class_ids"] = torch.tensor(class_ids)
             multi_model_inputs[model_idx] = model_inputs
@@ -517,6 +519,7 @@ class PEFTTrainer:
         raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
         column_names = raw_datasets["train"].column_names
 
+        
         if train:
             self.train_dataset = raw_datasets["train"].map(
                 self.preprocess,
@@ -540,9 +543,10 @@ class PEFTTrainer:
             print("train dataset input sample", sample_input, "\n", self.tokenizers[0].decode(sample_input))
             print("train dataset label sample", sample_label,"\n", self.tokenizers[0].decode(sample_label))
             self.train_dataset.set_format(type="torch")
-            
+
             self.trainer.train_dataset = self.train_dataset
 
+            
         if valid:
             if self.arguments.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
                 valid_split_name = "test"
@@ -594,9 +598,6 @@ class PEFTTrainer:
         """
         https://github.com/benzakenelad/BitFit/blob/7ead19a8350a01d5701f9e2df896a1c5b42c3723/glue_evaluator.py#L612
         """
-        
-        
-        
         for param in self.model.parameters():
             param.requires_grad = False
         if trainable_components:
@@ -624,6 +625,16 @@ class PEFTTrainer:
             self.model.train_adapter("sst-2")
             self.model.add_classification_head("sst-2", num_labels=2)
             self.model.set_active_adapters("sst-2")
+        elif self.arguments.mode == "prefix_tuning":
+            # peft prefix tuning version has issue in encoder only model
+            
+            # adapter prefix-tuning version
+            from transformers.adapters import PrefixTuningConfig
+            config = PrefixTuningConfig(flat=True, prefix_length=30)
+            self.model.add_adapter("sst-2", config=config)
+            self.model.train_adapter("sst-2")
+            self.model.add_classification_head("sst-2", num_labels=2)
+            self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "bitfit":
             # deactivate gradients except for bias terms
             BIAS_TERMS_DICT = {
@@ -641,8 +652,8 @@ class PEFTTrainer:
             assert "roberta" in self.arguments.model_names_or_paths[0], "bitfit only supports roberta model (other model might have different dictionary for bias?) "
             trainable_components = convert_to_actual_components(self.arguments.trainable_components)
             self._deactivate_relevant_gradients(trainable_components)
-        elif self.arguments.mode == "prefix_tuning":
-            raise NotImplementedError("prefix tuning is not implemented yet"")        
+
+        
         else:
             assert peft_config is not None, "peft config should be provided for non-adapter peft method"
             # convert text to token ids
@@ -705,7 +716,7 @@ class PEFTTrainer:
             labels = [[label.strip().lower()] for label in labels]
             return preds, labels
         result = metrics
-
+        
         if not is_pred_logits:
             # based on predicted tokens to compute metrics
             decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
@@ -780,6 +791,7 @@ class PEFTTrainer:
                 # attention_mask = data["attention_mask_0"]
                 # labels = data["labels_0"]
                 attention_mask = data["attention_mask"]
+                # labels = data["label"]
                 labels = data["labels"]
                 class_ids = data["class_ids"]
 

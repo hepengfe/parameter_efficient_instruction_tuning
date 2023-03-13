@@ -169,6 +169,8 @@ if __name__ == "__main__":
         learning_rate = args.lr,
         default_optimizer_n_scheduler = default_optimizer_n_scheduler,
         report_to = "wandb",
+        # label_names = ["label", "labels"],
+        label_names = ["labels"],
     )
     trainer = PEFTTrainer(trainer_args)
     # train_dataset.set_format(type="torch")
