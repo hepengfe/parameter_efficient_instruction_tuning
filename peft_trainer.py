@@ -224,6 +224,7 @@ class PEFTTrainer:
         lr_scheduler = get_constant_schedule(optimizer)
 
         if self.arguments.mode == "adapter":
+            print('adapter trainer is used')
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizers[0],
@@ -358,7 +359,7 @@ class PEFTTrainer:
             # m = T5ForConditionalGeneration.from_pretrained(
             #     m_name_or_path,
             # )
-            if "t5" in m_name_or_path:
+            if "t5" in m_name_or_path or "bart" in m_name_or_path:
                 m = AutoModelForSeq2SeqLM.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
                 # m = T5PT.from_pretrained(
                 #     m_name_or_path,
@@ -649,7 +650,14 @@ class PEFTTrainer:
             # add and activate adapter
             self.model.add_adapter("sst-2")
             self.model.train_adapter("sst-2")
-            self.model.add_classification_head("sst-2", num_labels=2)
+            if self.arguments.model_arch == "encoder":
+                self.model.add_classification_head("classification-head-sst-2", num_labels=2)
+            elif self.arguments.model_arch == "encoder-decoder":
+                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2")
+            else:
+                raise NotImplementedError(
+                    f"Not implemented for model arch: {self.arguments.model_arch}"
+                )
             self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "prefix_tuning":
             # peft prefix tuning version has issue in encoder only model
@@ -659,7 +667,14 @@ class PEFTTrainer:
             config = PrefixTuningConfig(flat=True, prefix_length=30)
             self.model.add_adapter("sst-2", config=config)
             self.model.train_adapter("sst-2")
-            self.model.add_classification_head("sst-2", num_labels=2)
+            if self.arguments.model_arch == "encoder":
+                self.model.add_classification_head("sst-2", num_labels=2)
+            elif self.arguments.model_arch == "encoder-decoder":
+                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2")
+            else:
+                raise NotImplementedError(
+                    f"Not implemented for model arch: {self.arguments.model_arch}"
+                )
             self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "bitfit":
             # deactivate gradients except for bias terms
@@ -679,8 +694,8 @@ class PEFTTrainer:
             trainable_components = convert_to_actual_components(self.arguments.trainable_components)
             self._deactivate_relevant_gradients(trainable_components)
 
-        
         else:
+            # general peft converting based on different peft config
             assert peft_config is not None, "peft config should be provided for non-adapter peft method"
             # convert text to token ids
             verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
