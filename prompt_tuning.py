@@ -123,7 +123,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--per_device_train_batch_size", type=int, default=12)
     arg_parser.add_argument("--per_device_eval_batch_size", type=int, default=6)
     arg_parser.add_argument("--lr", type=float, default=0.3)
-    arg_parser.add_argument("--num_soft_tokens", type=int, default=5)
+    arg_parser.add_argument("--num_soft_tokens", type=int, default=10)
     arg_parser.add_argument("--early_stop", action="store_true")
     arg_parser.add_argument("--test_train", action="store_true")
     arg_parser.add_argument("--paper_mode", action="store_true")

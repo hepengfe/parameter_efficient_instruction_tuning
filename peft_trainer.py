@@ -61,12 +61,38 @@ class PEFTTrainer:
         1. prepare peft model
         2. set up trainer
         """
-        
+        task_type = TaskType.SEQ_2_SEQ_LM
+        init_from_text = False
+        if self.arguments.dataset_name == "sst2" and self.arguments.model_arch == "encoder":
+            task_type = TaskType.SEQ_CLS
+            
+            prompt_tuning_init = None # NOTE: it decides whether prompt init is used
+            prompt_tuning_init_text = None
+            init_text_tokenizer_name_or_path = None
+            
+            prompt_tuning_init = "TEXT"
+            prompt_tuning_init_text="Predict sentiment review positive, negative"
+            init_text_tokenizer_name_or_path = self.model_names_or_paths[0]
+            print("task type is seq_cls")
+
+
         if arguments.mode == "prompt_tuning":
             # self.convert_to_prompt_tuning(self.num_soft_tokens)
-            peft_config = PromptTuningConfig(
-                task_type=TaskType.SEQ_2_SEQ_LM,num_virtual_tokens=self.num_soft_tokens, inference_mode=False, device= self.arguments.device
-            )
+            if init_from_text:
+                peft_config = PromptTuningConfig(
+                    task_type=task_type,
+                    num_virtual_tokens=self.num_soft_tokens, inference_mode=False, device= self.arguments.device,
+                    prompt_tuning_init="TEXT",
+                    prompt_tuning_init_text=prompt_tuning_init_text,
+                    tokenizer_name_or_path=init_text_tokenizer_name_or_path,
+                )
+            else:
+                peft_config = PromptTuningConfig(
+                    task_type=task_type,
+                    num_virtual_tokens=self.num_soft_tokens, 
+                    inference_mode=False,
+                    device= self.arguments.device,
+                )
             assert self.num_soft_tokens > 0, "num_soft_tokens should be greater than 0 in prompt tuning mode"
             self.convert_to_peft(peft_config)
         elif arguments.mode == "prefix_tuning":
@@ -79,7 +105,7 @@ class PEFTTrainer:
             self.convert_to_peft()
         
         elif arguments.mode == "lora":
-            peft_config = LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
+            peft_config = LoraConfig(task_type=task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
             self.convert_to_peft(peft_config)
         
         elif arguments.mode == "adapter":
@@ -815,10 +841,10 @@ class PEFTTrainer:
                 # compute probability using softmax
                 model_verbalizer_logits = torch.stack(model_verbalizer_logits, dim=1)
                 probs = torch.softmax(model_verbalizer_logits, dim=-1)
-                print(f"probs {model_idx}: ", probs)
-
+                
                 predict_label = torch.argmax(probs, dim=1)
                 correct += (predict_label == class_ids).sum()
+            print(f"probs {model_idx}: ", probs) # just print the last probs
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
 
         return result
