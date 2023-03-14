@@ -690,8 +690,9 @@ class PEFTTrainer:
             }
             def convert_to_actual_components(components):
                 return [BIAS_TERMS_DICT[component] for component in components]
-            assert "roberta" in self.arguments.model_names_or_paths[0], "bitfit only supports roberta model (other model might have different dictionary for bias?) "
-            trainable_components = convert_to_actual_components(self.arguments.trainable_components)
+            # assert "roberta" in self.arguments.model_names_or_paths[0], "bitfit only supports roberta model (other model might have different dictionary for bias?) "
+            components = ["intermediate", "key", "query", "value", "output", "output_layernorm", "attention_layernorm", "all"]
+            trainable_components = convert_to_actual_components(components)
             self._deactivate_relevant_gradients(trainable_components)
 
         else:
