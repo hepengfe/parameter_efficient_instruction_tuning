@@ -1,4 +1,4 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification, Seq2SeqAdapterTrainer
+from transformers import T5Tokenizer, T5ForConditionalGeneration,T5Model, T5Config, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification, Seq2SeqAdapterTrainer
 
 from arguments import TrainerArguments
 from datasets import load_dataset, load_metric, concatenate_datasets
@@ -89,7 +89,7 @@ class PEFTTrainer:
             else:
                 peft_config = PromptTuningConfig(
                     task_type=task_type,
-                    num_virtual_tokens=self.num_soft_tokens, 
+                    num_virtual_tokens=self.num_soft_tokens,
                     inference_mode=False,
                     device= self.arguments.device,
                 )
@@ -118,9 +118,11 @@ class PEFTTrainer:
             if self.num_soft_tokens > 0:
                 self.num_soft_tokens = 0
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
-        else:
+        elif arguments.mode == "fine_tuning":
             self.num_soft_tokens = 0
             self.set_up_hf_trainer()
+        else:
+            raise NotImplementedError(f"mode {arguments.mode} is not implemented")
         self.tokenizer = self.tokenizers[0]
         
 
@@ -360,6 +362,19 @@ class PEFTTrainer:
             #     m_name_or_path,
             # )
             if "t5" in m_name_or_path or "bart" in m_name_or_path:
+                
+                # import vanilla T5 model
+                
+                # m_config = T5Config.from_pretrained(m_name_or_path)
+                # import pdb; pdb.set_trace()
+                # print('check config')
+                
+                # m =T5Model.from_pretrained("t5-small")
+                # torch.zeros(linear_layer.out_features)
+                
+                
+                
+                # m.encoder.block[0].layer[0].SelfAttention.q.weight.bias
                 m = AutoModelForSeq2SeqLM.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
                 # m = T5PT.from_pretrained(
                 #     m_name_or_path,
@@ -630,11 +645,25 @@ class PEFTTrainer:
         if trainable_components:
             trainable_components = trainable_components + ['pooler.dense.bias']
         trainable_components = trainable_components + ['classifier']
+        # it iterates exsiting parameters only
+        # bias init must be done before this
         for name, param in self.model.named_parameters():
             for component in trainable_components:
-                if component in name:
+                # print(f"check component {name}")
+                # if component in name:
+                #     print(f"activate {name}")
+                #     param.requires_grad = True
+                #     break
+                
+                # brute force bias activation
+                if "bias" in name:
+                    print(f"activate {name}")
                     param.requires_grad = True
                     break
+
+        # import pdb; pdb.set_trace()
+        # print('break point for bias activiation')
+        
 
 
     def convert_to_peft(self, peft_config=None):
@@ -677,23 +706,65 @@ class PEFTTrainer:
                 )
             self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "bitfit":
-            # deactivate gradients except for bias terms
-            BIAS_TERMS_DICT = {
-                'intermediate': 'intermediate.dense.bias',
-                'key': 'attention.self.key.bias',
-                'query': 'attention.self.query.bias',
-                'value': 'attention.self.value.bias',
-                'output': 'output.dense.bias',
-                'output_layernorm': 'output.LayerNorm.bias',
-                'attention_layernorm': 'attention.output.LayerNorm.bias',
-                'all': 'bias',
-            }
+            
+            if self.arguments.model_arch == "encoder":
+                # deactivate gradients except for bias terms
+                BIAS_TERMS_DICT = {
+                    'intermediate': 'intermediate.dense.bias',
+                    'key': 'attention.self.key.bias',
+                    'query': 'attention.self.query.bias',
+                    'value': 'attention.self.value.bias',
+                    'output': 'output.dense.bias',
+                    'output_layernorm': 'output.LayerNorm.bias',
+                    'attention_layernorm': 'attention.output.LayerNorm.bias',
+                    'all': 'bias',
+                }
+            elif self.arguments.model_arch == "encoder-decoder":
+                # import pdb; pdb.set_trace()
+                # print('check model compoennts')
+                
+                
+                
+                
+                # raise ValueError("bitfit not supported for encoder-decoder model")
+                BIAS_TERMS_DICT = {
+                    'intermediate': 'intermediate.dense.bias',
+                    'key': 'attention.self.key.bias',
+                    'query': 'attention.self.query.bias',
+                    'value': 'attention.self.value.bias',
+                    'output': 'output.dense.bias',
+                    'output_layernorm': 'output.LayerNorm.bias',
+                    'attention_layernorm': 'attention.output.LayerNorm.bias',
+                    'all': 'bias',
+                }
+            # import pdb; pdb.set_trace()
+            # print('check model compoennts')
+            
+            
             def convert_to_actual_components(components):
                 return [BIAS_TERMS_DICT[component] for component in components]
             # assert "roberta" in self.arguments.model_names_or_paths[0], "bitfit only supports roberta model (other model might have different dictionary for bias?) "
+            
+            
+            
+            is_bias_init = False
+            for name, module in self.model.named_modules():
+                if hasattr(module, "bias"):
+                    if module.bias is None:
+                        print("found none bias, init bias for ", name)
+                        module.bias = torch.nn.Parameter(torch.randn(module.out_features))
+                        is_bias_init = True
+                    if not module.bias.requires_grad:
+                        module.bias.requires_grad = True
+                        
+            assert is_bias_init == True, "bias should be initialized"
+            
             components = ["intermediate", "key", "query", "value", "output", "output_layernorm", "attention_layernorm", "all"]
             trainable_components = convert_to_actual_components(components)
             self._deactivate_relevant_gradients(trainable_components)
+            
+            
+                
 
         else:
             # general peft converting based on different peft config

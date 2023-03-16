@@ -1,5 +1,4 @@
 from transformers import AutoModelForSeq2SeqLM
-# from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
 from transformers import Seq2SeqTrainingArguments
@@ -9,14 +8,6 @@ from arguments import TrainerArguments
 import argparse
 import os
 import torch
-model_name_or_path = "t5-large"
-tokenizer_name_or_path = "t5-large"
-
-def get_soft_prompt_token_list(num_soft_prompt_tokens):
-    """
-    Get soft prompt tokens from vocab.
-    """
-    return [f"<|softprompt{i}|>" for i in range(num_soft_prompt_tokens)]
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
