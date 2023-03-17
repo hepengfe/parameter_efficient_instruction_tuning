@@ -232,15 +232,10 @@ class PEFTTrainer:
                 tokenizer = self.tokenizers[0],
                 train_dataset = None,
                 eval_dataset = None,
-                # train_dataset = self.train_dataset,
-                # eval_dataset = self.val_dataset,
                 args = self.arguments,
                 optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
                 data_collator=default_data_collator,
-                # verbalizer_info={'verbalizers': self.verbalizers,
-                #             'max_verbalizer_token_len': self.arguments.max_target_length
-                #             },
             )
         else:
             self.trainer = Seq2SeqTrainer(
@@ -248,15 +243,10 @@ class PEFTTrainer:
                 tokenizer = self.tokenizers[0],
                 train_dataset = None,
                 eval_dataset = None,
-                # train_dataset = self.train_dataset,
-                # eval_dataset = self.val_dataset,
                 args = self.arguments,
                 optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
                 data_collator=default_data_collator,
-                # verbalizer_info={'verbalizers': self.verbalizers,
-                #             'max_verbalizer_token_len': self.arguments.max_target_length
-                #             },
             )
         
         
@@ -558,7 +548,22 @@ class PEFTTrainer:
         5. 
         
         """
-        raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
+        if self.arguments.dataset_name == "ni":
+            # Get the NaturalInstructions dataset
+            raw_datasets = load_dataset(
+                "src/ni_dataset.py", 
+                data_dir=data_args.data_dir, 
+                task_dir=data_args.task_dir, 
+                cache_dir=model_args.cache_dir,
+                max_num_instances_per_task=data_args.max_num_instances_per_task,
+                max_num_instances_per_eval_task=data_args.max_num_instances_per_eval_task
+            )
+        else:
+            raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
+        
+        
+        
+        
         column_names = raw_datasets["train"].column_names
 
         
@@ -870,9 +875,7 @@ class PEFTTrainer:
                     false_cnt += 1
                 else:
                     print("missed pred: ", pred, " label: ", label)
-                    missed_pred.append(pred)
-
-            
+                    missed_pred.append(pred)            
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
             result[f"true_ratio_{model_idx}"] = true_cnt / len(eval_dataset)
             result[f"false_ratio_{model_idx}"] = false_cnt / len(eval_dataset)
@@ -932,6 +935,7 @@ class PEFTTrainer:
                 predict_label = torch.argmax(probs, dim=1)
                 correct += (predict_label == class_ids).sum()
             print(f"probs {model_idx}: ", probs) # just print the last probs
+            
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
 
         return result
