@@ -75,6 +75,8 @@ if __name__ == "__main__":
         report_to = "wandb",
         # label_names = ["label", "labels"],
         label_names = ["labels"],
+        load_best_model_at_end=True,
+        save_strategy = "steps"
     )
     trainer = PEFTTrainer(trainer_args)
     trainer.train()
