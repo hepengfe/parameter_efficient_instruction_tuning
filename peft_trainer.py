@@ -33,6 +33,9 @@ from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_params, round_up
 import transformers
 from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig,PrefixTuningConfig
+from util.ni_dataset_collator import DataCollatorForNI
+
+
 
 class PEFTTrainer:
     def __init__(self, arguments):
@@ -55,7 +58,6 @@ class PEFTTrainer:
         self.model = self.models[0]
         
         self.default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
-        
         """
         Model is loaded, now we need to set up the trainer
         1. prepare peft model
@@ -126,87 +128,6 @@ class PEFTTrainer:
         self.tokenizer = self.tokenizers[0]
         
 
-        # self.set_up_hf_trainer()
-        
-        
-        
-        # optimizer = Adafactor(
-        #     self.model.parameters(),
-        #     # filter(lambda p: p.requires_grad, self.model.parameters()),
-        #     lr= arguments.learning_rate,
-        #     eps=(1e-30, 1e-3),
-        #     clip_threshold=1.0,
-        #     decay_rate=-0.8,
-        #     beta1=None,
-        #     weight_decay=1e-5,
-        #     # fixed learning rate
-        #     scale_parameter=False,
-        #     relative_step=False,
-        #     warmup_init=False,
-        # )
-
-        
-        
-        # lr_scheduler = get_constant_schedule(optimizer)
-        
-        
-        # # load dataset when needed
-        # self.train_dataset = None
-        # self.eval_dataset = None # usually val dataset
-
-
-        # if "t5" in self.arguments.model_names_or_paths[0]:
-        #     # self.trainer = MultiModelTrainer(
-        #     #     models = self.models,
-        #     #     tokenizer = self.tokenizers[0],
-        #     #     train_dataset = None,
-        #     #     eval_dataset = None,
-        #     #     # train_dataset = self.train_dataset,
-        #     #     # eval_dataset = self.val_dataset,
-        #     #     args = arguments,
-        #     #     optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
-        #     #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
-        #     #     # data_collator=DataCollatorForSeq2Seq,
-        #     #     verbalizer_info={'verbalizers': self.verbalizers,
-        #     #                 'max_verbalizer_token_len': self.arguments.max_target_length
-        #     #                 },
-        #     # )
-            
-        #     self.trainer = Seq2SeqTrainer(
-        #         model = self.models[0],
-        #         tokenizer = self.tokenizers[0],
-        #         train_dataset = None,
-        #         eval_dataset = None,
-        #         # train_dataset = self.train_dataset,
-        #         # eval_dataset = self.val_dataset,
-        #         args = arguments,
-        #         optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
-        #         compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
-        #         data_collator=default_data_collator,
-        #         # verbalizer_info={'verbalizers': self.verbalizers,
-        #         #             'max_verbalizer_token_len': self.arguments.max_target_length
-        #         #             },
-        #     )
-            
-        # elif "bloom" in self.arguments.model_names_or_paths[0] or "opt" in self.arguments.model_names_or_paths[0]:
-        #     # diff data collate function for decoder-only model
-        #     self.trainer = Trainer(
-        #         model = self.models[0],
-        #         tokenizer = self.tokenizers[0],
-        #         train_dataset = None,
-        #         eval_dataset = None,
-        #         # train_dataset = self.train_dataset,
-        #         # eval_dataset = self.val_dataset,
-        #         args = arguments,
-        #         data_collator=default_data_collator,
-        #         optimizers=[optimizer, lr_scheduler] if not default_optimizer_n_scheduler else [None, None],
-        #         compute_metrics=partial(self.compute_metrics, is_pred_logits = not arguments.predict_with_generate),
-        #     )
-        # else:
-        #     raise NotImplementedError("model type not supported", self.arguments.model_names_or_paths[0])
-        # self.trainer.model = self.model
-        
-        
     def set_up_hf_trainer(self):
         optimizer = Adafactor(
             self.model.parameters(),
@@ -225,8 +146,27 @@ class PEFTTrainer:
 
         lr_scheduler = get_constant_schedule(optimizer)
 
+        if self.arguments.dataset_name == "ni":
+            dataset_dependent_data_collator = DataCollatorForNI(
+                self.tokenizers[0],
+                model=self.model,
+                padding="max_length" if self.arguments.pad_to_max_length else "longest",
+                max_source_length=self.arguments.max_source_length,
+                max_target_length=self.arguments.max_target_length,
+                label_pad_token_id=self.tokenizers[0].pad_token_id,
+                pad_to_multiple_of=8 if self.arguments.fp16 else None,
+                add_task_name=self.arguments.add_task_name,
+                add_task_definition=self.arguments.add_task_definition,
+                num_pos_examples=self.arguments.num_pos_examples,
+                num_neg_examples=self.arguments.num_neg_examples,
+                add_explanation=self.arguments.add_explanation,
+                tk_instruct=self.arguments.tk_instruct
+            )
+            self.arguments.remove_unused_columns = False
+        else:
+            dataset_dependent_data_collator = default_data_collator
+
         if self.arguments.mode == "adapter":
-            print('adapter trainer is used')
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizers[0],
@@ -235,7 +175,7 @@ class PEFTTrainer:
                 args = self.arguments,
                 optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
-                data_collator=default_data_collator,
+                data_collator=dataset_dependent_data_collator,
             )
         else:
             self.trainer = Seq2SeqTrainer(
@@ -246,12 +186,8 @@ class PEFTTrainer:
                 args = self.arguments,
                 optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
-                data_collator=default_data_collator,
+                data_collator=dataset_dependent_data_collator,
             )
-        
-        
-        
-        
         self.trainer.model = self.model
         
     def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
@@ -318,6 +254,8 @@ class PEFTTrainer:
             verbalizers = ['1', '2', '3', '4', '5']
         elif dataset == 'ag_news':
             verbalizers = ['World', 'Sports', 'Business', 'Sci/Tech']
+        elif dataset == 'ni':
+            verbalizers = []
         else:
             raise NotImplementedError("Dataset not supported: " + dataset)
         return verbalizers
@@ -342,6 +280,7 @@ class PEFTTrainer:
                 gradient_checkpointing=self.arguments.gradient_checkpointing,
                 use_cache=not self.arguments.gradient_checkpointing,
             )
+
             m_tokenizer = AutoTokenizer.from_pretrained(
                 m_name_or_path,
                 cache_dir=self.arguments.cache_dir,
@@ -462,6 +401,8 @@ class PEFTTrainer:
             inputs = ["Question: " + t for t, label_id in zip(examples["text"],examples["coarse_label"]) if label_id in class_ids]
             verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["coarse_label"], examples["coarse_label"])  if label_id in class_ids]
         else:
+            
+            
             raise NotImplementedError("Dataset not supported: " + self.arguments.dataset_name)
         if add_prompt_for_gen:
                 inputs = [inp + " " + prompt_for_gen for inp in inputs]
@@ -549,96 +490,98 @@ class PEFTTrainer:
         
         """
         if self.arguments.dataset_name == "ni":
+            assert self.arguments.task_dir is not None, "task_dir is required for NaturalInstructions dataset"
+            assert self.arguments.data_dir is not None, "data_dir is required for NaturalInstructions dataset"
             # Get the NaturalInstructions dataset
             raw_datasets = load_dataset(
-                "src/ni_dataset.py", 
-                data_dir=data_args.data_dir, 
-                task_dir=data_args.task_dir, 
-                cache_dir=model_args.cache_dir,
-                max_num_instances_per_task=data_args.max_num_instances_per_task,
-                max_num_instances_per_eval_task=data_args.max_num_instances_per_eval_task
+                "util/ni_dataset.py", 
+                data_dir=self.arguments.data_dir, 
+                task_dir=self.arguments.task_dir, 
+                cache_dir=self.arguments.cache_dir,
+                max_num_instances_per_task=self.arguments.max_num_instances_per_task,
+                max_num_instances_per_eval_task=self.arguments.max_num_instances_per_eval_task
             )
-        else:
-            raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
-        
-        
-        
-        
-        column_names = raw_datasets["train"].column_names
-
-        
-        if train:
-            self.train_dataset = raw_datasets["train"].map(
-                self.preprocess,
-                batched=True,
-                remove_columns= column_names,
-                num_proc=1,
-                # load_from_cache_file=self.arguments.dataset_cache,
-                fn_kwargs = {"evaluation": False},
-                # fn_kwargs = {"evaluation": True},
-                desc="Running tokenizer on train dataset",
-            )
-
-            # sample_input = np.array(self.train_dataset[0]["input_ids_0"])
-            sample_input = np.array(self.train_dataset[0]["input_ids"])
-            # sample_label = np.array(self.train_dataset[0]["labels_0"])
-            sample_label = np.array(self.train_dataset[0]["labels"])
-            sample_input[sample_input==-100] = 0
-            sample_label[sample_label==-100] = 0
-
-            
-            print("train dataset input sample", sample_input, "\n", self.tokenizers[0].decode(sample_input))
-            print("train dataset label sample", sample_label,"\n", self.tokenizers[0].decode(sample_label))
-            self.train_dataset.set_format(type="torch")
-
-            self.trainer.train_dataset = self.train_dataset
-
-            
-        if valid:
-            if self.arguments.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
-                valid_split_name = "test"
-            else:
-                valid_split_name = "validation"
             
             if self.arguments.dev:
+                raw_datasets["validation"] = raw_datasets["validation"].select(range(10))
+            self.trainer.train_dataset = raw_datasets["train"]
+            self.trainer.eval_dataset = raw_datasets["validation"]
+            self.eval_dataset = raw_datasets["validation"]
+        else:
+            raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
+            column_names = raw_datasets["train"].column_names
 
-                true_val_dataset = raw_datasets[valid_split_name].map(
+            if train:
+                self.train_dataset = raw_datasets["train"].map(
                     self.preprocess,
                     batched=True,
-                    remove_columns=column_names,
+                    remove_columns= column_names,
                     num_proc=1,
                     # load_from_cache_file=self.arguments.dataset_cache,
-                    # fn_kwargs = {"evaluation": False},  # hf internal validation
-                    fn_kwargs = {"evaluation": True, "class_ids":[0]},
-                    desc="Running tokenizer on validation dataset",
+                    fn_kwargs = {"evaluation": False},
+                    # fn_kwargs = {"evaluation": True},
+                    desc="Running tokenizer on train dataset",
                 )
 
-                false_val_dataset = raw_datasets[valid_split_name].map(
-                    self.preprocess,
-                    batched=True,
-                    remove_columns=column_names,
-                    num_proc=1,
-                    # load_from_cache_file=self.arguments.dataset_cache,
-                    # fn_kwargs = {"evaluation": False},  # hf internal validation
-                    fn_kwargs = {"evaluation": True, "class_ids":[1]},
-                    desc="Running tokenizer on validation dataset",
-                )
+                # sample_input = np.array(self.train_dataset[0]["input_ids_0"])
+                sample_input = np.array(self.train_dataset[0]["input_ids"])
+                # sample_label = np.array(self.train_dataset[0]["labels_0"])
+                sample_label = np.array(self.train_dataset[0]["labels"])
+                sample_input[sample_input==-100] = 0
+                sample_label[sample_label==-100] = 0
 
-                # select 100 data from each class and merge them
-                self.eval_dataset = concatenate_datasets([true_val_dataset.select(range(100)),false_val_dataset.select(range(100))])
-            else:
-                self.eval_dataset = raw_datasets[valid_split_name].map(
-                    self.preprocess,
-                    batched=True,
-                    remove_columns=column_names,
-                    num_proc=1,
-                    # load_from_cache_file=self.arguments.dataset_cache,
-                    # fn_kwargs = {"evaluation": False},  # hf internal validation
-                    fn_kwargs = {"evaluation": True},
-                    desc="Running tokenizer on validation dataset",
-                )
-            self.eval_dataset.set_format(type="torch")
-            self.trainer.eval_dataset = self.eval_dataset
+                
+                print("train dataset input sample", sample_input, "\n", self.tokenizers[0].decode(sample_input))
+                print("train dataset label sample", sample_label,"\n", self.tokenizers[0].decode(sample_label))
+                self.train_dataset.set_format(type="torch")
+
+                self.trainer.train_dataset = self.train_dataset
+
+            if valid:
+                if self.arguments.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
+                    valid_split_name = "test"
+                else:
+                    valid_split_name = "validation"
+                
+                if self.arguments.dev:
+
+                    true_val_dataset = raw_datasets[valid_split_name].map(
+                        self.preprocess,
+                        batched=True,
+                        remove_columns=column_names,
+                        num_proc=1,
+                        # load_from_cache_file=self.arguments.dataset_cache,
+                        # fn_kwargs = {"evaluation": False},  # hf internal validation
+                        fn_kwargs = {"evaluation": True, "class_ids":[0]},
+                        desc="Running tokenizer on validation dataset",
+                    )
+
+                    false_val_dataset = raw_datasets[valid_split_name].map(
+                        self.preprocess,
+                        batched=True,
+                        remove_columns=column_names,
+                        num_proc=1,
+                        # load_from_cache_file=self.arguments.dataset_cache,
+                        # fn_kwargs = {"evaluation": False},  # hf internal validation
+                        fn_kwargs = {"evaluation": True, "class_ids":[1]},
+                        desc="Running tokenizer on validation dataset",
+                    )
+
+                    # select 100 data from each class and merge them
+                    self.eval_dataset = concatenate_datasets([true_val_dataset.select(range(100)),false_val_dataset.select(range(100))])
+                else:
+                    self.eval_dataset = raw_datasets[valid_split_name].map(
+                        self.preprocess,
+                        batched=True,
+                        remove_columns=column_names,
+                        num_proc=1,
+                        # load_from_cache_file=self.arguments.dataset_cache,
+                        # fn_kwargs = {"evaluation": False},  # hf internal validation
+                        fn_kwargs = {"evaluation": True},
+                        desc="Running tokenizer on validation dataset",
+                    )
+                self.eval_dataset.set_format(type="torch")
+                self.trainer.eval_dataset = self.eval_dataset
 
 
     def _deactivate_relevant_gradients(self, trainable_components):
@@ -789,7 +732,7 @@ class PEFTTrainer:
 
 
     def train(self):
-        
+        # set the trainer logging level to warning
         self.load_dataset(train = True, valid = True)
         self.trainer.train()
     
@@ -822,6 +765,7 @@ class PEFTTrainer:
             results = self.trainer.evaluate(eval_dataset=eval_dataset)
         print(results)
         return results
+
     
     
     def compute_metrics(self, eval_preds, is_pred_logits = False, model_idx = 0, metrics = {}):
@@ -834,6 +778,36 @@ class PEFTTrainer:
             labels = [[label.strip().lower()] for label in labels]
             return preds, labels
         result = metrics
+        
+        if self.arguments.dataset_name == "ni":
+            save_prefix = None
+            from util.compute_metrics import compute_metrics, compute_grouped_metrics
+            dataset = self.eval_dataset
+            decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
+            references = [e["Instance"]["output"] for e in dataset]
+            for pred, ref in zip(decoded_preds[:5], references[:5]):
+                print("pred: ", pred, "ref: ", ref)
+
+            result = compute_metrics(predictions=decoded_preds, references=references)
+            result_per_task = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=dataset["Task"])
+            result.update(result_per_task)
+            categories = ["_".join(it[0].lower().split()) for it in dataset["Categories"]]
+            result_per_category = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=categories)
+            result.update(result_per_category)
+            prediction_lens = [np.count_nonzero(pred != self.tokenizer.pad_token_id) for pred in preds]
+            result["gen_len"] = np.mean(prediction_lens)
+            result = {k: round(v, 4) for k, v in result.items()}
+            if save_prefix is not None:
+                with open(os.path.join(training_args.output_dir, f"{save_prefix}_eval_predictions.jsonl"), "w") as fout:
+                    for example, pred in zip(dataset, decoded_preds):
+                        fout.write(json.dumps({
+                            "Task": example["Task"],
+                            "Definition": example["Definition"],
+                            "Instance": example["Instance"],
+                            "Prediction": pred
+                        }) + "\n")
+            return result
+        
         
         if not is_pred_logits:
             # based on predicted tokens to compute metrics
