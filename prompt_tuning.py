@@ -105,6 +105,8 @@ if __name__ == "__main__":
         task_dir = args.task_dir,
         max_source_length = args.max_source_length,
         max_target_length = args.max_target_length,
+        load_best_model_at_end=True,
+        save_strategy = "steps"
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
