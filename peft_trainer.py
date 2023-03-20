@@ -694,7 +694,7 @@ class PEFTTrainer:
             
             is_bias_init = False
             for name, module in self.model.named_modules():
-                if hasattr(module, "bias"):
+                if hasattr(module, "bias") and "lm_head" not in name:
                     if module.bias is None:
                         print("found none bias, init bias for ", name)
                         module.bias = torch.nn.Parameter(torch.randn(module.out_features))
@@ -804,6 +804,8 @@ class PEFTTrainer:
                             "Prediction": pred
                         }) + "\n")
             return result
+        # import pdb; pdb.set_trace()
+        # print('check why acc is so low')
         
         
         if not is_pred_logits:
@@ -865,7 +867,7 @@ class PEFTTrainer:
 
             dataloader = DataLoader(eval_dataset,
                                     # collate_fn=collate_fn,
-                                    batch_size=4)
+                                    batch_size=self.arguments.eval_batch_size)
             
             correct = 0
             for idx, data in enumerate(dataloader):
@@ -906,6 +908,8 @@ class PEFTTrainer:
                 predict_label = torch.argmax(probs, dim=1)
                 correct += (predict_label == class_ids).sum()
             print(f"probs {model_idx}: ", probs) # just print the last probs
+            # import pdb; pdb.set_trace()
+            # print('double check ac checkpoint 2')
             
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
 
