@@ -44,8 +44,9 @@ if __name__ == "__main__":
     arg_parser.add_argument("--num_neg_examples", type=int, default=0)
     arg_parser.add_argument("--add_explanation", action="store_true")
     arg_parser.add_argument("--tk_instruct", action="store_true")
-    arg_parser.add_argument("--max_source_length", type=int, default=512)
+    arg_parser.add_argument("--max_source_length", type=int, default=256)
     arg_parser.add_argument("--max_target_length", type=int, default=8)
+    arg_parser.add_argument("--fp16", action="store_true")
     
     args = arg_parser.parse_args()
     args.models = args.models.split(",")
@@ -53,8 +54,9 @@ if __name__ == "__main__":
     assert args.dataset_name is not None, "dataset name is required"
     if args.dataset_name == "ni":
         assert args.predict_with_generate, "predict_with_generate is required for ni"
-    else:
-        assert not args.predict_with_generate, "predict_with_generate is not required for non-ni"
+    # else:
+        
+    #     assert not args.predict_with_generate, "predict_with_generate is not required for non-ni"
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
