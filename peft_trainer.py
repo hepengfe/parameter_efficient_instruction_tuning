@@ -166,7 +166,7 @@ class PEFTTrainer:
         else:
             dataset_dependent_data_collator = default_data_collator
 
-        if self.arguments.mode == "adapter":
+        if self.arguments.mode in ["adapter", "prefix_tuning", "compactor"]:
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizers[0],
@@ -866,7 +866,7 @@ class PEFTTrainer:
 
             dataloader = DataLoader(eval_dataset,
                                     # collate_fn=collate_fn,
-                                    batch_size=self.arguments.eval_batch_size)
+                                    batch_size=self.arguments.per_device_eval_batch_size)
             
             correct = 0
             for idx, data in enumerate(dataloader):
