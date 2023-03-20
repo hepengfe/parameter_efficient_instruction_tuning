@@ -107,7 +107,12 @@ class PEFTTrainer:
             self.convert_to_peft()
         
         elif arguments.mode == "lora":
-            peft_config = LoraConfig(task_type=task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
+            peft_config = LoraConfig(
+                task_type=task_type,
+                inference_mode=False,
+                r=32,
+                lora_alpha=32,
+                lora_dropout=0.1)
             self.convert_to_peft(peft_config)
         
         elif arguments.mode in ["adapter", "bitfit", "compactor"]:
