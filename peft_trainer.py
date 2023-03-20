@@ -110,11 +110,8 @@ class PEFTTrainer:
             peft_config = LoraConfig(task_type=task_type, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1)
             self.convert_to_peft(peft_config)
         
-        elif arguments.mode == "adapter":
+        elif arguments.mode in ["adapter", "bitfit", "compactor"]:
             self.convert_to_peft()
-        elif arguments.mode == "bitfit":
-            self.convert_to_peft()
-            
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
@@ -323,9 +320,9 @@ class PEFTTrainer:
                 )
             else:
                 raise NotImplementedError("Model not supported: " + m_name_or_path)
-
+            # Wrap model in adapter package
             # NOTE: temp implementation
-            if self.arguments.mode == "adapter" or self.arguments.mode == "prefix_tuning":
+            if self.arguments.mode in ["adapter", "prefix_tuning", "compactor"] :
                 m = AutoAdapterModel.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
 
             if m_tokenizer.pad_token is None:
@@ -641,6 +638,20 @@ class PEFTTrainer:
             # adapter prefix-tuning version
             from transformers.adapters import PrefixTuningConfig
             config = PrefixTuningConfig(flat=True, prefix_length=30)
+            self.model.add_adapter("sst-2", config=config)
+            self.model.train_adapter("sst-2")
+            if self.arguments.model_arch == "encoder":
+                self.model.add_classification_head("sst-2", num_labels=2)
+            elif self.arguments.model_arch == "encoder-decoder":
+                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2")
+            else:
+                raise NotImplementedError(
+                    f"Not implemented for model arch: {self.arguments.model_arch}"
+                )
+            self.model.set_active_adapters("sst-2")
+        elif self.arguments.mode == "compactor":
+            from transformers.adapters import CompacterConfig
+            config = CompacterConfig()
             self.model.add_adapter("sst-2", config=config)
             self.model.train_adapter("sst-2")
             if self.arguments.model_arch == "encoder":
