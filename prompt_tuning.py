@@ -73,6 +73,7 @@ if __name__ == "__main__":
         args.max_target_length = 128
         print("max_source_length is set to 1024")
         print("max_target_length is set to 128")
+        
     
     trainer_args = TrainerArguments(
         model_names_or_paths = args.models,
@@ -108,7 +109,8 @@ if __name__ == "__main__":
         max_source_length = args.max_source_length,
         max_target_length = args.max_target_length,
         load_best_model_at_end=True,
-        save_strategy = "steps"
+        save_strategy = "steps",
+        fp16 = args.fp16,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers

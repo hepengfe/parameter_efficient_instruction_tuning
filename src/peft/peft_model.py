@@ -761,10 +761,12 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 kwargs.pop("decoder_attention_mask", None)
                 return self.base_model(inputs_embeds=inputs_embeds,  **kwargs)
             else:
-                if decoder_inputs_embeds is None and decoder_input_ids is None:
-                    decoder_input_ids = shift_tokens_right(
-                        labels, self.config.pad_token_id, self.config.decoder_start_token_id
-                    )
+                assert decoder_input_ids is not None or decoder_inputs_embeds is not None, "decoder_input_ids or decoder_inputs_embeds should be provided"
+                if decoder_inputs_embeds is None:
+                    if decoder_input_ids is None:
+                        decoder_input_ids = shift_tokens_right(
+                            labels, self.config.pad_token_id, self.config.decoder_start_token_id
+                        )
                     decoder_inputs_embeds = self.word_embeddings(decoder_input_ids)
 
             if attention_mask is not None:
@@ -784,6 +786,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
             if self.peft_config.num_transformer_submodules == 1:
                 return self.base_model(inputs_embeds=inputs_embeds, **kwargs)
             elif self.peft_config.num_transformer_submodules == 2:
+
                 decoder_inputs_embeds = torch.cat(
                     (prompts[:, self.peft_config.num_virtual_tokens :], decoder_inputs_embeds), dim=1
                 )
@@ -795,8 +798,6 @@ class PeftModelForSeq2SeqLM(PeftModel):
         if not isinstance(self.peft_config, PromptLearningConfig):
             return self.base_model.generate(generation_inputs, **kwargs)
         else:
-            if "input_ids" not in kwargs:
-                raise ValueError("input_ids must be provided for Peft model generation")
             if kwargs.get("position_ids", None) is not None:
                 warnings.warn("Position ids are not supported for parameter efficient tuning. Ignoring position ids.")
                 kwargs["position_ids"] = None
@@ -805,8 +806,9 @@ class PeftModelForSeq2SeqLM(PeftModel):
                     "Token type ids are not supported for parameter efficient tuning. Ignoring token type ids"
                 )
                 kwargs["token_type_ids"] = None
-
             if self.peft_config.peft_type == PeftType.PREFIX_TUNING:
+                return self.base_model.generate(generation_inputs, **kwargs)
+            elif self.peft_config.peft_type == PeftType.PROMPT_TUNING:
                 return self.base_model.generate(generation_inputs, **kwargs)
             else:
                 raise NotImplementedError

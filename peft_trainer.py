@@ -342,7 +342,6 @@ class PEFTTrainer:
                 else:
                     print(f"Model {m_name_or_path} cannot be parallelized")
             self.padding = "max_length" if self.arguments.pad_to_max_length else False
-            
             print('gpt2 requires padding to max length')
             if "gpt2" in m_name_or_path:
                 self.padding = "max_length"
