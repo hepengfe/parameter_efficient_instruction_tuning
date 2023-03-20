@@ -691,9 +691,6 @@ class PEFTTrainer:
             
             def convert_to_actual_components(components):
                 return [BIAS_TERMS_DICT[component] for component in components]
-            # assert "roberta" in self.arguments.model_names_or_paths[0], "bitfit only supports roberta model (other model might have different dictionary for bias?) "
-            
-            
             
             is_bias_init = False
             for name, module in self.model.named_modules():
