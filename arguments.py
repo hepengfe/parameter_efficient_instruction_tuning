@@ -52,3 +52,5 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     add_explanation: Optional[bool] = field(default=False)
     tk_instruct: Optional[bool] = field(default=False)
     fp16: Optional[bool] = field(default=False)
+    lora_r: Optional[int] = field(default=32)
+    prefix_len: Optional[int] = field(default=10)

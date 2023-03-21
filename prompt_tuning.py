@@ -46,6 +46,17 @@ if __name__ == "__main__":
     arg_parser.add_argument("--tk_instruct", action="store_true")
     arg_parser.add_argument("--max_source_length", type=int, default=256)
     arg_parser.add_argument("--max_target_length", type=int, default=8)
+    
+    # peft args
+    arg_parser.add_argument("--lora_r", type=int, default=None)
+    arg_parser.add_argument("--prefix_len", type=int, default=None)
+    
+    
+    
+    
+    
+    
+    
     arg_parser.add_argument("--fp16", action="store_true")
     
     args = arg_parser.parse_args()
@@ -57,6 +68,13 @@ if __name__ == "__main__":
     # else:
         
     #     assert not args.predict_with_generate, "predict_with_generate is not required for non-ni"
+    
+    if args.mode == "lora":
+        assert args.lora_r is not None, "lora_r is required for lora"
+    if args.mode == "prefix_tuning":
+        assert args.prefix_len is not None, "prefix_len is required for prefix_tuning"
+        
+    
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -111,6 +129,9 @@ if __name__ == "__main__":
         load_best_model_at_end=True,
         save_strategy = "steps",
         fp16 = args.fp16,
+        
+        lora_r = args.lora_r,
+        prefix_len = args.prefix_len,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers

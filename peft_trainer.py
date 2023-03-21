@@ -107,10 +107,11 @@ class PEFTTrainer:
             self.convert_to_peft()
         
         elif arguments.mode == "lora":
+            
             peft_config = LoraConfig(
                 task_type=task_type,
                 inference_mode=False,
-                r=32,
+                r=self.arguments.lora_r,
                 lora_alpha=32,
                 lora_dropout=0.1)
             self.convert_to_peft(peft_config)
@@ -625,8 +626,11 @@ class PEFTTrainer:
         """
         
         if self.arguments.mode == "adapter":
+            from transformers.adapters import AdapterConfig, HoulsbyConfig
+            # config = AdapterConfig()
+            config = HoulsbyConfig()
             # add and activate adapter
-            self.model.add_adapter("sst-2")
+            self.model.add_adapter("sst-2", config = config)
             self.model.train_adapter("sst-2")
             if self.arguments.model_arch == "encoder":
                 self.model.add_classification_head("classification-head-sst-2", num_labels=2)
@@ -642,7 +646,7 @@ class PEFTTrainer:
             
             # adapter prefix-tuning version
             from transformers.adapters import PrefixTuningConfig
-            config = PrefixTuningConfig(flat=True, prefix_length=30)
+            config = PrefixTuningConfig(flat=True, prefix_length=self.arguments.prefix_len)
             self.model.add_adapter("sst-2", config=config)
             self.model.train_adapter("sst-2")
             if self.arguments.model_arch == "encoder":
@@ -683,11 +687,6 @@ class PEFTTrainer:
                     'all': 'bias',
                 }
             elif self.arguments.model_arch == "encoder-decoder":
-                # import pdb; pdb.set_trace()
-                # print('check model compoennts')
-                
-                
-                
                 
                 # raise ValueError("bitfit not supported for encoder-decoder model")
                 BIAS_TERMS_DICT = {
