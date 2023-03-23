@@ -56,3 +56,4 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     lora_r: Optional[int] = field(default=32)
     prefix_len: Optional[int] = field(default=10)
     overwrite_cache: Optional[bool] = field(default=False)
+    layer_name: Optional[str] = field(default=None)

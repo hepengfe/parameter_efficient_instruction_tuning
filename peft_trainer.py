@@ -125,10 +125,48 @@ class PEFTTrainer:
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
         elif arguments.mode == "fine_tuning":
             self.num_soft_tokens = 0
-            self.set_up_hf_trainer()
+        elif arguments.mode == "layer_tuning":
+            
+            for param in self.model.parameters():
+                param.requires_grad = False
+            
+            layers = []
+            # NOTE: we only fine-tune attention weights for now
+            if arguments.layer_name == "first_encoder_layer":
+                layers.append(self.model.encoder.block[0].layer[0])
+            elif arguments.layer_name == "last_encoder_layer":
+                layers.append(self.model.encoder.block[-1].layer[0])
+            elif arguments.layer_name == "first_decoder_layer":
+                layers.append(self.model.decoder.block[0].layer[0])
+            elif arguments.layer_name == "last_decoder_layer":
+                layers.append(self.model.decoder.block[-1].layer[0])
+            elif arguments.layer_name == "custom":
+                # all decoder layer
+                modules = self.model.decoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            elif arguments.layer_name == "custom2":
+                # all decoder layer
+                modules = self.model.decoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            else:
+                raise NotImplementedError(f"layer_name {arguments.layer_name} is not implemented")
+            
+            for l in layers:
+                for name, module in l.named_modules():
+                    # if "selfattention" in name.lower():
+                    if hasattr(module, "weight"):
+                        module.weight.requires_grad = True
+                        print("activate gradient for ", name)
+            
+
+            
+            
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
         self.tokenizer = self.tokenizers[0]
+        self.set_up_hf_trainer()
         
 
     def set_up_hf_trainer(self):
@@ -181,6 +219,7 @@ class PEFTTrainer:
                 data_collator=dataset_dependent_data_collator,
             )
         else:
+
             self.trainer = Seq2SeqTrainer(
                 model = self.model,
                 tokenizer = self.tokenizers[0],
@@ -315,6 +354,7 @@ class PEFTTrainer:
                 #     # config=m_config,
                 #     cache_dir=self.arguments.cache_dir,
                 # )
+                
             elif "roberta" in m_name_or_path:
                 m = AutoModelForSequenceClassification.from_pretrained(m_name_or_path)
             elif "gpt2" in m_name_or_path or "bloom" in m_name_or_path or "opt" in m_name_or_path:

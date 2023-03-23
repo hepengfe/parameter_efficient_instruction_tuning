@@ -55,7 +55,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--overwrite_cache", action="store_true")
     
     
-    
+    arg_parser.add_argument("--layer_name", type=str, default=None)
     
     
     arg_parser.add_argument("--fp16", action="store_true")
@@ -75,7 +75,9 @@ if __name__ == "__main__":
         assert args.lora_r is not None, "lora_r is required for lora"
     if args.mode == "prefix_tuning":
         assert args.prefix_len is not None, "prefix_len is required for prefix_tuning"
-        
+    
+    if args.mode == "layer_tuning":
+        assert args.layer_name is not None, "layer_name should be specified for layer tuning mode"
     
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
@@ -101,7 +103,8 @@ if __name__ == "__main__":
         run_name += "-lora_r-" + str(args.lora_r)
     elif args.mode == "prefix_tuning":
         run_name += "-prefix_len-" + str(args.prefix_len)
-    
+    elif args.mode == "layer_tuning":
+        run_name += "-" + str(args.layer_name)
     if args.fp16:
         run_name += "-fp16"
     elif args.bf16:
@@ -152,6 +155,7 @@ if __name__ == "__main__":
         prefix_len = args.prefix_len,
         overwrite_cache= args.overwrite_cache,
         run_name = run_name,
+        layer_name = args.layer_name,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
