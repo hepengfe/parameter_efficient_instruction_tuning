@@ -52,13 +52,14 @@ if __name__ == "__main__":
     arg_parser.add_argument("--lora_r", type=int, default=None)
     arg_parser.add_argument("--prefix_len", type=int, default=None)
     
-    
+    arg_parser.add_argument("--overwrite_cache", action="store_true")
     
     
     
     
     
     arg_parser.add_argument("--fp16", action="store_true")
+    arg_parser.add_argument("--bf16", action="store_true")
     
     args = arg_parser.parse_args()
     args.models = args.models.split(",")
@@ -130,9 +131,10 @@ if __name__ == "__main__":
         load_best_model_at_end=True,
         save_strategy = "steps",
         fp16 = args.fp16,
-        
+        bf16 = args.bf16,
         lora_r = args.lora_r,
         prefix_len = args.prefix_len,
+        overwrite_cache= args.overwrite_cache,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers

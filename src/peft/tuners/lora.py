@@ -331,7 +331,8 @@ class Linear(nn.Linear, LoraLayer):
         self.lora_B.eval()
 
     def forward(self, x: torch.Tensor):
-        print("move from device ", x.device, " to ", self.lora_A.weight.device)
+        # NOTE: the following weight device fix is a hack to make it work with
+        # model parallelism.
         self.lora_A = self.lora_A.to(x.device)
         self.lora_B = self.lora_B.to(x.device)
         self.lora_dropout = self.lora_dropout.to(x.device)

@@ -287,6 +287,7 @@ class PEFTTrainer:
             m_tokenizer = AutoTokenizer.from_pretrained(
                 m_name_or_path,
                 cache_dir=self.arguments.cache_dir,
+                # use_cache = self.arguments.use_cache,
                 use_fast=True,
                 return_tensors="pt"
             )
@@ -501,7 +502,8 @@ class PEFTTrainer:
                 task_dir=self.arguments.task_dir, 
                 cache_dir=self.arguments.cache_dir,
                 max_num_instances_per_task=self.arguments.max_num_instances_per_task,
-                max_num_instances_per_eval_task=self.arguments.max_num_instances_per_eval_task
+                max_num_instances_per_eval_task=self.arguments.max_num_instances_per_eval_task,
+                download_mode = "reuse_dataset_if_exists" if not self.arguments.overwrite_cache else "force_redownload",
             )
             
             if self.arguments.dev:
