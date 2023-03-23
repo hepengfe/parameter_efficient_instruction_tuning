@@ -96,16 +96,18 @@ if __name__ == "__main__":
         
         
     # run name
-    run_name = args.models[0] + "_" + args.dataset_name 
+    run_name = args.models[0] + "-" + args.dataset_name 
     if args.mode == "lora":
-        run_name += "_lora_r_" + str(args.lora_r)
+        run_name += "-lora_r-" + str(args.lora_r)
     elif args.mode == "prefix_tuning":
-        run_name += "_prefix_len_" + str(args.prefix_len)
+        run_name += "-prefix_len-" + str(args.prefix_len)
     
     if args.fp16:
-        run_name += "_fp16"
+        run_name += "-fp16"
     elif args.bf16:
-        run_name += "_bf16"
+        run_name += "-bf16"
+    
+    # TODO: rewrite the above run_name by concatenating a list of string
         
     run_name += args.mode + "_" + time # differentiate diff runs
     
