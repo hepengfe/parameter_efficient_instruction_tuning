@@ -31,7 +31,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--eval", action="store_true")
     # predict_with_generate
     arg_parser.add_argument("--predict_with_generate", action="store_true")
-    
+    # gradient_accumulation_steps
+    arg_parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     
     # ni specific args
     arg_parser.add_argument("--data_dir", type=str, default=None)
