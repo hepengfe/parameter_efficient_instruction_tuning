@@ -94,6 +94,20 @@ if __name__ == "__main__":
         print("max_source_length is set to 1024")
         print("max_target_length is set to 128")
         
+        
+    # run name
+    run_name = args.models[0] + "_" + args.dataset_name 
+    if args.mode == "lora":
+        run_name += "_lora_r_" + str(args.lora_r)
+    elif args.mode == "prefix_tuning":
+        run_name += "_prefix_len_" + str(args.prefix_len)
+    
+    if args.fp16:
+        run_name += "_fp16"
+    elif args.bf16:
+        run_name += "_bf16"
+        
+    run_name += args.mode + "_" + time # differentiate diff runs
     
     trainer_args = TrainerArguments(
         model_names_or_paths = args.models,
@@ -135,6 +149,7 @@ if __name__ == "__main__":
         lora_r = args.lora_r,
         prefix_len = args.prefix_len,
         overwrite_cache= args.overwrite_cache,
+        run_name = run_name,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
