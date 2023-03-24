@@ -57,3 +57,4 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     prefix_len: Optional[int] = field(default=10)
     overwrite_cache: Optional[bool] = field(default=False)
     layer_name: Optional[str] = field(default=None)
+    bias_name: Optional[str] = field(default=None)

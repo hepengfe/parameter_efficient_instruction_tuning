@@ -56,7 +56,7 @@ if __name__ == "__main__":
     
     
     arg_parser.add_argument("--layer_name", type=str, default=None)
-    
+    arg_parser.add_argument("--bias_name", type=str, default=None)
     
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
@@ -79,6 +79,10 @@ if __name__ == "__main__":
     if args.mode == "layer_tuning":
         assert args.layer_name is not None, "layer_name should be specified for layer tuning mode"
     
+    if args.mode == "bitfit":
+        assert args.bias_name is not None, "bias_name should be specified for bitfit mode"
+        
+    
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -98,13 +102,18 @@ if __name__ == "__main__":
         
         
     # run name
-    run_name = args.models[0] + "-" + args.dataset_name 
+    run_name = args.models[0] + "-"
+    run_name += args.dataset_name if args.dataset_name != "super_glue" else args.dataset_config_name
     if args.mode == "lora":
         run_name += "-lora_r-" + str(args.lora_r)
     elif args.mode == "prefix_tuning":
         run_name += "-prefix_len-" + str(args.prefix_len)
     elif args.mode == "layer_tuning":
         run_name += "-" + str(args.layer_name)
+    elif args.mode == "bitfit":
+        run_name += "-" + str(args.bias_name)
+        
+        
     if args.fp16:
         run_name += "-fp16"
     elif args.bf16:
@@ -156,6 +165,7 @@ if __name__ == "__main__":
         overwrite_cache= args.overwrite_cache,
         run_name = run_name,
         layer_name = args.layer_name,
+        bias_name = args.bias_name,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers

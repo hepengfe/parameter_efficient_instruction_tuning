@@ -716,56 +716,94 @@ class PEFTTrainer:
             self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "bitfit":
             
-            if self.arguments.model_arch == "encoder":
-                # deactivate gradients except for bias terms
-                BIAS_TERMS_DICT = {
-                    'intermediate': 'intermediate.dense.bias',
-                    'key': 'attention.self.key.bias',
-                    'query': 'attention.self.query.bias',
-                    'value': 'attention.self.value.bias',
-                    'output': 'output.dense.bias',
-                    'output_layernorm': 'output.LayerNorm.bias',
-                    'attention_layernorm': 'attention.output.LayerNorm.bias',
-                    'all': 'bias',
-                }
-            elif self.arguments.model_arch == "encoder-decoder":
+            # if self.arguments.model_arch == "encoder":
+            #     # deactivate gradients except for bias terms
+            #     BIAS_TERMS_DICT = {
+            #         'intermediate': 'intermediate.dense.bias',
+            #         'key': 'attention.self.key.bias',
+            #         'query': 'attention.self.query.bias',
+            #         'value': 'attention.self.value.bias',
+            #         'output': 'output.dense.bias',
+            #         'output_layernorm': 'output.LayerNorm.bias',
+            #         'attention_layernorm': 'attention.output.LayerNorm.bias',
+            #         'all': 'bias',
+            #     }
+            # elif self.arguments.model_arch == "encoder-decoder":
                 
-                # raise ValueError("bitfit not supported for encoder-decoder model")
-                BIAS_TERMS_DICT = {
-                    'intermediate': 'intermediate.dense.bias',
-                    'key': 'attention.self.key.bias',
-                    'query': 'attention.self.query.bias',
-                    'value': 'attention.self.value.bias',
-                    'output': 'output.dense.bias',
-                    'output_layernorm': 'output.LayerNorm.bias',
-                    'attention_layernorm': 'attention.output.LayerNorm.bias',
-                    'all': 'bias',
-                }
-            # import pdb; pdb.set_trace()
-            # print('check model compoennts')
+            #     # raise ValueError("bitfit not supported for encoder-decoder model")
+            #     BIAS_TERMS_DICT = {
+            #         'intermediate': 'intermediate.dense.bias',
+            #         'key': 'attention.self.key.bias',
+            #         'query': 'attention.self.query.bias',
+            #         'value': 'attention.self.value.bias',
+            #         'output': 'output.dense.bias',
+            #         'output_layernorm': 'output.LayerNorm.bias',
+            #         'attention_layernorm': 'attention.output.LayerNorm.bias',
+            #         'all': 'bias',
+            #     }
+            # # import pdb; pdb.set_trace()
+            # # print('check model compoennts')
             
             
-            def convert_to_actual_components(components):
-                return [BIAS_TERMS_DICT[component] for component in components]
+            # def convert_to_actual_components(components):
+            #     return [BIAS_TERMS_DICT[component] for component in components]
             
-            is_bias_init = False
-            for name, module in self.model.named_modules():
-                if hasattr(module, "bias") and "lm_head" not in name:
-                    if module.bias is None:
-                        print("found none bias, init bias for ", name)
-                        module.bias = torch.nn.Parameter(torch.randn(module.out_features))
-                        is_bias_init = True
-                    if not module.bias.requires_grad:
-                        module.bias.requires_grad = True
+            # is_bias_init = False
+            # for name, module in self.model.named_modules():
+            #     if hasattr(module, "bias") and "lm_head" not in name:
+            #         if module.bias is None:
+            #             print("found none bias, init bias for ", name)
+            #             module.bias = torch.nn.Parameter(torch.randn(module.out_features))
+            #             is_bias_init = True
+            #         if not module.bias.requires_grad:
+            #             module.bias.requires_grad = True
                         
-            assert is_bias_init == True, "bias should be initialized"
+            # assert is_bias_init == True, "bias should be initialized"
             
-            components = ["intermediate", "key", "query", "value", "output", "output_layernorm", "attention_layernorm", "all"]
-            trainable_components = convert_to_actual_components(components)
-            self._deactivate_relevant_gradients(trainable_components)
-            
-            
-                
+            # components = ["intermediate", "key", "query", "value", "output", "output_layernorm", "attention_layernorm", "all"]
+            # trainable_components = convert_to_actual_components(components)
+            # self._deactivate_relevant_gradients(trainable_components)
+            for param in self.model.parameters():
+                param.requires_grad = False
+            layers = []
+            if self.arguments.bias_name == "encoder_bias":
+                modules = self.model.encoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            elif self.arguments.bias_name == "decoder_bias":
+                modules = self.model.decoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            elif  self.arguments.bias_name == "encoder_decoder_bias":
+                modules = self.model.encoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+                modules = self.model.decoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            else:
+                raise ValueError("bias name not supported: ", arguments.bias_name)
+            # NOTE: test enable bias 
+            # for name, module in self.model.named_modules():
+            #     if  "lm_head" in name:
+            #         module.bias.requires_grad = True
+            for l in layers:
+                for name, module in l.named_modules():
+                    # if "selfattention" in name.lower():
+                    # if hasattr(module, "bias") and type(module) == transformers.adapters.lora.Linear:
+                    #     module.bias.requires_grad = True
+                    #     print("activate gradient for ", name)
+                    #     # print("name: ", name, " type: ", type(module))
+                        
+                    # first check if bias is settable
+                    if hasattr(module, "bias") and type(module) == transformers.adapters.lora.Linear:
+                        if module.bias is None:
+                            print("found none bias, init bias for ", name)
+                            module.bias = torch.nn.Parameter(torch.randn(module.out_features))
+                            is_bias_init = True
+                        if not module.bias.requires_grad:
+                            print("activate gradient for ", name)
+                            module.bias.requires_grad = True
 
         else:
             # general peft converting based on different peft config
