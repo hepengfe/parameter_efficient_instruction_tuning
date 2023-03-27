@@ -12,7 +12,7 @@ from transformers import (
     get_scheduler,
     EarlyStoppingCallback
 )
-
+from transformers import AutoModelForSeq2SeqLM, AutoAdapterModel
 
 from torch.utils.data import DataLoader
 import numpy as np
@@ -34,8 +34,8 @@ from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_param
 import transformers
 from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig,PrefixTuningConfig
 from util.ni_dataset_collator import DataCollatorForNI
-
-
+from copy import deepcopy
+import datetime
 
 class PEFTTrainer:
     def __init__(self, arguments):
@@ -56,7 +56,7 @@ class PEFTTrainer:
         self.new_vocab_sizes = [self.org_vocab_size]
         # temp set
         self.model = self.models[0]
-        
+        self.model_cache = deepcopy(self.model)
         self.default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
         """
         Model is loaded, now we need to set up the trainer
@@ -67,71 +67,136 @@ class PEFTTrainer:
         init_from_text = False
         if self.arguments.dataset_name == "sst2" and self.arguments.model_arch == "encoder":
             task_type = TaskType.SEQ_CLS
-            
             prompt_tuning_init = None # NOTE: it decides whether prompt init is used
             prompt_tuning_init_text = None
             init_text_tokenizer_name_or_path = None
-            
             prompt_tuning_init = "TEXT"
-            prompt_tuning_init_text="Predict sentiment review positive, negative"
-            init_text_tokenizer_name_or_path = self.model_names_or_paths[0]
             print("task type is seq_cls")
-
+        prompt_tuning_init_text=" ".join(self.verbalizers)
+        init_text_tokenizer_name_or_path = self.model_names_or_paths[0]
 
         if arguments.mode == "prompt_tuning":
-            # self.convert_to_prompt_tuning(self.num_soft_tokens)
-            if init_from_text:
-                peft_config = PromptTuningConfig(
+            cur_prompt_len = self.num_soft_tokens
+            assert self.arguments.trainable_params_percentage is not None or self.arguments.prompt_len > 0, "either prompt_len or trainable_params_percentage should be set"
+            if self.arguments.trainable_params_percentage is not None:
+                config = PromptTuningConfig(
                     task_type=task_type,
-                    num_virtual_tokens=self.num_soft_tokens, inference_mode=False, device= self.arguments.device,
-                    prompt_tuning_init="TEXT",
-                    prompt_tuning_init_text=prompt_tuning_init_text,
-                    tokenizer_name_or_path=init_text_tokenizer_name_or_path,
-                )
-            else:
-                peft_config = PromptTuningConfig(
-                    task_type=task_type,
-                    num_virtual_tokens=self.num_soft_tokens,
+                    num_virtual_tokens=cur_prompt_len,
                     inference_mode=False,
                     device= self.arguments.device,
+                    
+                    
+                    
+                    # prompt_tuning_init="TEXT",
+                    # prompt_tuning_init_text=prompt_tuning_init_text,
+                    # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
+
                 )
-            assert self.num_soft_tokens > 0, "num_soft_tokens should be greater than 0 in prompt tuning mode"
-            self.convert_to_peft(peft_config)
+                cur_trainable_params_percentage = self.convert_to_peft(config)
+            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.000001:
+                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
+                    cur_prompt_len -= 1
+                else:
+                    cur_prompt_len += 1
+                config = PromptTuningConfig(
+                    task_type=task_type,
+                    num_virtual_tokens=cur_prompt_len,
+                    inference_mode=False,
+                    device= self.arguments.device,
+                    
+                    
+                    # prompt_tuning_init="TEXT",
+                    # prompt_tuning_init_text=prompt_tuning_init_text,
+                    # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
+                )
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            
+                print("prompt length is {}".format(cur_prompt_len))
+                print("trainable params percentage is {}".format(cur_trainable_params_percentage))
+            self.arguments.run_name += "_prompt_len_{}".format(cur_prompt_len)
         elif arguments.mode == "prefix_tuning":
-            # peft version
-            # peft_config = PrefixTuningConfig(task_type=TaskType.SEQ_2_SEQ_LM, inference_mode=False, num_virtual_tokens=20)
-            # self.convert_to_peft(peft_config)
-            
-            
-            # adapter-prefix-tuning version
-            self.convert_to_peft()
+            from transformers.adapters import PrefixTuningConfig
+            cur_prefix_len = 10 if self.arguments.prefix_len is None else self.arguments.prefix_len
+            assert self.arguments.trainable_params_percentage is not None or self.arguments.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
+            if self.arguments.trainable_params_percentage is not None:
+                config = PrefixTuningConfig(flat=True, prefix_length=cur_prefix_len)
+                cur_trainable_params_percentage = self.convert_to_peft(config)
+            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.001:
+                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
+                    cur_prefix_len -= 1
+                else:
+                    cur_prefix_len += 1
+                config = PrefixTuningConfig(flat=True, prefix_length=cur_prefix_len)
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                print("prefix length is {}".format(cur_prefix_len))
+            self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len)
         
         elif arguments.mode == "lora":
-            
-            peft_config = LoraConfig(
-                task_type=task_type,
-                inference_mode=False,
-                r=self.arguments.lora_r,
-                lora_alpha=32,
-                lora_dropout=0.1)
-            self.convert_to_peft(peft_config)
-        
+            cur_lora_r = 32 if self.arguments.lora_r is None else self.arguments.lora_r
+            assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            if self.arguments.trainable_params_percentage is not None:
+                config = LoraConfig(
+                    task_type=task_type,
+                    inference_mode=False,
+                    r=cur_lora_r,
+                    lora_alpha=32,
+                    lora_dropout=0.1
+                )
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+
+            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.001:
+                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
+                    cur_lora_r -= 1
+                else:
+                    cur_lora_r += 1
+                config = LoraConfig(
+                    task_type=task_type,
+                    inference_mode=False,
+                    r=cur_lora_r,
+                    lora_alpha=32,
+                    lora_dropout=0.1
+                )
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            self.arguments.lora_r = cur_lora_r
+            self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
         elif arguments.mode in ["adapter", "bitfit", "compactor"]:
-            self.convert_to_peft()
+            cur_reduction_factor = self.arguments.reduction_factor if self.arguments.reduction_factor is not None else 32
+            assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
+            
+            if self.arguments.trainable_params_percentage is not None:
+                from transformers.adapters import AdapterConfig, HoulsbyConfig
+                # check existing adapter and remove them
+                
+                # config = AdapterConfig()
+                config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                cur_trainable_params_percentage = self.convert_to_peft(config)
+            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.001:
+                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
+                    cur_reduction_factor += 1
+                else:
+                    cur_reduction_factor -= 1
+                config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
+            self.arguments.run_name += f"_reduction_factor_{cur_reduction_factor}"
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
                 self.num_soft_tokens = 0
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
         elif arguments.mode == "fine_tuning":
-            self.num_soft_tokens = 0
-            self.set_up_hf_trainer()
+            pass
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
+        time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.arguments.run_name += f"_{time}"
+        self.set_up_hf_trainer()
         self.tokenizer = self.tokenizers[0]
         
 
     def set_up_hf_trainer(self):
+        del self.model_cache
         optimizer = Adafactor(
             self.model.parameters(),
             # filter(lambda p: p.requires_grad, self.model.parameters()),
@@ -276,7 +341,7 @@ class PEFTTrainer:
         )
         
         for m_name_or_path in self.model_names_or_paths:
-            from transformers import AutoModelForSeq2SeqLM, AutoAdapterModel
+            
             m_config = AutoConfig.from_pretrained(
                 m_name_or_path,
                 cache_dir=self.arguments.cache_dir,
@@ -618,7 +683,7 @@ class PEFTTrainer:
         
 
 
-    def convert_to_peft(self, peft_config=None):
+    def convert_to_peft(self, peft_config=None, reset_peft=False):
         """
         1. prepare peft model
         2. set up trainer
@@ -627,55 +692,21 @@ class PEFTTrainer:
             peft_config (_type_): _description_
         """
         
-        if self.arguments.mode == "adapter":
-            from transformers.adapters import AdapterConfig, HoulsbyConfig
-            # config = AdapterConfig()
-            config = HoulsbyConfig()
-            # add and activate adapter
-            self.model.add_adapter("sst-2", config = config)
-            self.model.train_adapter("sst-2")
-            if self.arguments.model_arch == "encoder":
-                self.model.add_classification_head("classification-head-sst-2", num_labels=2)
-            elif self.arguments.model_arch == "encoder-decoder":
-                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2")
-            else:
-                raise NotImplementedError(
-                    f"Not implemented for model arch: {self.arguments.model_arch}"
-                )
-            self.model.set_active_adapters("sst-2")
-        elif self.arguments.mode == "prefix_tuning":
-            # peft prefix tuning version has issue in encoder only model
+        if self.arguments.mode in ["adapter", "prefix_tuning", "compactor"]:
             
-            # adapter prefix-tuning version
-            from transformers.adapters import PrefixTuningConfig
-            config = PrefixTuningConfig(flat=True, prefix_length=self.arguments.prefix_len)
-            self.model.add_adapter("sst-2", config=config)
+            # add and activate adapter
+            self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
             self.model.train_adapter("sst-2")
             if self.arguments.model_arch == "encoder":
-                self.model.add_classification_head("sst-2", num_labels=2)
+                self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
             elif self.arguments.model_arch == "encoder-decoder":
-                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2")
-            else:
-                raise NotImplementedError(
-                    f"Not implemented for model arch: {self.arguments.model_arch}"
-                )
-            self.model.set_active_adapters("sst-2")
-        elif self.arguments.mode == "compactor":
-            from transformers.adapters import CompacterConfig
-            config = CompacterConfig()
-            self.model.add_adapter("sst-2", config=config)
-            self.model.train_adapter("sst-2")
-            if self.arguments.model_arch == "encoder":
-                self.model.add_classification_head("sst-2", num_labels=2)
-            elif self.arguments.model_arch == "encoder-decoder":
-                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2")
+                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.arguments.model_arch}"
                 )
             self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "bitfit":
-            
             if self.arguments.model_arch == "encoder":
                 # deactivate gradients except for bias terms
                 BIAS_TERMS_DICT = {
@@ -689,8 +720,6 @@ class PEFTTrainer:
                     'all': 'bias',
                 }
             elif self.arguments.model_arch == "encoder-decoder":
-                
-                # raise ValueError("bitfit not supported for encoder-decoder model")
                 BIAS_TERMS_DICT = {
                     'intermediate': 'intermediate.dense.bias',
                     'key': 'attention.self.key.bias',
@@ -701,13 +730,8 @@ class PEFTTrainer:
                     'attention_layernorm': 'attention.output.LayerNorm.bias',
                     'all': 'bias',
                 }
-            # import pdb; pdb.set_trace()
-            # print('check model compoennts')
-            
-            
             def convert_to_actual_components(components):
                 return [BIAS_TERMS_DICT[component] for component in components]
-            
             is_bias_init = False
             for name, module in self.model.named_modules():
                 if hasattr(module, "bias") and "lm_head" not in name:
@@ -724,24 +748,33 @@ class PEFTTrainer:
             trainable_components = convert_to_actual_components(components)
             self._deactivate_relevant_gradients(trainable_components)
             
-            
-                
-
+            raise NotImplementedError("bitfit is not computed for trainable paramters yet")
         else:
+            # NOTE: prompt tuning
             # general peft converting based on different peft config
             assert peft_config is not None, "peft config should be provided for non-adapter peft method"
             # convert text to token ids
             verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
             
+            if reset_peft:
+                # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_paths[0], cache_dir=self.arguments.cache_dir)
+                self.model = deepcopy(self.model_cache)
             # add tokens in models and tokenizers + freeze model
-            # for idx, (m, t) in enumerate(zip(self.models, self.tokenizers)):
             self.model.enable_input_require_grads()
             self.model = get_peft_model(self.model, peft_config)
-            self.model.print_trainable_parameters()
-            print("reset trainer after loading peft module")
-        self.set_up_hf_trainer()
+        return self.check_trainable_parameters()
 
 
+
+    def check_trainable_parameters(self, print_params_required_grad = False):
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        if print_params_required_grad:
+            for n, p in self.model.named_parameters():
+                if p.requires_grad:
+                    print(n)
+        print(f"Total Params: {total_params}, Trainable Params: {trainable_params}, Trainable Ratio: {trainable_params/total_params}")
+        return trainable_params/total_params
 
 
     def train(self):

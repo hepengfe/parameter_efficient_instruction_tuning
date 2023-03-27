@@ -41,7 +41,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--max_num_instances_per_eval_task", type=int, default=100)
     arg_parser.add_argument("--add_task_name", action="store_true")
     arg_parser.add_argument("--add_task_definition", action="store_true")
-    arg_parser.add_argument("--num_pos_examples", type=int, default=2)
+    arg_parser.add_argument("--num_pos_examples", type=int, default=0)
     arg_parser.add_argument("--num_neg_examples", type=int, default=0)
     arg_parser.add_argument("--add_explanation", action="store_true")
     arg_parser.add_argument("--tk_instruct", action="store_true")
@@ -53,7 +53,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--prefix_len", type=int, default=None)
     
     arg_parser.add_argument("--overwrite_cache", action="store_true")
-    
+    arg_parser.add_argument("--trainable_params_percentage", type=float, default=None)
+    arg_parser.add_argument("--reduction_factor", type=int, default=32)
     
     
     
@@ -67,14 +68,12 @@ if __name__ == "__main__":
     assert args.dataset_name is not None, "dataset name is required"
     if args.dataset_name == "ni":
         assert args.predict_with_generate, "predict_with_generate is required for ni"
-    # else:
-        
-    #     assert not args.predict_with_generate, "predict_with_generate is not required for non-ni"
     
-    if args.mode == "lora":
-        assert args.lora_r is not None, "lora_r is required for lora"
-    if args.mode == "prefix_tuning":
-        assert args.prefix_len is not None, "prefix_len is required for prefix_tuning"
+    if args.trainable_params_percentage is None:
+        if args.mode == "lora":
+            assert args.lora_r is not None, "lora_r is required for lora if trainable_params_percentage is not specified"
+        if args.mode == "prefix_tuning":
+            assert args.prefix_len is not None, "prefix_len is required for prefix_tuning"
         
     
     cache_path = "~/tmp/cache"
@@ -96,20 +95,32 @@ if __name__ == "__main__":
         
         
     # run name
-    run_name = args.models[0] + "-" + args.dataset_name 
-    if args.mode == "lora":
-        run_name += "-lora_r-" + str(args.lora_r)
-    elif args.mode == "prefix_tuning":
-        run_name += "-prefix_len-" + str(args.prefix_len)
+    # run_name = args.models[0] + "-" + args.dataset_name 
+    # if args.mode == "lora" and args.trainable_params_percentage is None:
+    #     run_name += "-lora_r-" + str(args.lora_r)
+    # elif args.mode == "prefix_tuning":
+    #     run_name += "-prefix_len-" + str(args.prefix_len)
     
+    # if args.fp16:
+    #     run_name += "-fp16"
+    # elif args.bf16:
+    #     run_name += "-bf16"
+    # run_name += args.mode + "_" + time # differentiate diff runs
+    # rewrite the logic above into run name list
+    run_name_list = []
+    run_name_list.append(args.models[0])
+    run_name_list.append(args.dataset_name)
+    if args.trainable_params_percentage is None: # if use preset config
+        if args.mode == "lora":
+            run_name_list += ["lora_r", str(args.lora_r)]
+        if args.mode == "prefix_tuning":
+            run_name_list += ["prefix_len", str(args.prefix_len)]
     if args.fp16:
-        run_name += "-fp16"
+        run_name_list.append("fp16")
     elif args.bf16:
-        run_name += "-bf16"
-    
-    # TODO: rewrite the above run_name by concatenating a list of string
-        
-    run_name += args.mode + "_" + time # differentiate diff runs
+        run_name_list.append("bf16")
+    run_name_list.append(args.mode)
+    run_name = "-".join(run_name_list)
     
     trainer_args = TrainerArguments(
         model_names_or_paths = args.models,
@@ -152,6 +163,8 @@ if __name__ == "__main__":
         prefix_len = args.prefix_len,
         overwrite_cache= args.overwrite_cache,
         run_name = run_name,
+        trainable_params_percentage = args.trainable_params_percentage,
+        reduction_factor = args.reduction_factor,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
