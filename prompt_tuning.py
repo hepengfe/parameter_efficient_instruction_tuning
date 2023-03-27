@@ -127,6 +127,7 @@ if __name__ == "__main__":
     elif args.bf16:
         run_name_list.append("bf16")
     run_name_list.append(args.mode)
+    run_name_list.append("lr_" + str(args.learning_rate))")
     run_name = "-".join(run_name_list)
     
     trainer_args = TrainerArguments(
