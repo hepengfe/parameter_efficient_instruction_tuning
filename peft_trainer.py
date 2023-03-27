@@ -187,12 +187,48 @@ class PEFTTrainer:
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
         elif arguments.mode == "fine_tuning":
             pass
+        elif arguments.mode == "layer_tuning":
+            
+            for param in self.model.parameters():
+                param.requires_grad = False
+            
+            layers = []
+            # NOTE: we only fine-tune attention weights for now
+            if arguments.layer_name == "first_encoder_layer":
+                layers.append(self.model.encoder.block[0].layer[0])
+            elif arguments.layer_name == "last_encoder_layer":
+                layers.append(self.model.encoder.block[-1].layer[0])
+            elif arguments.layer_name == "first_decoder_layer":
+                layers.append(self.model.decoder.block[0].layer[0])
+            elif arguments.layer_name == "last_decoder_layer":
+                layers.append(self.model.decoder.block[-1].layer[0])
+            elif arguments.layer_name == "custom":
+                # all decoder layer
+                modules = self.model.decoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            elif arguments.layer_name == "custom2":
+                # all decoder layer
+                modules = self.model.decoder.block
+                for m in modules:
+                    layers.append(m.layer[0])
+            else:
+                raise NotImplementedError(f"layer_name {arguments.layer_name} is not implemented")
+            
+            for l in layers:
+                for name, module in l.named_modules():
+                    # if "selfattention" in name.lower():
+                    if hasattr(module, "weight"):
+                        module.weight.requires_grad = True
+                        print("activate gradient for ", name)
+            
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
         time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         self.arguments.run_name += f"_{time}"
         self.set_up_hf_trainer()
         self.tokenizer = self.tokenizers[0]
+        self.set_up_hf_trainer()
         
 
     def set_up_hf_trainer(self):
@@ -246,6 +282,7 @@ class PEFTTrainer:
                 data_collator=dataset_dependent_data_collator,
             )
         else:
+
             self.trainer = Seq2SeqTrainer(
                 model = self.model,
                 tokenizer = self.tokenizers[0],
@@ -380,6 +417,7 @@ class PEFTTrainer:
                 #     # config=m_config,
                 #     cache_dir=self.arguments.cache_dir,
                 # )
+                
             elif "roberta" in m_name_or_path:
                 m = AutoModelForSequenceClassification.from_pretrained(m_name_or_path)
             elif "gpt2" in m_name_or_path or "bloom" in m_name_or_path or "opt" in m_name_or_path:
@@ -707,46 +745,42 @@ class PEFTTrainer:
                 )
             self.model.set_active_adapters("sst-2")
         elif self.arguments.mode == "bitfit":
-            if self.arguments.model_arch == "encoder":
-                # deactivate gradients except for bias terms
-                BIAS_TERMS_DICT = {
-                    'intermediate': 'intermediate.dense.bias',
-                    'key': 'attention.self.key.bias',
-                    'query': 'attention.self.query.bias',
-                    'value': 'attention.self.value.bias',
-                    'output': 'output.dense.bias',
-                    'output_layernorm': 'output.LayerNorm.bias',
-                    'attention_layernorm': 'attention.output.LayerNorm.bias',
-                    'all': 'bias',
-                }
-            elif self.arguments.model_arch == "encoder-decoder":
-                BIAS_TERMS_DICT = {
-                    'intermediate': 'intermediate.dense.bias',
-                    'key': 'attention.self.key.bias',
-                    'query': 'attention.self.query.bias',
-                    'value': 'attention.self.value.bias',
-                    'output': 'output.dense.bias',
-                    'output_layernorm': 'output.LayerNorm.bias',
-                    'attention_layernorm': 'attention.output.LayerNorm.bias',
-                    'all': 'bias',
-                }
-            def convert_to_actual_components(components):
-                return [BIAS_TERMS_DICT[component] for component in components]
-            is_bias_init = False
-            for name, module in self.model.named_modules():
-                if hasattr(module, "bias") and "lm_head" not in name:
-                    if module.bias is None:
-                        print("found none bias, init bias for ", name)
-                        module.bias = torch.nn.Parameter(torch.randn(module.out_features))
-                        is_bias_init = True
-                    if not module.bias.requires_grad:
-                        module.bias.requires_grad = True
+            # if self.arguments.model_arch == "encoder":
+            #     # deactivate gradients except for bias terms
+            #     BIAS_TERMS_DICT = {
+            #         'intermediate': 'intermediate.dense.bias',
+            #         'key': 'attention.self.key.bias',
+            #         'query': 'attention.self.query.bias',
+            #         'value': 'attention.self.value.bias',
+            #         'output': 'output.dense.bias',
+            #         'output_layernorm': 'output.LayerNorm.bias',
+            #         'attention_layernorm': 'attention.output.LayerNorm.bias',
+            #         'all': 'bias',
+            #     }
+            # elif self.arguments.model_arch == "encoder-decoder":
+            #     BIAS_TERMS_DICT = {
+            #         'intermediate': 'intermediate.dense.bias',
+            #         'key': 'attention.self.key.bias',
+            #         'query': 'attention.self.query.bias',
+            #         'value': 'attention.self.value.bias',
+            #         'output': 'output.dense.bias',
+            #         'output_layernorm': 'output.LayerNorm.bias',
+            #         'attention_layernorm': 'attention.output.LayerNorm.bias',
+            #         'all': 'bias',
+            #     }
+            # def convert_to_actual_components(components):
+            #     return [BIAS_TERMS_DICT[component] for component in components]
+            # is_bias_init = False
+            # for name, module in self.model.named_modules():
+            #     if hasattr(module, "bias") and "lm_head" not in name:
+            #         if module.bias is None:
+            #             print("found none bias, init bias for ", name)
+            #             module.bias = torch.nn.Parameter(torch.randn(module.out_features))
+            #             is_bias_init = True
+            #         if not module.bias.requires_grad:
+            #             module.bias.requires_grad = True
                         
-            assert is_bias_init == True, "bias should be initialized"
-            
-            components = ["intermediate", "key", "query", "value", "output", "output_layernorm", "attention_layernorm", "all"]
-            trainable_components = convert_to_actual_components(components)
-            self._deactivate_relevant_gradients(trainable_components)
+            # assert is_bias_init == True, "bias should be initialized"
             
             raise NotImplementedError("bitfit is not computed for trainable paramters yet")
         else:

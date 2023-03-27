@@ -56,8 +56,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--trainable_params_percentage", type=float, default=None)
     arg_parser.add_argument("--reduction_factor", type=int, default=32)
     
-    
-    
+    arg_parser.add_argument("--layer_name", type=str, default=None)
+    arg_parser.add_argument("--bias_name", type=str, default=None)
     
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
@@ -74,6 +74,13 @@ if __name__ == "__main__":
             assert args.lora_r is not None, "lora_r is required for lora if trainable_params_percentage is not specified"
         if args.mode == "prefix_tuning":
             assert args.prefix_len is not None, "prefix_len is required for prefix_tuning"
+
+    
+    if args.mode == "layer_tuning":
+        assert args.layer_name is not None, "layer_name should be specified for layer tuning mode"
+    
+    if args.mode == "bitfit":
+        assert args.bias_name is not None, "bias_name should be specified for bitfit mode"
         
     
     cache_path = "~/tmp/cache"
@@ -165,6 +172,8 @@ if __name__ == "__main__":
         run_name = run_name,
         trainable_params_percentage = args.trainable_params_percentage,
         reduction_factor = args.reduction_factor,
+        layer_name = args.layer_name,
+        bias_name = args.bias_name,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers

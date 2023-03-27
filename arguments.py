@@ -58,3 +58,5 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     overwrite_cache: Optional[bool] = field(default=False)
     trainable_params_percentage: Optional[float] = field(default=None)
     reduction_factor: Optional[int] = field(default=32)
+    layer_name: Optional[str] = field(default=None)
+    bias_name: Optional[str] = field(default=None)
