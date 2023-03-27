@@ -39,23 +39,23 @@ import datetime
 
 class PEFTTrainer:
     def __init__(self, arguments):
-        self.model_names_or_paths = arguments.model_names_or_paths
+        self.model_names_or_path = arguments.model_names_or_path
         
         self.arguments = arguments
         
         self.verbalizers = self.get_dataset_verbalizers(self.arguments.dataset_name if self.arguments.dataset_name != "super_glue" else self.arguments.dataset_config_name)
         
         self.models = []
-        self.tokenizers = []
-        self.configs = []
+        # self.tokenizers = []
+        # self.configs = []
         self.num_soft_tokens = arguments.num_soft_tokens
-        self.load_models()
-        self.org_vocab_size = self.tokenizers[0].vocab_size
-        assert len(self.models) == len(self.tokenizers) == len(self.configs)
+        self.load_model()
+        self.org_vocab_size = self.tokenizer.vocab_size
+        # assert len(self.models) == len(self.tokenizers) == len(self.configs)
 
         self.new_vocab_sizes = [self.org_vocab_size]
         # temp set
-        self.model = self.models[0]
+        # self.model = self.models[0]
         self.model_cache = deepcopy(self.model)
         self.default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
         """
@@ -73,7 +73,7 @@ class PEFTTrainer:
             prompt_tuning_init = "TEXT"
             print("task type is seq_cls")
         prompt_tuning_init_text=" ".join(self.verbalizers)
-        init_text_tokenizer_name_or_path = self.model_names_or_paths[0]
+        init_text_tokenizer_name_or_path = self.model_names_or_path
 
         if arguments.mode == "prompt_tuning":
             cur_prompt_len = self.num_soft_tokens
@@ -225,14 +225,21 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
         time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.model = self.model_cache
         self.arguments.run_name += f"_{time}"
         self.set_up_hf_trainer()
-        self.tokenizer = self.tokenizers[0]
-        self.set_up_hf_trainer()
+        self.tokenizer = self.tokenizer
         
 
     def set_up_hf_trainer(self):
         del self.model_cache
+        if self.arguments.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
+            if torch.cuda.device_count() != self.arguments.model_parallel_gpus:
+                print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
+            if hasattr(m, "parallelize"):
+                self.model_cache.parallelize()
+            else:
+                print(f"Model {self.model_names_or_path} cannot be parallelized")
         optimizer = Adafactor(
             self.model.parameters(),
             # filter(lambda p: p.requires_grad, self.model.parameters()),
@@ -252,12 +259,12 @@ class PEFTTrainer:
 
         if self.arguments.dataset_name == "ni":
             dataset_dependent_data_collator = DataCollatorForNI(
-                self.tokenizers[0],
+                self.tokenizer,
                 model=self.model,
                 padding="max_length" if self.arguments.pad_to_max_length else "longest",
                 max_source_length=self.arguments.max_source_length,
                 max_target_length=self.arguments.max_target_length,
-                label_pad_token_id=self.tokenizers[0].pad_token_id,
+                label_pad_token_id=self.tokenizer.pad_token_id,
                 pad_to_multiple_of=8 if self.arguments.fp16 else None,
                 add_task_name=self.arguments.add_task_name,
                 add_task_definition=self.arguments.add_task_definition,
@@ -273,7 +280,7 @@ class PEFTTrainer:
         if self.arguments.mode in ["adapter", "prefix_tuning", "compactor"]:
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
-                tokenizer = self.tokenizers[0],
+                tokenizer = self.tokenizer,
                 train_dataset = None,
                 eval_dataset = None,
                 args = self.arguments,
@@ -285,7 +292,7 @@ class PEFTTrainer:
 
             self.trainer = Seq2SeqTrainer(
                 model = self.model,
-                tokenizer = self.tokenizers[0],
+                tokenizer = self.tokenizer,
                 train_dataset = None,
                 eval_dataset = None,
                 args = self.arguments,
@@ -366,10 +373,10 @@ class PEFTTrainer:
         return verbalizers
 
     
-    def load_models(self):
+    def load_model(self):
         print(
             "Loading",
-            self.arguments.model_names_or_paths,
+            self.arguments.model_names_or_path,
             "(for large models, this might take a while)",
         )
         print("Files will be cached at:", self.arguments.cache_dir)
@@ -377,84 +384,80 @@ class PEFTTrainer:
             "Ensure this directory is persistent if you do not want to download model files again!"
         )
         
-        for m_name_or_path in self.model_names_or_paths:
+        # for self.model_names_or_path in self.model_names_or_path:
             
-            m_config = AutoConfig.from_pretrained(
-                m_name_or_path,
-                cache_dir=self.arguments.cache_dir,
-                gradient_checkpointing=self.arguments.gradient_checkpointing,
-                use_cache=not self.arguments.gradient_checkpointing,
-            )
+        # self.config = AutoConfig.from_pretrained(
+        #     self.model_names_or_path,
+        #     cache_dir=self.arguments.cache_dir,
+        #     gradient_checkpointing=self.arguments.gradient_checkpointing,
+        #     use_cache=not self.arguments.gradient_checkpointing,
+        # )
 
-            m_tokenizer = AutoTokenizer.from_pretrained(
-                m_name_or_path,
-                cache_dir=self.arguments.cache_dir,
-                # use_cache = self.arguments.use_cache,
-                use_fast=True,
-                return_tensors="pt"
-            )
-            # m = T5ForConditionalGeneration.from_pretrained(
-            #     m_name_or_path,
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_names_or_path,
+            cache_dir=self.arguments.cache_dir,
+            # use_cache = self.arguments.use_cache,
+            use_fast=True,
+            return_tensors="pt"
+        )
+        # m = T5ForConditionalGeneration.from_pretrained(
+        #     self.model_names_or_path,
+        # )
+        if "t5" in self.model_names_or_path or "bart" in self.model_names_or_path:
+            
+            # import vanilla T5 model
+            
+            # m_config = T5Config.from_pretrained(self.model_names_or_path)
+            # import pdb; pdb.set_trace()
+            # print('check config')
+            
+            # m =T5Model.from_pretrained("t5-small")
+            # torch.zeros(linear_layer.out_features)
+            
+            
+            
+            # m.encoder.block[0].layer[0].SelfAttention.q.weight.bias
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            # m = T5PT.from_pretrained(
+            #     self.model_names_or_path,
+            #     # from_tf=bool(".ckpt" in self.model_names_or_path),
+            #     # config=m_config,
+            #     cache_dir=self.arguments.cache_dir,
             # )
-            if "t5" in m_name_or_path or "bart" in m_name_or_path:
-                
-                # import vanilla T5 model
-                
-                # m_config = T5Config.from_pretrained(m_name_or_path)
-                # import pdb; pdb.set_trace()
-                # print('check config')
-                
-                # m =T5Model.from_pretrained("t5-small")
-                # torch.zeros(linear_layer.out_features)
-                
-                
-                
-                # m.encoder.block[0].layer[0].SelfAttention.q.weight.bias
-                m = AutoModelForSeq2SeqLM.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
-                # m = T5PT.from_pretrained(
-                #     m_name_or_path,
-                #     # from_tf=bool(".ckpt" in m_name_or_path),
-                #     # config=m_config,
-                #     cache_dir=self.arguments.cache_dir,
-                # )
-                
-            elif "roberta" in m_name_or_path:
-                m = AutoModelForSequenceClassification.from_pretrained(m_name_or_path)
-            elif "gpt2" in m_name_or_path or "bloom" in m_name_or_path or "opt" in m_name_or_path:
-                from transformers import AutoModelForCausalLM
-                m = AutoModelForCausalLM.from_pretrained(
-                    m_name_or_path,
-                    # from_tf=bool(".ckpt" in m_name_or_path),
-                    # config=m_config,
-                    cache_dir=self.arguments.cache_dir,
-                )
-            else:
-                raise NotImplementedError("Model not supported: " + m_name_or_path)
-            # Wrap model in adapter package
-            # NOTE: temp implementation
-            if self.arguments.mode in ["adapter", "prefix_tuning", "compactor"] :
-                m = AutoAdapterModel.from_pretrained(m_name_or_path, cache_dir=self.arguments.cache_dir,)
-
-            if m_tokenizer.pad_token is None:
-                assert m_name_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
-                # gpt2 model
-                m_tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-                m.resize_token_embeddings(len(m_tokenizer))
             
-            if self.arguments.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
-                if torch.cuda.device_count() != self.arguments.model_parallel_gpus:
-                    print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
-                if hasattr(m, "parallelize"):
-                    m.parallelize()
-                else:
-                    print(f"Model {m_name_or_path} cannot be parallelized")
-            self.padding = "max_length" if self.arguments.pad_to_max_length else False
-            print('gpt2 requires padding to max length')
-            if "gpt2" in m_name_or_path:
-                self.padding = "max_length"
-            self.models.append(m)
-            self.configs.append(m_config)
-            self.tokenizers.append(m_tokenizer)
+        elif "roberta" in self.model_names_or_path:
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_names_or_path)
+        elif "gpt2" in self.model_names_or_path or "bloom" in self.model_names_or_path or "opt" in self.model_names_or_path:
+            from transformers import AutoModelForCausalLM
+            self.model_cache = AutoModelForCausalLM.from_pretrained(
+                self.model_names_or_path,
+                # from_tf=bool(".ckpt" in self.model_names_or_path),
+                # config=m_config,
+                cache_dir=self.arguments.cache_dir,
+            )
+        else:
+            raise NotImplementedError("Model not supported: " + self.model_names_or_path)
+        # Wrap model in adapter package
+        # NOTE: temp implementation
+        if self.arguments.mode in ["adapter", "prefix_tuning", "compactor"] :
+            self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+
+        if self.tokenizer.pad_token is None:
+            assert self.model_names_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
+            # gpt2 model
+            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+            m.resize_token_embeddings(len(self.tokenizer))
+        
+        
+        self.padding = "max_length" if self.arguments.pad_to_max_length else False
+        print('gpt2 requires padding to max length')
+        if "gpt2" in self.model_names_or_path:
+            self.padding = "max_length"
+        # self.config = m_config
+        # self.tokenizer = m_tokenizer
+            # self.models.append(m)
+            # self.configs.append(m_config)
+            # self.tokenizers.append(m_tokenizer)
             
 
 
@@ -638,8 +641,8 @@ class PEFTTrainer:
                 sample_label[sample_label==-100] = 0
 
                 
-                print("train dataset input sample", sample_input, "\n", self.tokenizers[0].decode(sample_input))
-                print("train dataset label sample", sample_label,"\n", self.tokenizers[0].decode(sample_label))
+                print("train dataset input sample", sample_input, "\n", self.tokenizer.decode(sample_input))
+                print("train dataset label sample", sample_label,"\n", self.tokenizer.decode(sample_label))
                 self.train_dataset.set_format(type="torch")
 
                 self.trainer.train_dataset = self.train_dataset
@@ -836,10 +839,10 @@ class PEFTTrainer:
             # general peft converting based on different peft config
             assert peft_config is not None, "peft config should be provided for non-adapter peft method"
             # convert text to token ids
-            verbalizer_ids = [self.tokenizers[0].encode(v) for v in self.verbalizers]
+            verbalizer_ids = [self.tokenizer.encode(v) for v in self.verbalizers]
             
             if reset_peft:
-                # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_paths[0], cache_dir=self.arguments.cache_dir)
+                # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
                 self.model = deepcopy(self.model_cache)
             # add tokens in models and tokenizers + freeze model
             self.model.enable_input_require_grads()
@@ -871,12 +874,12 @@ class PEFTTrainer:
             eval_dataset = self.eval_dataset
         
         max_verbalizer_len = max([len(v) for v in self.verbalizers])
-        if "bloom" in self.arguments.model_names_or_paths[0] or "opt" in self.arguments.model_names_or_paths[0]:
+        if "bloom" in self.arguments.model_names_or_path or "opt" in self.arguments.model_names_or_path:
             eval_preds = []
             correct = 0
             for data in eval_dataset:
                 out = self.model.generate(data["input_ids_0"].unsqueeze(0).cuda())
-                decoded_out = self.tokenizers[0].decode(out[0]).lower()
+                decoded_out = self.tokenizer.decode(out[0]).lower()
                 print(decoded_out)
                 decoded_out = decoded_out[-max_verbalizer_len:]
                 if self.verbalizers[0].strip().lower() in decoded_out.strip().lower() or "negative" in decoded_out or "no" in decoded_out:

@@ -13,7 +13,7 @@ if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
 
 
-    arg_parser.add_argument("--models", type=str, default="google/t5-large-lm-adapt")
+    arg_parser.add_argument("--model", type=str, default="google/t5-large-lm-adapt")
     arg_parser.add_argument("--model_arch", type=str, default="encoder-decoder")
     arg_parser.add_argument("--mode", type=str, default="prompt_tuning")
     arg_parser.add_argument("--dataset_name", type=str, default=None)
@@ -63,8 +63,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--bf16", action="store_true")
     
     args = arg_parser.parse_args()
-    args.models = args.models.split(",")
-    args.models = [m.strip() for m in args.models]
+    # args.models = args.models.split(",")
+    # args.models = [m.strip() for m in args.models]
     assert args.dataset_name is not None, "dataset name is required"
     if args.dataset_name == "ni":
         assert args.predict_with_generate, "predict_with_generate is required for ni"
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     # run_name += args.mode + "_" + time # differentiate diff runs
     # rewrite the logic above into run name list
     run_name_list = []
-    run_name_list.append(args.models[0])
+    run_name_list.append(args.model)
     run_name_list.append(args.dataset_name)
     if args.trainable_params_percentage is None: # if use preset config
         if args.mode == "lora":
@@ -127,11 +127,11 @@ if __name__ == "__main__":
     elif args.bf16:
         run_name_list.append("bf16")
     run_name_list.append(args.mode)
-    run_name_list.append("lr_" + str(args.learning_rate))")
+    run_name_list.append("lr_" + str(args.lr))
     run_name = "-".join(run_name_list)
     
     trainer_args = TrainerArguments(
-        model_names_or_paths = args.models,
+        model_names_or_path = args.model,
         model_arch = args.model_arch,
         dataset_name = args.dataset_name,
         dataset_config_name =args.dataset_config_name,

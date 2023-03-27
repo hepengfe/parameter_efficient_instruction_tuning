@@ -12,7 +12,7 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     dataset_name: Optional[str] = field(default=None)
     dataset_config_name: Optional[str] = field(default=None)
     cache_dir: Optional[str] = field(default="~/cache/")
-    model_names_or_paths: str = field(default="t5-small")
+    model_names_or_path: str = field(default="t5-small")
     pad_to_max_length: Optional[bool] = field(default=False)
     max_source_length: Optional[int] = field(default=128)
     max_target_length: Optional[int] = field(default=128)
