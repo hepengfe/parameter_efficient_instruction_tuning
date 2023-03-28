@@ -119,14 +119,14 @@ class PEFTTrainer:
             cur_prefix_len = 10 if self.arguments.prefix_len is None else self.arguments.prefix_len
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
             if self.arguments.trainable_params_percentage is not None:
-                config = PrefixTuningConfig(flat=True, prefix_length=cur_prefix_len)
+                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=512)
                 cur_trainable_params_percentage = self.convert_to_peft(config)
             while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.001:
                 if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
                     cur_prefix_len -= 1
                 else:
                     cur_prefix_len += 1
-                config = PrefixTuningConfig(flat=True, prefix_length=cur_prefix_len)
+                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=512)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("prefix length is {}".format(cur_prefix_len))
             self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len)
