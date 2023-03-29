@@ -75,6 +75,9 @@ class PEFTTrainer:
         prompt_tuning_init_text=" ".join(self.verbalizers)
         init_text_tokenizer_name_or_path = self.model_names_or_path
 
+        # model loading procedure:
+        # 1. load model from model_names_or_path    (self.load_model())
+        # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
         if arguments.mode == "prompt_tuning":
             cur_prompt_len = self.num_soft_tokens
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prompt_len > 0, "either prompt_len or trainable_params_percentage should be set"
@@ -146,7 +149,7 @@ class PEFTTrainer:
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
 
-            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.0001:
+            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.0015:
                 if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
                     cur_lora_r -= 1
                 else:
@@ -173,7 +176,7 @@ class PEFTTrainer:
                 # config = AdapterConfig()
                 config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 cur_trainable_params_percentage = self.convert_to_peft(config)
-            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.00002:
+            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.0015:
                 if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
                     cur_reduction_factor += 1
                 else:
@@ -229,7 +232,7 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
         time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.model = self.model_cache
+        # self.model = self.model_cache
         self.arguments.run_name += f"_{time}"
         self.set_up_hf_trainer()
         self.tokenizer = self.tokenizer
@@ -422,6 +425,8 @@ class PEFTTrainer:
             
             # m.encoder.block[0].layer[0].SelfAttention.q.weight.bias
             self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            
+            self.model_lm_head_weight = self.model.lm_head.weight
 
             # m = T5PT.from_pretrained(
             #     self.model_names_or_path,
@@ -444,8 +449,11 @@ class PEFTTrainer:
             raise NotImplementedError("Model not supported: " + self.model_names_or_path)
         # Wrap model in adapter package
         # NOTE: temp implementation
+        # import AutoModelWithHeads
+        from transformers import AutoModelWithHeads
         if self.arguments.mode in ["adapter", "compactor"] : # "prefix_tuning", 
-            self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            # self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            self.model =AutoModelWithHeads.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
 
         if self.tokenizer.pad_token is None:
             assert self.model_names_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
@@ -744,15 +752,20 @@ class PEFTTrainer:
             self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
             self.model.train_adapter("sst-2")
             if self.arguments.model_arch == "encoder":
+                
                 self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
             elif self.arguments.model_arch == "encoder-decoder":
-                # self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
-                pass
+                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
+                # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
+                self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
+                self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.arguments.model_arch}"
                 )
             self.model.set_active_adapters("sst-2")
+
+            
             # self.model.freeze_model(True)
         elif self.arguments.mode == "bitfit":
             # if self.arguments.model_arch == "encoder":
