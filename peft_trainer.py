@@ -79,7 +79,7 @@ class PEFTTrainer:
         # 1. load model from model_names_or_path    (self.load_model())
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
         if arguments.mode == "prompt_tuning":
-            cur_prompt_len = self.num_soft_tokens
+            cur_prompt_len = 1
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prompt_len > 0, "either prompt_len or trainable_params_percentage should be set"
             if self.arguments.trainable_params_percentage is not None:
                 config = PromptTuningConfig(
@@ -96,11 +96,8 @@ class PEFTTrainer:
 
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config)
-            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.00001:
-                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
-                    cur_prompt_len -= 1
-                else:
-                    cur_prompt_len += 1
+            while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+                    
                 config = PromptTuningConfig(
                     task_type=task_type,
                     num_virtual_tokens=cur_prompt_len,
@@ -116,28 +113,28 @@ class PEFTTrainer:
             
                 print("prompt length is {}".format(cur_prompt_len))
                 print("trainable params percentage is {}".format(cur_trainable_params_percentage))
-            self.arguments.run_name += "_prompt_len_{}".format(cur_prompt_len)
+                cur_prompt_len += 1
+            self.arguments.run_name += "_prompt_len_{}".format(cur_prompt_len-1)
         elif arguments.mode == "prefix_tuning":
             from transformers.adapters import PrefixTuningConfig
             from peft import PrefixTuningConfig
             
-            cur_prefix_len = 100 if self.arguments.prefix_len is None else self.arguments.prefix_len
+            cur_prefix_len = 1 if self.arguments.prefix_len is None else self.arguments.prefix_len
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
             if self.arguments.trainable_params_percentage is not None:
                 config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=512)
                 cur_trainable_params_percentage = self.convert_to_peft(config)
-            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.00005:
-                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
-                    cur_prefix_len -= 1
-                else:
-                    cur_prefix_len += 1
+            while cur_trainable_params_percentage  < self.arguments.trainable_params_percentage:
+
+                
                 config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=512)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("prefix length is {}".format(cur_prefix_len))
-            self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len)
+                cur_prefix_len += 1
+            self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len-1)
         
         elif arguments.mode == "lora":
-            cur_lora_r = 32 if self.arguments.lora_r is None else self.arguments.lora_r
+            cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
             assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
             if self.arguments.trainable_params_percentage is not None:
                 config = LoraConfig(
@@ -149,11 +146,7 @@ class PEFTTrainer:
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
 
-            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.0015:
-                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
-                    cur_lora_r -= 1
-                else:
-                    cur_lora_r += 1
+            while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
                 config = LoraConfig(
                     task_type=task_type,
                     inference_mode=False,
@@ -163,10 +156,11 @@ class PEFTTrainer:
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+                cur_lora_r += 1
             self.arguments.lora_r = cur_lora_r
-            self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
+            self.arguments.run_name += "_lora_r_" + str(cur_lora_r-1)
         elif arguments.mode in ["adapter", "compactor"]:
-            cur_reduction_factor = self.arguments.reduction_factor if self.arguments.reduction_factor is not None else 32
+            cur_reduction_factor = 100 if self.arguments.reduction_factor is not None else self.arguments.reduction_factor
             assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
             
             if self.arguments.trainable_params_percentage is not None:
@@ -176,11 +170,8 @@ class PEFTTrainer:
                 # config = AdapterConfig()
                 config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 cur_trainable_params_percentage = self.convert_to_peft(config)
-            while abs(cur_trainable_params_percentage - self.arguments.trainable_params_percentage) > 0.0015:
-                if cur_trainable_params_percentage > self.arguments.trainable_params_percentage:
-                    cur_reduction_factor += 1
-                else:
-                    cur_reduction_factor -= 1
+            while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+                cur_reduction_factor -= 1
                 config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
