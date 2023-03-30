@@ -117,36 +117,46 @@ class PEFTTrainer:
             self.arguments.run_name += "_prompt_len_{}".format(cur_prompt_len-1)
         elif arguments.mode == "prefix_tuning":
             from transformers.adapters import PrefixTuningConfig
-            from peft import PrefixTuningConfig
+            # from peft import PrefixTuningConfig
             
             cur_prefix_len = 1 if self.arguments.prefix_len is None else self.arguments.prefix_len
+            bottleneck_size = 576
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
             if self.arguments.trainable_params_percentage is not None:
-                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=512)
+                # config = PrefixTuningConfig(prefix_length=cur_prefix_len, flat=True)
+                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
+                                            encoder_prefix=True,
+                                            cross_prefix=True)
                 cur_trainable_params_percentage = self.convert_to_peft(config)
             while cur_trainable_params_percentage  < self.arguments.trainable_params_percentage:
-
-                
-                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=512)
+                cur_prefix_len += 1
+                # config = PrefixTuningConfig(prefix_length=cur_prefix_len, flat=True)
+                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
+                                            encoder_prefix=True,
+                                            cross_prefix=True)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("prefix length is {}".format(cur_prefix_len))
-                cur_prefix_len += 1
-            self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len-1)
+                
+            self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len)
+
+            
         
         elif arguments.mode == "lora":
+            # peft package
             cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
             assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
-            if self.arguments.trainable_params_percentage is not None:
-                config = LoraConfig(
-                    task_type=task_type,
-                    inference_mode=False,
-                    r=cur_lora_r,
-                    lora_alpha=32,
-                    lora_dropout=0.1
-                )
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
 
+            config = LoraConfig(
+                task_type=task_type,
+                inference_mode=False,
+                r=cur_lora_r,
+                lora_alpha=32,
+                lora_dropout=0.1
+            )
+            cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+                cur_lora_r += 1
                 config = LoraConfig(
                     task_type=task_type,
                     inference_mode=False,
@@ -156,23 +166,52 @@ class PEFTTrainer:
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-                cur_lora_r += 1
+                
             self.arguments.lora_r = cur_lora_r
-            self.arguments.run_name += "_lora_r_" + str(cur_lora_r-1)
+            self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
+        elif arguments.mode == "ia3":
+            from transformers.adapters import IA3Config
+            cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
+            assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+
+            config = IA3Config(
+                r = cur_lora_r,
+            )
+            cur_trainable_params_percentage = self.convert_to_peft(config)
+            print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+                cur_lora_r += 1
+                config = IA3Config(
+                    r = cur_lora_r,
+                )
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
+            
+            
         elif arguments.mode in ["adapter", "compactor"]:
-            cur_reduction_factor = 100 if self.arguments.reduction_factor is not None else self.arguments.reduction_factor
+            cur_reduction_factor = 128 if self.arguments.reduction_factor is not None else self.arguments.reduction_factor
             assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
             
             if self.arguments.trainable_params_percentage is not None:
-                from transformers.adapters import AdapterConfig, HoulsbyConfig
+                from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
                 # check existing adapter and remove them
-                
                 # config = AdapterConfig()
-                config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                if arguments.mode == "adapter":
+                    config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                else:
+                    config = CompacterConfig(reduction_factor=cur_reduction_factor)
+
                 cur_trainable_params_percentage = self.convert_to_peft(config)
             while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
-                cur_reduction_factor -= 1
-                config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                if arguments.mode == "adapter":
+                    cur_reduction_factor -= 1
+                else:
+                    cur_reduction_factor /= 2
+                if arguments.mode == "adapter":
+                    config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                else:
+                    config = CompacterConfig(reduction_factor=cur_reduction_factor)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
             self.arguments.run_name += f"_reduction_factor_{cur_reduction_factor}"
@@ -222,8 +261,20 @@ class PEFTTrainer:
             
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
+        if self.arguments.trainable_params_percentage and self.arguments.mode != "compactor":
+            # not check compactor
+            assert abs(self.arguments.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.arguments.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
+        # NOTE: set lm head trainable again
+        # if hasattr(self.model, "lm_head"): # peft model
+        #     self.model.lm_head.weight.requires_grad = True
+        # else: # adapter model
+        #     self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad
+        # self.arguments.run_name += f"lm_head_trainable"
+        
         time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         # self.model = self.model_cache
+        if self.arguments.trainable_params_percentage:
+            self.arguments.run_name += f"_trainable_params_percentage_{self.arguments.trainable_params_percentage}"
         self.arguments.run_name += f"_{time}"
         self.set_up_hf_trainer()
         self.tokenizer = self.tokenizer
@@ -275,7 +326,7 @@ class PEFTTrainer:
         else:
             dataset_dependent_data_collator = default_data_collator
 
-        if self.arguments.mode in ["adapter",  "compactor"]: # "prefix_tuning",
+        if self.arguments.mode in ["adapter",  "compactor", "prefix_tuning", "ia3"]: # "prefix_tuning",
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizer,
@@ -442,9 +493,8 @@ class PEFTTrainer:
         # NOTE: temp implementation
         # import AutoModelWithHeads
         from transformers import AutoModelWithHeads
-        if self.arguments.mode in ["adapter", "compactor"] : # "prefix_tuning", 
-            # self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            self.model =AutoModelWithHeads.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3"] : # "prefix_tuning", 
+            self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
 
         if self.tokenizer.pad_token is None:
             assert self.model_names_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
@@ -737,19 +787,19 @@ class PEFTTrainer:
             peft_config (_type_): _description_
         """
         
-        if self.arguments.mode in ["adapter", "compactor"]: # prefix_tuning
+        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3"]: # prefix_tuning
             
             # add and activate adapter
             self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
             self.model.train_adapter("sst-2")
             if self.arguments.model_arch == "encoder":
-                
                 self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
             elif self.arguments.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
                 # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
                 self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
                 self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
+                
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.arguments.model_arch}"
@@ -873,7 +923,7 @@ class PEFTTrainer:
         if print_params_required_grad:
             for n, p in self.model.named_parameters():
                 if p.requires_grad:
-                    print(p.data.shape, n)
+                    print(n,p.data.shape)
         print(f"Total Params: {total_params}, Trainable Params: {trainable_params}, Trainable Ratio: {trainable_params/total_params}")
 
         return trainable_params/total_params

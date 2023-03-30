@@ -87,6 +87,9 @@ if __name__ == "__main__":
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = os.path.join(EXPR_DIR, time)
+    # add random number into output_path
+    import random
+    output_path += "_" + str(random.randint(0, 10000))
     default_optimizer_n_scheduler = False
     # if args.dev:
     #     default_optimizer_n_scheduler = True
