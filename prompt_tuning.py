@@ -54,7 +54,7 @@ if __name__ == "__main__":
     
     arg_parser.add_argument("--overwrite_cache", action="store_true")
     arg_parser.add_argument("--trainable_params_percentage", type=float, default=None)
-    arg_parser.add_argument("--reduction_factor", type=int, default=32)
+    arg_parser.add_argument("--reduction_factor", type=float, default=32)
     
     arg_parser.add_argument("--layer_name", type=str, default=None)
     arg_parser.add_argument("--bias_name", type=str, default=None)

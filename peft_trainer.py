@@ -190,7 +190,7 @@ class PEFTTrainer:
             
             
         elif arguments.mode in ["adapter", "compactor"]:
-            cur_reduction_factor = 128 if self.arguments.reduction_factor is not None else self.arguments.reduction_factor
+            cur_reduction_factor = 128 if self.arguments.reduction_factor is  None else self.arguments.reduction_factor
             assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
             
             if self.arguments.trainable_params_percentage is not None:
@@ -200,21 +200,21 @@ class PEFTTrainer:
                 if arguments.mode == "adapter":
                     config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 else:
-                    config = CompacterConfig(reduction_factor=cur_reduction_factor)
+                    config = CompacterConfig(reduction_factor=cur_reduction_factor,
+                                             phm_dim=2)
 
                 cur_trainable_params_percentage = self.convert_to_peft(config)
             while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
-                if arguments.mode == "adapter":
-                    cur_reduction_factor -= 1
-                else:
-                    cur_reduction_factor /= 2
+                cur_reduction_factor /=1.01
                 if arguments.mode == "adapter":
                     config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 else:
-                    config = CompacterConfig(reduction_factor=cur_reduction_factor)
+                    config = CompacterConfig(reduction_factor=cur_reduction_factor,
+                                             phm_dim=2)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
-            self.arguments.run_name += f"_reduction_factor_{cur_reduction_factor}"
+            # only keep 4 digits for reduction factor
+            self.arguments.run_name += f"_reduction_factor_{cur_reduction_factor:.4f}"
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
