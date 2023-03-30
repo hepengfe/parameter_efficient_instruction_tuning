@@ -235,7 +235,7 @@ class PEFTTrainer:
             if torch.cuda.device_count() != self.arguments.model_parallel_gpus:
                 print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
             if hasattr(m, "parallelize"):
-                self.model_cache.parallelize()
+                self.model.parallelize()
             else:
                 print(f"Model {self.model_names_or_path} cannot be parallelized")
         optimizer = Adafactor(
@@ -430,7 +430,7 @@ class PEFTTrainer:
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_names_or_path)
         elif "gpt2" in self.model_names_or_path or "bloom" in self.model_names_or_path or "opt" in self.model_names_or_path:
             from transformers import AutoModelForCausalLM
-            self.model_cache = AutoModelForCausalLM.from_pretrained(
+            self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_names_or_path,
                 # from_tf=bool(".ckpt" in self.model_names_or_path),
                 # config=m_config,
