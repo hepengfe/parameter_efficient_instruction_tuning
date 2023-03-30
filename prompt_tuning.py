@@ -80,7 +80,9 @@ if __name__ == "__main__":
         assert args.layer_name is not None, "layer_name should be specified for layer tuning mode"
     
     if args.mode == "bitfit":
-        assert args.bias_name is not None, "bias_name should be specified for bitfit mode"
+        if args.bias_name is None:
+            args.bias_name = "encoder_decoder_bias"
+            print("bias_name is set to encoder_decoder_bias since args.bias_name is not specified")
         
     if args.mode == "fine_tuning":
         args.lr = 1e-5
