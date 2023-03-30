@@ -82,7 +82,11 @@ if __name__ == "__main__":
     if args.mode == "bitfit":
         assert args.bias_name is not None, "bias_name should be specified for bitfit mode"
         
-    
+    if args.mode == "fine_tuning":
+        args.lr = 1e-5
+        print("lr is set to 1e-5 due to fine_tuning mode")
+        
+
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -102,8 +106,8 @@ if __name__ == "__main__":
         args.max_target_length = 128
         print("max_source_length is set to 1024")
         print("max_target_length is set to 128")
-        
-        
+    
+    
     # run name
     # run_name = args.models[0] + "-" + args.dataset_name 
     # if args.mode == "lora" and args.trainable_params_percentage is None:
