@@ -61,7 +61,8 @@ if __name__ == "__main__":
     
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
-    
+    # num_training_tasks
+    # arg_parser.add_argument("--num_training_tasks", type=int, default=None)
     args = arg_parser.parse_args()
     # args.models = args.models.split(",")
     # args.models = [m.strip() for m in args.models]
@@ -88,6 +89,17 @@ if __name__ == "__main__":
         args.lr = 1e-5
         print("lr is set to 1e-5 due to fine_tuning mode")
         
+    
+
+    # extract suffix number from data_dir
+    if args.data_dir is not None:
+        import re
+        result = re.findall(r'\d+', args.data_dir)
+        if len(result) == 0:
+            num_training_tasks = None
+        else:
+            num_training_tasks = int(result[-1])
+
 
     cache_path = "~/tmp/cache"
     EXPR_DIR = "~/tmp/"
@@ -184,6 +196,7 @@ if __name__ == "__main__":
         reduction_factor = args.reduction_factor,
         layer_name = args.layer_name,
         bias_name = args.bias_name,
+        num_training_tasks= num_training_tasks,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
