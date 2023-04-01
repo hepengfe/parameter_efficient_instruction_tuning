@@ -190,7 +190,7 @@ class PEFTTrainer:
             
             
         elif arguments.mode in ["adapter", "compactor"]:
-            cur_reduction_factor = 128 if self.arguments.reduction_factor is  None else self.arguments.reduction_factor
+            cur_reduction_factor = 64 if self.arguments.reduction_factor is  None else self.arguments.reduction_factor
             assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
             
             if self.arguments.trainable_params_percentage is not None:
