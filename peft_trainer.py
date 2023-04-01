@@ -224,6 +224,13 @@ class PEFTTrainer:
             self.convert_to_peft()
         elif arguments.mode == "fine_tuning":
             pass
+        elif arguments.mode == "lm_head_tuning":
+            for param in self.model.parameters():
+                param.requires_grad = False
+            # lm head takes almost 10% paramaters
+            for name, module in self.model.named_modules():
+                if "lm_head" in name:
+                    module.weight.requires_grad = True
         elif arguments.mode == "layer_tuning":
             
             for param in self.model.parameters():
@@ -891,10 +898,7 @@ class PEFTTrainer:
                         if not module.bias.requires_grad:
                             print("activate gradient for ", name)
                             module.bias.requires_grad = True
-            # lm head takes almost 10% paramaters, so we don't want to train it
-            # for name, module in self.model.named_modules():
-            #     if "lm_head" in name:
-            #         module.weight.requires_grad = True
+            
 
         else:
             # NOTE: prompt tuning

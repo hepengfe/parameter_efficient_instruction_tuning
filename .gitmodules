@@ -1,3 +1,6 @@
 [submodule "adapter-transformers"]
 	path = adapter-transformers
 	url = https://github.com/adapter-hub/adapter-transformers.git
+[submodule "Ladder-Side-Tuning"]
+	path = Ladder-Side-Tuning
+	url = git@github.com:ylsung/Ladder-Side-Tuning.git
