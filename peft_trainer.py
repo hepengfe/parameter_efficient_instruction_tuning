@@ -261,7 +261,7 @@ class PEFTTrainer:
             
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
-        if self.arguments.trainable_params_percentage and self.arguments.mode != "compactor":
+        if self.arguments.trainable_params_percentage and not self.arguments.mode in ["compactor","fine_tuning"]:
             # not check compactor
             assert abs(self.arguments.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.arguments.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
         # NOTE: set lm head trainable again
@@ -275,7 +275,15 @@ class PEFTTrainer:
         # self.model = self.model_cache
         if self.arguments.trainable_params_percentage:
             self.arguments.run_name += f"_trainable_params_percentage_{self.arguments.trainable_params_percentage}"
+        # prepare runname before passing to trainer
+        
+        
+        if self.arguments.num_training_tasks:
+            self.arguments.run_name += f"_num_training_tasks_{self.arguments.num_training_tasks}"
         self.arguments.run_name += f"_{time}"
+        
+        # import pdb; pdb.set_trace()
+        # print("check run_name", self.arguments.run_name)
         self.set_up_hf_trainer()
         self.tokenizer = self.tokenizer
         
