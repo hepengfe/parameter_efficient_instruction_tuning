@@ -834,7 +834,8 @@ class PEFTTrainer:
                 max_num_instances_per_eval_task=self.arguments.max_num_instances_per_eval_task,
                 download_mode = "reuse_dataset_if_exists" if not self.arguments.overwrite_cache else "force_redownload",
             )
-            
+            # max_num_instances_per_task
+            self.argument.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
             if self.arguments.dev:
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(10))
             self.trainer.train_dataset = raw_datasets["train"]

@@ -200,6 +200,7 @@ if __name__ == "__main__":
         bias_name = args.bias_name,
         num_training_tasks= num_training_tasks,
         use_pelt_gate=args.use_pelt_gate,
+        max_num_instances_per_task=args.max_num_instances_per_task,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
