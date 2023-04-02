@@ -457,18 +457,7 @@ class PEFTTrainer:
                 data_collator=dataset_dependent_data_collator,
             )
         else:
-            self.trainer = Seq2SeqAdapterTrainer(
-                model = self.model,
-                tokenizer = self.tokenizer,
-                train_dataset = None,
-                eval_dataset = None,
-                args = self.arguments,
-                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
-                data_collator=dataset_dependent_data_collator,
-            )
-
-            # self.trainer = Seq2SeqTrainer(
+            # self.trainer = Seq2SeqAdapterTrainer(
             #     model = self.model,
             #     tokenizer = self.tokenizer,
             #     train_dataset = None,
@@ -478,6 +467,17 @@ class PEFTTrainer:
             #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
             #     data_collator=dataset_dependent_data_collator,
             # )
+
+            self.trainer = Seq2SeqTrainer(
+                model = self.model,
+                tokenizer = self.tokenizer,
+                train_dataset = None,
+                eval_dataset = None,
+                args = self.arguments,
+                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+                data_collator=dataset_dependent_data_collator,
+            )
         self.trainer.model = self.model
         
     def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
@@ -593,8 +593,11 @@ class PEFTTrainer:
             # torch.zeros(linear_layer.out_features)
             
             
-            # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+            if self.arguments.mode == "lora":
+                # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            else:
+                self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
 
 
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir).lm_head.weight
@@ -835,7 +838,7 @@ class PEFTTrainer:
                 download_mode = "reuse_dataset_if_exists" if not self.arguments.overwrite_cache else "force_redownload",
             )
             # max_num_instances_per_task
-            self.argument.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
+            self.arguments.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
             if self.arguments.dev:
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(10))
             self.trainer.train_dataset = raw_datasets["train"]
