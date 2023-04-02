@@ -28,6 +28,7 @@ from transformers import (
     create_optimizer,
     get_constant_schedule
 )
+from AdapterPEFTModel import AdapterPeftModelForSeq2Seq
 from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_params, round_up
@@ -45,11 +46,13 @@ class PEFTTrainer:
         
         self.verbalizers = self.get_dataset_verbalizers(self.arguments.dataset_name if self.arguments.dataset_name != "super_glue" else self.arguments.dataset_config_name)
         
-        self.models = []
+        # self.models = []
         # self.tokenizers = []
         # self.configs = []
         self.num_soft_tokens = arguments.num_soft_tokens
+        
         self.load_model()
+        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
         self.org_vocab_size = self.tokenizer.vocab_size
         # assert len(self.models) == len(self.tokenizers) == len(self.configs)
 
@@ -74,6 +77,10 @@ class PEFTTrainer:
             print("task type is seq_cls")
         prompt_tuning_init_text=" ".join(self.verbalizers)
         init_text_tokenizer_name_or_path = self.model_names_or_path
+
+        
+
+
 
         # model loading procedure:
         # 1. load model from model_names_or_path    (self.load_model())
@@ -155,7 +162,7 @@ class PEFTTrainer:
             )
             cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
             print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
                 cur_lora_r += 1
                 config = LoraConfig(
                     task_type=task_type,
@@ -265,12 +272,109 @@ class PEFTTrainer:
                     if hasattr(module, "weight"):
                         module.weight.requires_grad = True
                         print("activate gradient for ", name)
+        elif arguments.mode == "lora+adapter":
+            from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
             
+            
+            # model.base_model.model_frozen = True
+            # print('cur_trainable_params_percentage', self.check_trainable_parameters())
+            # # peft package
+            # cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
+            # assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            # task_type = TaskType.SEQ_2_SEQ_LM
+            # config = LoraConfig(
+            #     task_type=task_type,
+            #     inference_mode=False,
+            #     r=cur_lora_r,
+            #     lora_alpha=32,
+            #     lora_dropout=0.1
+            # )
+            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            
+            
+            
+            
+            # lora 2
+            cur_lora_r = 40 if self.arguments.lora_r is None else self.arguments.lora_r
+            freeze_model = True
+            from transformers.adapters import LoRAConfig
+            config = LoRAConfig(r=cur_lora_r, alpha=16)
+            self.model.add_adapter("lora_adapter", config=config)
+            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            self.check_trainable_parameters()
+            print("lora_adapter is added, trainable parameters: ", self.check_trainable_parameters())
+
+            # adapter
+            cur_reduction_factor=18
+            peft_config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+            reset_peft = False
+            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
+            self.model.train_adapter("sst-2")
+            print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
+            # do not freeze model as model itself is already frozen
+            # we don't want to freeze the lora module
+            
+            # self.model.train_adapter(["sst-2","lora_adapter"] , freeze_model=freeze_model)
+            self.model.train_adapter(["sst-2", "lora_adapter"], freeze_model=freeze_model)
+            
+            if self.arguments.model_arch == "encoder":
+                self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
+            elif self.arguments.model_arch == "encoder-decoder":
+                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
+                # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
+                self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
+                self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
+                
+                
+            else:
+                raise NotImplementedError(
+                    f"Not implemented for model arch: {self.arguments.model_arch}"
+                )
+            
+            self.model.set_active_adapters(["sst-2", "lora_adapter"])
+            
+            
+            print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
+
+            self.arguments.lora_r = cur_lora_r
+            self.arguments.run_name += "_lora_r_" + str(cur_lora_r) 
+
+            
+            # invalid
+        elif arguments.mode == "unipelt":
+            from transformers.adapters import UniPELTConfig, PrefixTuningConfig, PfeifferConfig, LoRAConfig
+            gating = False
+            reset_peft=False
+            peft_config = UniPELTConfig(
+                PrefixTuningConfig(prefix_length=1, use_gating=self.arguments.use_pelt_gate),
+                PfeifferConfig(reduction_factor=500, use_gating=self.arguments.use_pelt_gate),
+                LoRAConfig(r=self.arguments.lora_r, use_gating=self.arguments.use_pelt_gate),
+                )
+            self.model.add_adapter("sst-2", config = peft_config)
+            self.model.train_adapter("sst-2")
+            
+            
+            self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
+            self.model.set_active_adapters("sst-2")
+            # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
+            self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
+            self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
+
+            print('cur_trainable_params_percentage', self.check_trainable_parameters())
+            self.arguments.run_name += "lora_r_" + str(self.arguments.lora_r)
+            self.arguments.run_name += "_use_peft_gate_" + str(self.arguments.use_pelt_gate)
+        
+        
         else:
             raise NotImplementedError(f"mode {arguments.mode} is not implemented")
         if self.arguments.trainable_params_percentage and not self.arguments.mode in ["compactor","fine_tuning"]:
             # not check compactor
             assert abs(self.arguments.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.arguments.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
+            
+        # deactivate 
+    
+            
         # NOTE: set lm head trainable again
         # if hasattr(self.model, "lm_head"): # peft model
         #     self.model.lm_head.weight.requires_grad = True
@@ -353,8 +457,7 @@ class PEFTTrainer:
                 data_collator=dataset_dependent_data_collator,
             )
         else:
-
-            self.trainer = Seq2SeqTrainer(
+            self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizer,
                 train_dataset = None,
@@ -364,6 +467,17 @@ class PEFTTrainer:
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
                 data_collator=dataset_dependent_data_collator,
             )
+
+            # self.trainer = Seq2SeqTrainer(
+            #     model = self.model,
+            #     tokenizer = self.tokenizer,
+            #     train_dataset = None,
+            #     eval_dataset = None,
+            #     args = self.arguments,
+            #     optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+            #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+            #     data_collator=dataset_dependent_data_collator,
+            # )
         self.trainer.model = self.model
         
     def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
@@ -479,18 +593,12 @@ class PEFTTrainer:
             # torch.zeros(linear_layer.out_features)
             
             
-            
-            # m.encoder.block[0].layer[0].SelfAttention.q.weight.bias
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            
-            self.model_lm_head_weight = self.model.lm_head.weight
+            # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
 
-            # m = T5PT.from_pretrained(
-            #     self.model_names_or_path,
-            #     # from_tf=bool(".ckpt" in self.model_names_or_path),
-            #     # config=m_config,
-            #     cache_dir=self.arguments.cache_dir,
-            # )
+
+            self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir).lm_head.weight
+
             
         elif "roberta" in self.model_names_or_path:
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_names_or_path)
@@ -599,32 +707,34 @@ class PEFTTrainer:
             # to avoid key conflict when merging model_inputs into one dict
             model_inputs = {f"{key}_{model_idx}": value for key, value in model_inputs.items() if key != "class_ids"}
             return model_inputs
+        # import pdb; pdb.set_trace()
+        # print('check inputs')
+        
+        model_inputs = {}
+        
+        
+        # multi_model_inputs_l = []# initalize as list of dict, finally merge dict into one dict
+        # multi_model_inputs = {}
+        tokenizer = self.tokenizer
 
-        multi_model_inputs_l = []# initalize as list of dict, finally merge dict into one dict
-        multi_model_inputs = {}
-
-        for model_idx in range(len(self.models)):
-            tokenizer = self.tokenizers[model_idx]
-            model_inputs = tokenizer(
+        model_inputs = tokenizer(
                 formatted_inputs,
                 max_length=self.arguments.max_source_length,
                 padding=self.padding,
                 truncation=True,
                 return_tensors='pt'
             )
-            
-            # build label input ids
-            with tokenizer.as_target_tokenizer():
-                labels = tokenizer(
-                    verbal_targets,
-                    return_tensors='pt', padding="max_length", 
-                    max_length=self.arguments.max_target_length,
-                    # padding=self.padding,
-                    truncation=True,
-                )
-            
-            if self.padding == "max_length" and self.arguments.ignore_pad_token_for_loss:
-                labels["input_ids"][labels["input_ids"]==0] = -100
+        # build label input ids
+        with tokenizer.as_target_tokenizer():
+            labels = tokenizer(
+                verbal_targets,
+                return_tensors='pt', padding="max_length", 
+                max_length=self.arguments.max_target_length,
+                # padding=self.padding,
+                truncation=True,
+            )
+        if self.padding == "max_length" and self.arguments.ignore_pad_token_for_loss:
+            labels["input_ids"][labels["input_ids"]==0] = -100
                 # labels["input_ids"] = [
                 #     [(l if l != self.tokenizer.pad_token_id else -100)
                 #     for l in label]
@@ -640,22 +750,66 @@ class PEFTTrainer:
                 # model_inputs["label"] = labels["input_ids"]
                 model_inputs["labels"] = labels["input_ids"]
             
-            # if evaluation:
-            #     model_inputs["class_ids"] = torch.tensor(class_ids)
-            multi_model_inputs[model_idx] = model_inputs
-            # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
-            
-            # model_inputs
-            multi_model_inputs_l.append(model_inputs)
-        multi_model_inputs_d = {}
-        for model_inputs in multi_model_inputs_l:
-            multi_model_inputs_d.update(model_inputs)
         if evaluation:
             label_name = "label" if self.arguments.dataset_name not in ["trec"] else "coarse_label"
             label_class_ids = [l for l in examples[label_name] if l in class_ids]
-            multi_model_inputs_d["class_ids"] = torch.tensor(label_class_ids)
+            model_inputs["class_ids"] = torch.tensor(label_class_ids)
+            # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
+        return model_inputs
+
+        # for model_idx in range(len(self.models)):
+        #     tokenizer = self.tokenizers[model_idx]
+        #     model_inputs = tokenizer(
+        #         formatted_inputs,
+        #         max_length=self.arguments.max_source_length,
+        #         padding=self.padding,
+        #         truncation=True,
+        #         return_tensors='pt'
+        #     )
+            
+        #     # build label input ids
+        #     with tokenizer.as_target_tokenizer():
+        #         labels = tokenizer(
+        #             verbal_targets,
+        #             return_tensors='pt', padding="max_length", 
+        #             max_length=self.arguments.max_target_length,
+        #             # padding=self.padding,
+        #             truncation=True,
+        #         )
+            
+        #     if self.padding == "max_length" and self.arguments.ignore_pad_token_for_loss:
+        #         labels["input_ids"][labels["input_ids"]==0] = -100
+        #         # labels["input_ids"] = [
+        #         #     [(l if l != self.tokenizer.pad_token_id else -100)
+        #         #     for l in label]
+        #         #     for label in labels["input_ids"]
+        #         # ]
+            
+        #     # if encoder only model
+        #     if self.arguments.model_arch == "encoder":
+        #         # for SequenceClassificationModel
+        #         # model_inputs["label"] = [l for l in examples["label"] if l in class_ids]
+        #         model_inputs["labels"] = [l for l in examples["label"] if l in class_ids]
+        #     else:
+        #         # model_inputs["label"] = labels["input_ids"]
+        #         model_inputs["labels"] = labels["input_ids"]
+            
+        #     # if evaluation:
+        #     #     model_inputs["class_ids"] = torch.tensor(class_ids)
+        #     multi_model_inputs[model_idx] = model_inputs
+        #     # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
+            
+        #     # model_inputs
+        #     multi_model_inputs_l.append(model_inputs)
+        # multi_model_inputs_d = {}
+        # for model_inputs in multi_model_inputs_l:
+        #     multi_model_inputs_d.update(model_inputs)
+        # if evaluation:
+        #     label_name = "label" if self.arguments.dataset_name not in ["trec"] else "coarse_label"
+        #     label_class_ids = [l for l in examples[label_name] if l in class_ids]
+        #     multi_model_inputs_d["class_ids"] = torch.tensor(label_class_ids)
         
-        return multi_model_inputs_d
+        # return multi_model_inputs_d
 
     def load_dataset(self, train, valid):
         """
@@ -701,7 +855,8 @@ class PEFTTrainer:
                     # fn_kwargs = {"evaluation": True},
                     desc="Running tokenizer on train dataset",
                 )
-
+                
+                
                 # sample_input = np.array(self.train_dataset[0]["input_ids_0"])
                 sample_input = np.array(self.train_dataset[0]["input_ids"])
                 # sample_label = np.array(self.train_dataset[0]["labels_0"])
@@ -929,16 +1084,16 @@ class PEFTTrainer:
 
 
     def check_trainable_parameters(self, print_params_required_grad = False):
-        total_params = sum(p.numel() for p in self.model.parameters())
+        # total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         # print_params_required_grad = True
         if print_params_required_grad:
             for n, p in self.model.named_parameters():
                 if p.requires_grad:
                     print(n,p.data.shape)
-        print(f"Total Params: {total_params}, Trainable Params: {trainable_params}, Trainable Ratio: {trainable_params/total_params}")
+        print(f"Model Params: {self.model_trainable_params}, Trainable Params: {trainable_params}, Trainable Ratio: {trainable_params/self.model_trainable_params}")
 
-        return trainable_params/total_params
+        return trainable_params/self.model_trainable_params
 
 
     def train(self):
@@ -1104,8 +1259,12 @@ class PEFTTrainer:
                     decoder_input_ids = torch.zeros(input_ids.size(0),1).long().cuda()
                     # get out with encoder outputs
                     # decoder input ids are just pad tokens as <bos>
-                    # out = model(input_ids = input_ids.cuda(), attention_mask=attention_mask.cuda(), decoder_input_ids=decoder_input_ids)
-                    out = model(input_ids = input_ids.cuda(), attention_mask=attention_mask.cuda(), labels=labels.cuda())
+                    out = model(input_ids = input_ids.cuda(), attention_mask=attention_mask.cuda(), decoder_input_ids=decoder_input_ids)
+                    # out = model(
+                    #     input_ids = input_ids.cuda(), 
+                    #     attention_mask=attention_mask.cuda(), 
+                    #     # labels=labels.cuda()
+                    # )
                     logits = out.logits.cpu()
                     
                     for seq_step, vid in enumerate(v_ids):

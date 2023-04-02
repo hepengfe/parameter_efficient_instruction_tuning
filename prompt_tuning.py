@@ -59,6 +59,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--layer_name", type=str, default=None)
     arg_parser.add_argument("--bias_name", type=str, default=None)
     
+    arg_parser.add_argument("--use_pelt_gate", action="store_true")
+    
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
     # num_training_tasks
@@ -90,7 +92,7 @@ if __name__ == "__main__":
         print("lr is set to 1e-5 due to fine_tuning mode")
         
     
-
+    num_training_tasks = None
     # extract suffix number from data_dir
     if args.data_dir is not None:
         import re
@@ -197,6 +199,7 @@ if __name__ == "__main__":
         layer_name = args.layer_name,
         bias_name = args.bias_name,
         num_training_tasks= num_training_tasks,
+        use_pelt_gate=args.use_pelt_gate,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
