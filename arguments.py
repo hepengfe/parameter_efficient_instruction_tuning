@@ -62,3 +62,4 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     bias_name: Optional[str] = field(default=None)
     num_training_tasks: Optional[int] = field(default=None)
     use_pelt_gate: Optional[bool] = field(default=False)
+    phm_dimension: Optional[int] = field(default=2)

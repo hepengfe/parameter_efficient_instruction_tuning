@@ -199,29 +199,36 @@ class PEFTTrainer:
         elif arguments.mode in ["adapter", "compactor"]:
             cur_reduction_factor = 64 if self.arguments.reduction_factor is  None else self.arguments.reduction_factor
             assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
-            
-            if self.arguments.trainable_params_percentage is not None:
-                from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
-                # check existing adapter and remove them
-                # config = AdapterConfig()
-                if arguments.mode == "adapter":
-                    config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
-                else:
-                    config = CompacterConfig(reduction_factor=cur_reduction_factor,
-                                             phm_dim=2)
 
-                cur_trainable_params_percentage = self.convert_to_peft(config)
-            while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
+            # check existing adapter and remove them
+            # config = AdapterConfig()
+            if arguments.mode == "adapter":
+                config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+            else:
+                config = CompacterConfig(reduction_factor=cur_reduction_factor,
+                                            phm_dim=self.arguments.phm_dimension )
+
+            cur_trainable_params_percentage = self.convert_to_peft(config)
+            while self.arguments.trainable_params_percentage and  cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
                 cur_reduction_factor /=1.01
                 if arguments.mode == "adapter":
                     config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 else:
                     config = CompacterConfig(reduction_factor=cur_reduction_factor,
-                                             phm_dim=2)
+                                             phm_dim=self.arguments.phm_dimension)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
             # only keep 4 digits for reduction factor
             self.arguments.run_name += f"_reduction_factor_{cur_reduction_factor:.4f}"
+            if arguments.mode == "compactor":
+                self.arguments.run_name += f"_phm_dim_{self.arguments.phm_dimension}"
+        elif arguments.mode == "parallel_adapter":
+            from transformers.adapters import ParallelConfig
+            config = ParallelConfig(reduction_factor= self.arguments.reduction_factor)
+            cur_trainable_params_percentage = self.convert_to_peft(config)
+            print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}")
+            self.arguments.run_name += f"_reduction_factor_{self.arguments.reduction_factor:.4f}"
         elif arguments.mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.num_soft_tokens > 0:
@@ -343,12 +350,17 @@ class PEFTTrainer:
             
             # invalid
         elif arguments.mode == "unipelt":
-            from transformers.adapters import UniPELTConfig, PrefixTuningConfig, PfeifferConfig, LoRAConfig
+            from transformers.adapters import UniPELTConfig, PrefixTuningConfig, PfeifferConfig, LoRAConfig, HoulsbyConfig
             gating = False
             reset_peft=False
+            # peft_config = UniPELTConfig(
+            #     PrefixTuningConfig(prefix_length=1, use_gating=self.arguments.use_pelt_gate),
+            #     PfeifferConfig(reduction_factor=500, use_gating=self.arguments.use_pelt_gate),
+            #     LoRAConfig(r=self.arguments.lora_r, use_gating=self.arguments.use_pelt_gate),
+            #     )
             peft_config = UniPELTConfig(
                 PrefixTuningConfig(prefix_length=1, use_gating=self.arguments.use_pelt_gate),
-                PfeifferConfig(reduction_factor=500, use_gating=self.arguments.use_pelt_gate),
+                HoulsbyConfig(reduction_factor=500, use_gating=self.arguments.use_pelt_gate),
                 LoRAConfig(r=self.arguments.lora_r, use_gating=self.arguments.use_pelt_gate),
                 )
             self.model.add_adapter("sst-2", config = peft_config)
@@ -404,7 +416,7 @@ class PEFTTrainer:
         if self.arguments.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
             if torch.cuda.device_count() != self.arguments.model_parallel_gpus:
                 print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
-            if hasattr(m, "parallelize"):
+            if hasattr(self.model, "parallelize"):
                 self.model.parallelize()
             else:
                 print(f"Model {self.model_names_or_path} cannot be parallelized")
@@ -445,7 +457,7 @@ class PEFTTrainer:
         else:
             dataset_dependent_data_collator = default_data_collator
 
-        if self.arguments.mode in ["adapter",  "compactor", "prefix_tuning", "ia3"]: # "prefix_tuning",
+        if self.arguments.mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]: # "prefix_tuning",
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizer,
@@ -961,7 +973,7 @@ class PEFTTrainer:
             peft_config (_type_): _description_
         """
         
-        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3"]: # prefix_tuning
+        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3", "parallel_adapter"]: # prefix_tuning
             
             # add and activate adapter
             self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
@@ -979,7 +991,7 @@ class PEFTTrainer:
                     f"Not implemented for model arch: {self.arguments.model_arch}"
                 )
             self.model.set_active_adapters("sst-2")
-
+            
             
             # self.model.freeze_model(True)
         elif self.arguments.mode == "bitfit":
