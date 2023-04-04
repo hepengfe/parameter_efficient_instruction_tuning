@@ -63,3 +63,4 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     num_training_tasks: Optional[int] = field(default=None)
     use_pelt_gate: Optional[bool] = field(default=False)
     lora_modules: Optional[list] = field(default_factory=None)
+    phm_dimension: Optional[int] = field(default=2)
