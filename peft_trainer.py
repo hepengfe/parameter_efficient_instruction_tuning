@@ -153,29 +153,51 @@ class PEFTTrainer:
             cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
             assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
 
-            config = LoraConfig(
-                task_type=task_type,
-                inference_mode=False,
-                r=cur_lora_r,
-                lora_alpha=32,
-                lora_dropout=0.1
-            )
-            cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
-            print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
-                cur_lora_r += 1
-                config = LoraConfig(
-                    task_type=task_type,
-                    inference_mode=False,
-                    r=cur_lora_r,
-                    lora_alpha=32,
-                    lora_dropout=0.1
-                )
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
-                print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            # config = LoraConfig(
+            #     task_type=task_type,
+            #     inference_mode=False,
+            #     r=cur_lora_r,
+            #     lora_alpha=32,
+            #     lora_dropout=0.1,
+            #     # lora_modules
+            #     target_modules= list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"],
+            # )
+            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            # while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            #     cur_lora_r += 1
+            #     config = LoraConfig(
+            #         task_type=task_type,
+            #         inference_mode=False,
+            #         r=cur_lora_r,
+            #         lora_alpha=32,
+            #         lora_dropout=0.1,
+            #         target_modules=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"],
+            #     )
+            #     cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            
+            
+            
+            
+            
+            from transformers.adapters import LoRAConfig
+            config = LoRAConfig(r=cur_lora_r,
+                                alpha=16,
+                                attn_matrices=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"]
+                                )
+            self.model.add_adapter("lora_adapter", config=config)
+            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            
+            trainable_parameters = self.convert_to_peft(config, reset_peft=True)
+            print("lora_adapter is added, trainable parameters: ", trainable_parameters)
+            
+            
                 
             self.arguments.lora_r = cur_lora_r
             self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
+            if self.arguments.lora_modules:
+                self.arguments.run_name += "_lora_modules_" + self.arguments.lora_modules
         elif arguments.mode == "ia3":
             from transformers.adapters import IA3Config
             cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
@@ -593,11 +615,11 @@ class PEFTTrainer:
             # torch.zeros(linear_layer.out_features)
             
             
-            if self.arguments.mode == "lora":
-                # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            else:
-                self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+            # if self.arguments.mode == "lora":
+            #     # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
+            #     self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            # else:
+            self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
 
 
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir).lm_head.weight
@@ -961,7 +983,7 @@ class PEFTTrainer:
             peft_config (_type_): _description_
         """
         
-        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3"]: # prefix_tuning
+        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3", "lora"]: # prefix_tuning
             
             # add and activate adapter
             self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)

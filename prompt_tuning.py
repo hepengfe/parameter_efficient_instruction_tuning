@@ -60,7 +60,8 @@ if __name__ == "__main__":
     arg_parser.add_argument("--bias_name", type=str, default=None)
     
     arg_parser.add_argument("--use_pelt_gate", action="store_true")
-    
+    # lora_modules
+    arg_parser.add_argument("--lora_modules", type=str, default=None)
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
     # num_training_tasks
@@ -201,6 +202,7 @@ if __name__ == "__main__":
         num_training_tasks= num_training_tasks,
         use_pelt_gate=args.use_pelt_gate,
         max_num_instances_per_task=args.max_num_instances_per_task,
+        lora_modules=args.lora_modules,
     )
     trainer = PEFTTrainer(trainer_args)
     import transformers
