@@ -174,21 +174,28 @@ class PEFTTrainer:
             #     )
             #     cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
             #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            
-            
-            
-            
+
             
             from transformers.adapters import LoRAConfig
             config = LoRAConfig(r=cur_lora_r,
                                 alpha=16,
                                 attn_matrices=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"]
                                 )
-            self.model.add_adapter("lora_adapter", config=config)
-            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # self.model.add_adapter("lora_adapter", config=config)
+            cur_trainable_params_percentage = self.convert_to_peft(config)
+            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+                cur_lora_r += 1
+                config = LoRAConfig(
+                                r=cur_lora_r,
+                                alpha=16,
+                                attn_matrices=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"]
+                                )
+                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             
-            trainable_parameters = self.convert_to_peft(config, reset_peft=True)
-            print("lora_adapter is added, trainable parameters: ", trainable_parameters)
+            
+            
+            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
             
             
                 
@@ -626,7 +633,7 @@ class PEFTTrainer:
             # torch.zeros(linear_layer.out_features)
             
             
-            if self.arguments.mode in ["lora", "fine_tuning"]:
+            if self.arguments.mode in ["fine_tuning"]:
                 # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
             else:
