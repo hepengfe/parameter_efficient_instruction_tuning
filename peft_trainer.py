@@ -88,22 +88,21 @@ class PEFTTrainer:
         if arguments.mode == "prompt_tuning":
             cur_prompt_len = 1
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prompt_len > 0, "either prompt_len or trainable_params_percentage should be set"
-            if self.arguments.trainable_params_percentage is not None:
-                config = PromptTuningConfig(
-                    task_type=task_type,
-                    num_virtual_tokens=cur_prompt_len,
-                    inference_mode=False,
-                    device= self.arguments.device,
-                    
-                    
-                    
-                    # prompt_tuning_init="TEXT",
-                    # prompt_tuning_init_text=prompt_tuning_init_text,
-                    # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
+            config = PromptTuningConfig(
+                task_type=task_type,
+                num_virtual_tokens=cur_prompt_len,
+                inference_mode=False,
+                device= self.arguments.device,
+                
+                
+                
+                # prompt_tuning_init="TEXT",
+                # prompt_tuning_init_text=prompt_tuning_init_text,
+                # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
 
-                )
-                cur_trainable_params_percentage = self.convert_to_peft(config)
-            while cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            )
+            cur_trainable_params_percentage = self.convert_to_peft(config)
+            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
                     
                 config = PromptTuningConfig(
                     task_type=task_type,
@@ -129,13 +128,12 @@ class PEFTTrainer:
             cur_prefix_len = 1 if self.arguments.prefix_len is None else self.arguments.prefix_len
             bottleneck_size = 576
             assert self.arguments.trainable_params_percentage is not None or self.arguments.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
-            if self.arguments.trainable_params_percentage is not None:
-                # config = PrefixTuningConfig(prefix_length=cur_prefix_len, flat=True)
-                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
-                                            encoder_prefix=True,
-                                            cross_prefix=True)
-                cur_trainable_params_percentage = self.convert_to_peft(config)
-            while cur_trainable_params_percentage  < self.arguments.trainable_params_percentage:
+
+            config = PrefixTuningConfig(prefix_length=cur_prefix_len,       bottleneck_size=bottleneck_size,
+                                        encoder_prefix=True,
+                                        cross_prefix=True)
+            cur_trainable_params_percentage = self.convert_to_peft(config)
+            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage  < self.arguments.trainable_params_percentage:
                 cur_prefix_len += 1
                 # config = PrefixTuningConfig(prefix_length=cur_prefix_len, flat=True)
                 config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
@@ -259,6 +257,7 @@ class PEFTTrainer:
         elif arguments.mode == "bitfit":
             self.convert_to_peft()
         elif arguments.mode == "fine_tuning":
+            # no converting needed
             pass
         elif arguments.mode == "lm_head_tuning":
             for param in self.model.parameters():
@@ -627,11 +626,11 @@ class PEFTTrainer:
             # torch.zeros(linear_layer.out_features)
             
             
-            # if self.arguments.mode == "lora":
-            #     # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-            #     self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            # else:
-            self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+            if self.arguments.mode in ["lora", "fine_tuning"]:
+                # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+            else:
+                self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
 
 
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir).lm_head.weight
