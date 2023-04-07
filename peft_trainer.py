@@ -93,9 +93,6 @@ class PEFTTrainer:
                 num_virtual_tokens=cur_prompt_len,
                 inference_mode=False,
                 device= self.arguments.device,
-                
-                
-                
                 # prompt_tuning_init="TEXT",
                 # prompt_tuning_init_text=prompt_tuning_init_text,
                 # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
@@ -590,6 +587,7 @@ class PEFTTrainer:
             raise NotImplementedError("Dataset not supported: " + dataset)
         return verbalizers
 
+
     
     def load_model(self):
         print(
@@ -636,13 +634,14 @@ class PEFTTrainer:
             if self.arguments.mode in ["fine_tuning"]:
                 # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            else:
-                self.model = AdapterPeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+            elif self.arguments.mode in ["adapter"]:
+                self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+            elif self.arguments.mode in ["prompt_tuning"]:
+                self.model = PeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
 
 
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir).lm_head.weight
 
-            
         elif "roberta" in self.model_names_or_path:
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_names_or_path)
         elif "gpt2" in self.model_names_or_path or "bloom" in self.model_names_or_path or "opt" in self.model_names_or_path:
@@ -880,7 +879,7 @@ class PEFTTrainer:
             # max_num_instances_per_task
             self.arguments.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
             if self.arguments.dev:
-                raw_datasets["validation"] = raw_datasets["validation"].select(range(10))
+                raw_datasets["validation"] = raw_datasets["validation"].select(range(2))
             self.trainer.train_dataset = raw_datasets["train"]
             self.trainer.eval_dataset = raw_datasets["validation"]
             self.eval_dataset = raw_datasets["validation"]
@@ -1144,6 +1143,20 @@ class PEFTTrainer:
         # set the trainer logging level to warning
         self.load_dataset(train = True, valid = True)
         self.trainer.train()
+
+        # self.tokenizer.save_pretrained(self.arguments.run_name)
+        # replace "/" to "-" in run_name
+        self.arguments.run_name = self.arguments.run_name.replace("/", "-")
+        
+        # read current dir name not path
+        cur_dir = os.path.basename(os.getcwd())
+        best_check_point = self.trainer.state.best_model_checkpoint
+        # extract checkpoint name
+        best_check_point_dir_name = best_check_point.split("/")[-1]
+        
+        model_out_dir= os.path.join(f"../{cur_dir}_cache", self.arguments.run_name.replace("/", "-") , best_check_point_dir_name)
+        print("saving model to :", model_out_dir)
+        self.trainer.save_model(model_out_dir)
     
     def evaluate(self, eval_dataset=None):
         if eval_dataset is None:
