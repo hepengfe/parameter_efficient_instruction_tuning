@@ -67,6 +67,8 @@ if __name__ == "__main__":
     
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
+    # num_train_epochs
+    arg_parser.add_argument("--num_train_epochs", type=float, default=3.0)
     # num_training_tasks
     # arg_parser.add_argument("--num_training_tasks", type=int, default=None)
     args = arg_parser.parse_args()
@@ -156,6 +158,10 @@ if __name__ == "__main__":
     run_name_list.append(args.mode)
     run_name_list.append("lr_" + str(args.lr))
     run_name = "-".join(run_name_list)
+    # either max_steps or num_train_epochs should be specified
+    assert args.max_steps is not None or args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
+    
+    
     
     trainer_args = TrainerArguments(
         model_names_or_path = args.model,
@@ -168,7 +174,8 @@ if __name__ == "__main__":
         logging_steps=10,
         save_total_limit=1,
         save_steps = args.eval_save_steps,
-        max_steps=args.max_steps,
+        max_steps=-1 if args.max_steps is None else args.max_steps, # it will override num_train_epochs if specified
+        num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size = args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         output_dir = output_path,
