@@ -145,11 +145,11 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
         """Yields examples."""
         logger.info(f"Generating tasks from = {path}")
         with open(path, encoding="utf-8") as split_f:
-            if "train" in path:
+            if "train_tasks.txt" in path:
                 cur_split = "train"
-            elif "dev" in path:
-                cur_split = "dev"
-            elif "test" in path:
+            elif "dev_tasks.txt" in path:
+                cur_split = "dev_"
+            elif "test_tasks.txt" in path:
                 cur_split = "test"
             else:
                 raise ValueError(f"Unknown split: {path}")
@@ -166,7 +166,7 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                 # test
                 # if i > 5 and (cur_split == "train" or cur_split == "test"):
                 #     continue
-                print(line, ":", cur_split)
+                # print(line, ":", cur_split)
                 with open(task_path, encoding="utf-8") as task_f:
                     s = task_f.read()
                     task_data = json.loads(s)

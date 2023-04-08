@@ -6,5 +6,5 @@ To install the package, do the following.
 
 * under `peft` folder, `pip install -e .`
 * under `adapater-transfeomers` folder, `pip install -e .` to install adapter-transformer.
-* `pip uninstall transfomers` uninstall the original transformer to use adapter-transformer instead.
+* `pip uninstall transfomers` uninstall the original transformer installed by `peft` to use adapter-transformer instead.
 * rouge-score: `pip install rouge-score`

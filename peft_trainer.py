@@ -882,8 +882,8 @@ class PEFTTrainer:
                 download_mode = "reuse_dataset_if_exists" if not self.arguments.overwrite_cache else "force_redownload",
             )
             
-            
-            self.arguments.run_name += self.arguments.data_dir
+            flat_data_dir = self.arguments.data_dir.replace("/", "_")
+            self.arguments.run_name += flat_data_dir
             # max_num_instances_per_task
             self.arguments.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
             if self.arguments.dev:
@@ -1252,9 +1252,7 @@ class PEFTTrainer:
                             "Prediction": pred
                         }) + "\n")
             return result
-        # import pdb; pdb.set_trace()
-        # print('check why acc is so low')
-        
+
         
         if not is_pred_logits:
             # based on predicted tokens to compute metrics
