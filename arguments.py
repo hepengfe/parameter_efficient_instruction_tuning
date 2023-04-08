@@ -64,3 +64,4 @@ class TrainerArguments(Seq2SeqTrainingArguments):
     use_pelt_gate: Optional[bool] = field(default=False)
     lora_modules: Optional[list] = field(default_factory=None)
     phm_dimension: Optional[int] = field(default=2)
+    num_train_epochs: Optional[int] = field(default=3)

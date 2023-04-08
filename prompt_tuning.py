@@ -8,6 +8,7 @@ from arguments import TrainerArguments
 import argparse
 import os
 import torch
+import transformers
 
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
@@ -19,7 +20,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--dataset_name", type=str, default=None)
     arg_parser.add_argument("--dataset_config_name", type=str, default=None)
     arg_parser.add_argument("--dev", action="store_true")
-    arg_parser.add_argument("--max_steps", type=int, default=30000)
+    arg_parser.add_argument("--max_steps", type=int, default=None)
     arg_parser.add_argument("--eval_save_steps", type=int, default=2500)
     arg_parser.add_argument("--per_device_train_batch_size", type=int, default=12)
     arg_parser.add_argument("--per_device_eval_batch_size", type=int, default=6)
@@ -68,7 +69,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--fp16", action="store_true")
     arg_parser.add_argument("--bf16", action="store_true")
     # num_train_epochs
-    arg_parser.add_argument("--num_train_epochs", type=float, default=3.0)
+    arg_parser.add_argument("--num_train_epochs", type=float, default=2.0)
     # num_training_tasks
     # arg_parser.add_argument("--num_training_tasks", type=int, default=None)
     args = arg_parser.parse_args()
@@ -197,6 +198,7 @@ if __name__ == "__main__":
         task_dir = args.task_dir,
         max_source_length = args.max_source_length,
         max_target_length = args.max_target_length,
+        max_num_instances_per_eval_task= args.max_num_instances_per_eval_task,
         load_best_model_at_end=True,
         save_strategy = "steps",
         fp16 = args.fp16,
@@ -216,7 +218,7 @@ if __name__ == "__main__":
         phm_dimension=args.phm_dimension,
     )
     trainer = PEFTTrainer(trainer_args)
-    import transformers
+    
     transformers.logging.set_verbosity_warning()
 
     trainer.train()

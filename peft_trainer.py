@@ -873,21 +873,27 @@ class PEFTTrainer:
             assert self.arguments.data_dir is not None, "data_dir is required for NaturalInstructions dataset"
             # Get the NaturalInstructions dataset
             raw_datasets = load_dataset(
-                "util/ni_dataset.py", 
-                data_dir=self.arguments.data_dir, 
-                task_dir=self.arguments.task_dir, 
+                "util/ni_dataset.py",
+                data_dir=self.arguments.data_dir,
+                task_dir=self.arguments.task_dir,
                 cache_dir=self.arguments.cache_dir,
                 max_num_instances_per_task=self.arguments.max_num_instances_per_task,
                 max_num_instances_per_eval_task=self.arguments.max_num_instances_per_eval_task,
                 download_mode = "reuse_dataset_if_exists" if not self.arguments.overwrite_cache else "force_redownload",
             )
+            
+            
+            self.arguments.run_name += self.arguments.data_dir
             # max_num_instances_per_task
             self.arguments.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
             if self.arguments.dev:
-                raw_datasets["validation"] = raw_datasets["validation"].select(range(2))
+                raw_datasets["validation"] = raw_datasets["validation"].select(range(20))
             self.trainer.train_dataset = raw_datasets["train"]
             self.trainer.eval_dataset = raw_datasets["validation"]
             self.eval_dataset = raw_datasets["validation"]
+            
+            
+            
         else:
             raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
             column_names = raw_datasets["train"].column_names
@@ -1156,12 +1162,16 @@ class PEFTTrainer:
         # read current dir name not path
         cur_dir = os.path.basename(os.getcwd())
         best_check_point = self.trainer.state.best_model_checkpoint
-        # extract checkpoint name
-        best_check_point_dir_name = best_check_point.split("/")[-1]
-        
-        model_out_dir= os.path.join(f"../{cur_dir}_cache", self.arguments.run_name.replace("/", "-") , best_check_point_dir_name)
-        print("saving model to :", model_out_dir)
-        self.trainer.save_model(model_out_dir)
+        if best_check_point is not None:
+            # extract checkpoint name
+            best_check_point_dir_name = best_check_point.split("/")[-1]
+            
+            model_out_dir= os.path.join(f"../{cur_dir}_cache", self.arguments.run_name.replace("/", "-") , best_check_point_dir_name)
+            print("saving model to :", model_out_dir)
+            self.trainer.save_model(model_out_dir)
+        else:
+            print("best checkpoint is None, no model is saved")
+    
     
     def evaluate(self, eval_dataset=None):
         if eval_dataset is None:
@@ -1219,8 +1229,16 @@ class PEFTTrainer:
             result_per_task = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=dataset["Task"])
             result.update(result_per_task)
             categories = ["_".join(it[0].lower().split()) for it in dataset["Categories"]]
-            result_per_category = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=categories)
+
+            result_per_category = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=categories) # by category only, evaluate the category on all dev and test
+
+            
+            categories_split = ["_".join(it[0].lower().split()) for it in dataset["Categories_split"]]
+            result_per_category_split = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=categories_split) # by category + split, evaluate the category on dev and test separately
+
+            
             result.update(result_per_category)
+            result.update(result_per_category_split)
             prediction_lens = [np.count_nonzero(pred != self.tokenizer.pad_token_id) for pred in preds]
             result["gen_len"] = np.mean(prediction_lens)
             result = {k: round(v, 4) for k, v in result.items()}

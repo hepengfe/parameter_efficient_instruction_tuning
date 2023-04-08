@@ -71,6 +71,7 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                     "Source": [datasets.Value("string")],
                     "URL": [datasets.Value("string")],
                     "Categories": [datasets.Value("string")],
+                    "Categories_split": [datasets.Value("string")],
                     "Reasoning": [datasets.Value("string")],
                     "Definition": [datasets.Value("string")],
                     "Positive Examples": [{
@@ -144,13 +145,33 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
         """Yields examples."""
         logger.info(f"Generating tasks from = {path}")
         with open(path, encoding="utf-8") as split_f:
-            for line in split_f:
+            if "train" in path:
+                cur_split = "train"
+            elif "dev" in path:
+                cur_split = "dev"
+            elif "test" in path:
+                cur_split = "test"
+            else:
+                raise ValueError(f"Unknown split: {path}")
+            i = 0
+            for line in split_f: # each line is a task
+                
                 task_name = line.strip()
+                # in dev file, test data is split into dev and test
+                if task_name == "":
+                    cur_split = "test_in_dev"
+                    continue
                 task_path = os.path.join(task_dir, task_name + ".json")
+                i += 1
+                # test
+                # if i > 5 and (cur_split == "train" or cur_split == "test"):
+                #     continue
+                print(line, ":", cur_split)
                 with open(task_path, encoding="utf-8") as task_f:
                     s = task_f.read()
                     task_data = json.loads(s)
                     task_data["Task"] = task_name
+                    # task_data["Task_by_split"] = 
                     if "Instruction Source" in task_data:
                         task_data.pop("Instruction Source")
                     all_instances = task_data.pop("Instances")
@@ -168,5 +189,8 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                         example = task_data.copy()
                         example["id"] = instance["id"]
                         example["Instance"] = instance
+                        example["Categories"] = [f"{c}_{cur_split}" for c in example["Categories"]]
+                        # example[f"Categories_{cur_split}"] = example["Categories"] # compare shared categories across splits
+                        example["Categories_split"] = [cur_split] 
                         yield f"{task_name}_{idx}", example
 

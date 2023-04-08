@@ -104,14 +104,18 @@ def compute_grouped_metrics(predictions, references, groups, xlingual=False):
     for pred, gold, group in zip(predictions, references, groups):
         if group not in examples_by_group:
             examples_by_group[group] = []
+        # gold is a list of references
         examples_by_group[group].append((pred, gold))
     
+
     results = {}
     for group, group_examples in examples_by_group.items():
         task_predictions, task_references = zip(*group_examples)
         group_metrics = compute_metrics(task_predictions, task_references, xlingual=xlingual)
         for metric, value in group_metrics.items():
             results[f"{metric}_for_{group}"] = value
+
+
     return results
 
 
