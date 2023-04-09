@@ -164,11 +164,11 @@ class DataArguments:
         metadata={ "help": "The number of negative examples per task." },
     )
     add_task_name : bool = field(
-        default=True,
+        default=False,
         metadata={ "help": "Whether to add task name to the input." },
     )
     add_task_definition: bool = field(
-        default=False,
+        default=True,
         metadata={ "help": "Whether to add task definition to the input." },
     )
     add_explanation: bool = field(

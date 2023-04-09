@@ -508,17 +508,6 @@ class PEFTTrainer:
                 data_collator=dataset_dependent_data_collator,
             )
         else:
-            # self.trainer = Seq2SeqAdapterTrainer(
-            #     model = self.model,
-            #     tokenizer = self.tokenizer,
-            #     train_dataset = None,
-            #     eval_dataset = None,
-            #     args = self.arguments,
-            #     optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-            #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
-            #     data_collator=dataset_dependent_data_collator,
-            # )
-
             self.trainer = Seq2SeqTrainer(
                 model = self.model,
                 tokenizer = self.tokenizer,

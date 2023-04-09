@@ -88,10 +88,6 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                     "Output_language": [datasets.Value("string")],
                     "Instruction_language": [datasets.Value("string")],
                     "Domains": [datasets.Value("string")],
-                    # "Instances": [{
-                    #     "input": datasets.Value("string"),
-                    #     "output": [datasets.Value("string")]
-                    # }],
                     "Instance": {
                         "id": datasets.Value("string"),
                         "input": datasets.Value("string"),
@@ -190,7 +186,6 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                         example["id"] = instance["id"]
                         example["Instance"] = instance
                         example["Categories"] = [f"{c}_{cur_split}" for c in example["Categories"]]
-                        # example[f"Categories_{cur_split}"] = example["Categories"] # compare shared categories across splits
                         example["Categories_split"] = [cur_split] 
                         yield f"{task_name}_{idx}", example
 
