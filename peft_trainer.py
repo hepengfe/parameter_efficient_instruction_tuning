@@ -1,6 +1,5 @@
 from transformers import T5Tokenizer, T5ForConditionalGeneration,T5Model, T5Config, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification, Seq2SeqAdapterTrainer
 
-from arguments import TrainerArguments
 from datasets import load_dataset, load_metric, concatenate_datasets
 import numpy as np
 from torch.nn import CrossEntropyLoss
@@ -84,7 +83,10 @@ class PEFTTrainer:
         if not os.path.exists(self.model_args.model_name_or_path):
             self.configure_n_convert_peft()
         else:
-            self.model.set_active_adapters("sst-2")
+            # TODO: maybe read available peft module rather than
+            # read by module name
+            adapter_name = self.model_args.tuning_mode
+            self.model.set_active_adapters(adapter_name)
             
 
 
@@ -379,8 +381,9 @@ class PEFTTrainer:
             peft_config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
             reset_peft = False
             # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
-            self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
-            self.model.train_adapter("sst-2")
+            self.model.add_adapter(self.model_args.tuning_mode,
+                                   config = peft_config, overwrite_ok=reset_peft)
+            self.model.train_adapter(self.model_args.tuning_mode)
             print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
             # do not freeze model as model itself is already frozen
             # we don't want to freeze the lora module
@@ -426,15 +429,15 @@ class PEFTTrainer:
                 HoulsbyConfig(reduction_factor=500, use_gating=self.peft_args.use_pelt_gate),
                 LoRAConfig(r=self.peft_args.lora_r, use_gating=self.peft_args.use_pelt_gate),
                 )
-            self.model.add_adapter("sst-2", config = peft_config)
-            self.model.train_adapter("sst-2")
+            self.model.add_adapter(adapter_name, config = peft_config)
+            self.model.train_adapter(adapter_name)
             
             
-            self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
-            self.model.set_active_adapters("sst-2")
+            self.model.add_seq2seq_lm_head(f"seq2seq-head-{adapter_name}", overwrite_ok=reset_peft)
+            self.model.set_active_adapters(adapter_name)
             # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
-            self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
-            self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
+            self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight = self.model_lm_head_weight
+            self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight.requires_grad = False
 
             print('cur_trainable_params_percentage', self.check_trainable_parameters())
             self.training_args.run_name += "lora_r_" + str(self.peft_args.lora_r)
@@ -789,7 +792,7 @@ class PEFTTrainer:
         return model_inputs
 
 
-    def load_dataset(self, train, valid):
+    def load_dataset(self, train, valid, test=False):
         """
         dataset loading pipeline:
         1. load dataset from huggingface datasets
@@ -820,6 +823,7 @@ class PEFTTrainer:
             self.trainer.train_dataset = raw_datasets["train"]
             self.trainer.eval_dataset = raw_datasets["validation"]
             self.eval_dataset = raw_datasets["validation"]
+            self.test_dataset = raw_datasets["test"]
         else:
             raw_datasets = load_dataset(self.data_args.dataset_name, self.data_args.dataset_config_name)
             column_names = raw_datasets["train"].column_names
@@ -898,6 +902,7 @@ class PEFTTrainer:
                 self.trainer.eval_dataset = self.eval_dataset
 
 
+
     def _deactivate_relevant_gradients(self, trainable_components):
         """
         https://github.com/benzakenelad/BitFit/blob/7ead19a8350a01d5701f9e2df896a1c5b42c3723/glue_evaluator.py#L612
@@ -936,25 +941,26 @@ class PEFTTrainer:
         Args:
             peft_config (_type_): _description_
         """
-        
+        adapter_name = self.model_args.tuning_mode
         if self.model_args.tuning_mode in ["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]: # prefix_tuning
             
+            
             # add and activate adapter
-            self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
-            self.model.train_adapter("sst-2")
+            self.model.add_adapter(adapter_name, config = peft_config, overwrite_ok=reset_peft)
+            self.model.train_adapter(adapter_name)
             if self.model_args.model_arch == "encoder":
-                self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
+                self.model.add_classification_head(f"classification-head-{adapter_name}", num_labels=2, overwrite_ok=reset_peft)
             elif self.model_args.model_arch == "encoder-decoder":
-                self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
+                self.model.add_seq2seq_lm_head(f"seq2seq-head-{adapter_name}", overwrite_ok=reset_peft)
                 # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
-                self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
-                self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
+                self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight = self.model_lm_head_weight
+                self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight.requires_grad = False
                 
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.model_args.model_arch}"
                 )
-            self.model.set_active_adapters("sst-2")
+            self.model.set_active_adapters(self.model_args.tuning_mode)
             
             # self.model.freeze_model(True)
     
@@ -1100,34 +1106,37 @@ class PEFTTrainer:
     
     
     def evaluate(self, eval_dataset=None):
-        if eval_dataset is None:
-            if self.eval_dataset is None:
-                self.load_dataset(train = False, valid = True)
-            eval_dataset = self.eval_dataset
+        self.load_dataset(train=False, valid=False, test = True)
+        self.trainer.evaluate(self.test_dataset)
         
-        max_verbalizer_len = max([len(v) for v in self.verbalizers])
-        if "bloom" in self.model_args.model_name_or_path or "opt" in self.model_args.model_name_or_path:
-            eval_preds = []
-            correct = 0
-            for data in eval_dataset:
-                out = self.model.generate(data["input_ids_0"].unsqueeze(0).cuda())
-                decoded_out = self.tokenizer.decode(out[0]).lower()
-                print(decoded_out)
-                decoded_out = decoded_out[-max_verbalizer_len:]
-                if self.verbalizers[0].strip().lower() in decoded_out.strip().lower() or "negative" in decoded_out or "no" in decoded_out:
-                    pred = 0
-                elif self.verbalizers[1].strip().lower() in decoded_out.strip().lower() or "positive" in decoded_out or "yes" in decoded_out:
-                    pred = 1
-                else:
-                    print("missed prediction: ", decoded_out)
-                    pred = -1
-                if pred == data["class_ids"]:
-                    correct += 1
-            results = {"acc": correct/len(eval_dataset)}
-        else:
-            results = self.trainer.evaluate(eval_dataset=eval_dataset)
-        print(results)
-        return results
+        # if eval_dataset is None:
+        #     if self.eval_dataset is None:
+        #         self.load_dataset(train = False, valid = True)
+        #     eval_dataset = self.eval_dataset
+        
+        # max_verbalizer_len = max([len(v) for v in self.verbalizers])
+        # if "bloom" in self.model_args.model_name_or_path or "opt" in self.model_args.model_name_or_path:
+        #     eval_preds = []
+        #     correct = 0
+        #     for data in eval_dataset:
+        #         out = self.model.generate(data["input_ids_0"].unsqueeze(0).cuda())
+        #         decoded_out = self.tokenizer.decode(out[0]).lower()
+        #         print(decoded_out)
+        #         decoded_out = decoded_out[-max_verbalizer_len:]
+        #         if self.verbalizers[0].strip().lower() in decoded_out.strip().lower() or "negative" in decoded_out or "no" in decoded_out:
+        #             pred = 0
+        #         elif self.verbalizers[1].strip().lower() in decoded_out.strip().lower() or "positive" in decoded_out or "yes" in decoded_out:
+        #             pred = 1
+        #         else:
+        #             print("missed prediction: ", decoded_out)
+        #             pred = -1
+        #         if pred == data["class_ids"]:
+        #             correct += 1
+        #     results = {"acc": correct/len(eval_dataset)}
+        # else:
+        #     results = self.trainer.evaluate(eval_dataset=eval_dataset)
+        # print(results)
+        # return results
 
     
     

@@ -4,7 +4,6 @@ from datasets import load_dataset
 from transformers import Seq2SeqTrainingArguments, logging
 from peft_trainer import PEFTTrainer
 import datetime
-from arguments import TrainerArguments
 import argparse
 import os
 import torch
@@ -13,7 +12,7 @@ from dataclasses import dataclass, field
 
 # import Optional
 from typing import Optional, List
-from transformers import Seq2SeqTrainingArguments
+
 
 
 
@@ -34,7 +33,7 @@ class ModelArguments:
         default="lora",
         metadata={"help": "tuning mode, either fine tuning or peft"}
     )
-    
+
     
 
 @dataclass
@@ -306,6 +305,8 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     
 
     
+
+    
 if __name__ == "__main__":
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -384,6 +385,10 @@ if __name__ == "__main__":
     trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
     
     transformers.logging.set_verbosity_warning()
-
-    trainer.train()
+    if training_args.do_train:
+        trainer.train()
+    elif training_args.do_eval:
+        trainer.evaluate()
+    else:
+        raise ValueError("do_train or do_eval should be specified")
 
