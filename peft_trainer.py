@@ -28,7 +28,6 @@ from transformers import (
     create_optimizer,
     get_constant_schedule
 )
-from AdapterPEFTModel import AdapterPeftModelForSeq2Seq
 from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
 from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_params, round_up
@@ -39,28 +38,28 @@ from copy import deepcopy
 import datetime
 
 class PEFTTrainer:
-    def __init__(self, arguments):
-        self.model_names_or_path = arguments.model_names_or_path
+    def __init__(self, training_args, data_args, model_args, peft_args):
         
-        self.arguments = arguments
+        self.training_args = training_args
+        self.data_args = data_args
+        self.model_args = model_args
+        self.peft_args = peft_args
         
-        self.verbalizers = self.get_dataset_verbalizers(self.arguments.dataset_name if self.arguments.dataset_name != "super_glue" else self.arguments.dataset_config_name)
-        
-        # self.models = []
-        # self.tokenizers = []
-        # self.configs = []
-        self.num_soft_tokens = arguments.num_soft_tokens
-        
+        # self.arguments = arguments
+        self.model_name_or_path = self.model_args.model_name_or_path
+        self.verbalizers = self.get_dataset_verbalizers(self.data_args.dataset_name if self.data_args.dataset_name != "super_glue" else self.data_args.dataset_config_name)
+
         self.load_model()
+        
+        
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
         self.org_vocab_size = self.tokenizer.vocab_size
         # assert len(self.models) == len(self.tokenizers) == len(self.configs)
 
         self.new_vocab_sizes = [self.org_vocab_size]
-        # temp set
-        # self.model = self.models[0]
+
         self.model_cache = deepcopy(self.model)
-        self.default_optimizer_n_scheduler = self.arguments.default_optimizer_n_scheduler
+        self.default_optimizer_n_scheduler = self.training_args.default_optimizer_n_scheduler
         """
         Model is loaded, now we need to set up the trainer
         1. prepare peft model
@@ -68,7 +67,7 @@ class PEFTTrainer:
         """
         task_type = TaskType.SEQ_2_SEQ_LM
         init_from_text = False
-        if self.arguments.dataset_name == "sst2" and self.arguments.model_arch == "encoder":
+        if self.data_args.dataset_name == "sst2" and self.model_args.model_arch == "encoder":
             task_type = TaskType.SEQ_CLS
             prompt_tuning_init = None # NOTE: it decides whether prompt init is used
             prompt_tuning_init_text = None
@@ -76,16 +75,22 @@ class PEFTTrainer:
             prompt_tuning_init = "TEXT"
             print("task type is seq_cls")
         prompt_tuning_init_text=" ".join(self.verbalizers)
-        init_text_tokenizer_name_or_path = self.model_names_or_path
+        init_text_tokenizer_name_or_path = self.model_name_or_path
 
         
 
-        self.configure_n_convert_peft()
+        # given that model is already loaded, we can check if
+        # model path exsits locally
+        if not os.path.exists(self.model_args.model_name_or_path):
+            self.configure_n_convert_peft()
+        else:
+            self.model.set_active_adapters("sst-2")
+            
 
 
-        if self.arguments.trainable_params_percentage and not self.arguments.mode in ["compactor","fine_tuning"]:
+        if self.peft_args.trainable_params_percentage and not self.model_args.tuning_mode in ["compactor","fine_tuning"]:
             # not check compactor
-            assert abs(self.arguments.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.arguments.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
+            assert abs(self.peft_args.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.peft_args.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
             
         # deactivate 
     
@@ -95,50 +100,50 @@ class PEFTTrainer:
         #     self.model.lm_head.weight.requires_grad = True
         # else: # adapter model
         #     self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad
-        # self.arguments.run_name += f"lm_head_trainable"
+        # self.training_args.run_name += f"lm_head_trainable"
         
         time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         # self.model = self.model_cache
-        if self.arguments.trainable_params_percentage:
-            self.arguments.run_name += f"_trainable_params_percentage_{self.arguments.trainable_params_percentage}"
+        if self.peft_args.trainable_params_percentage:
+            self.training_args.run_name += f"_trainable_params_percentage_{self.peft_args.trainable_params_percentage}"
         # prepare runname before passing to trainer
         
         
-        if self.arguments.num_training_tasks:
-            self.arguments.run_name += f"_num_training_tasks_{self.arguments.num_training_tasks}"
-        self.arguments.run_name += f"_{time}"
+        if self.data_args.num_training_tasks:
+            self.training_args.run_name += f"_num_training_tasks_{self.data_args.num_training_tasks}"
+        self.training_args.run_name += f"_{time}"
         
         # import pdb; pdb.set_trace()
-        # print("check run_name", self.arguments.run_name)
+        # print("check run_name", self.training_args.run_name)
         self.set_up_hf_trainer()
         self.tokenizer = self.tokenizer
     
     
     def configure_n_convert_peft(self):
         # model loading procedure:
-        # 1. load model from model_names_or_path    (self.load_model())
+        # 1. load model from model_name_or_path    (self.load_model())
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
-        if self.arguments.mode == "prompt_tuning":
+        if self.model_args.tuning_mode == "prompt_tuning":
             cur_prompt_len = 1
-            assert self.arguments.trainable_params_percentage is not None or self.arguments.prompt_len > 0, "either prompt_len or trainable_params_percentage should be set"
+            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.num_soft_tokens > 0, "either prompt_len or trainable_params_percentage should be set"
             config = PromptTuningConfig(
                 task_type=task_type,
                 num_virtual_tokens=cur_prompt_len,
                 inference_mode=False,
-                device= self.arguments.device,
+                device= self.peft_args.module_device,
                 # prompt_tuning_init="TEXT",
                 # prompt_tuning_init_text=prompt_tuning_init_text,
                 # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
 
             )
             cur_trainable_params_percentage = self.convert_to_peft(config)
-            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                     
                 config = PromptTuningConfig(
                     task_type=task_type,
                     num_virtual_tokens=cur_prompt_len,
                     inference_mode=False,
-                    device= self.arguments.device,
+                    device= self.peft_args.module_device,
                     
                     
                     # prompt_tuning_init="TEXT",
@@ -150,20 +155,20 @@ class PEFTTrainer:
                 print("prompt length is {}".format(cur_prompt_len))
                 print("trainable params percentage is {}".format(cur_trainable_params_percentage))
                 cur_prompt_len += 1
-            self.arguments.run_name += "_prompt_len_{}".format(cur_prompt_len-1)
-        elif self.arguments.mode == "prefix_tuning":
+            self.training_args.run_name += "_prompt_len_{}".format(cur_prompt_len-1)
+        elif self.model_args.tuning_mode == "prefix_tuning":
             from transformers.adapters import PrefixTuningConfig
             # from peft import PrefixTuningConfig
             
-            cur_prefix_len = 1 if self.arguments.prefix_len is None else self.arguments.prefix_len
+            cur_prefix_len = 1 if self.peft_args.prefix_len is None else self.peft_args.prefix_len
             bottleneck_size = 576
-            assert self.arguments.trainable_params_percentage is not None or self.arguments.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
+            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
 
             config = PrefixTuningConfig(prefix_length=cur_prefix_len,       bottleneck_size=bottleneck_size,
                                         encoder_prefix=True,
                                         cross_prefix=True)
             cur_trainable_params_percentage = self.convert_to_peft(config)
-            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage  < self.arguments.trainable_params_percentage:
+            while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage  < self.peft_args.trainable_params_percentage:
                 cur_prefix_len += 1
                 # config = PrefixTuningConfig(prefix_length=cur_prefix_len, flat=True)
                 config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
@@ -172,14 +177,14 @@ class PEFTTrainer:
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("prefix length is {}".format(cur_prefix_len))
                 
-            self.arguments.run_name += "_prefix_len_{}".format(cur_prefix_len)
+            self.training_args.run_name += "_prefix_len_{}".format(cur_prefix_len)
 
             
         
-        elif self.arguments.mode == "lora":
+        elif self.model_args.tuning_mode == "lora":
             # peft package
-            cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
-            assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
+            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
 
             # config = LoraConfig(
             #     task_type=task_type,
@@ -188,11 +193,11 @@ class PEFTTrainer:
             #     lora_alpha=32,
             #     lora_dropout=0.1,
             #     # lora_modules
-            #     target_modules= list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"],
+            #     target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             # )
             # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
             # print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            # while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            # while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
             #     cur_lora_r += 1
             #     config = LoraConfig(
             #         task_type=task_type,
@@ -200,7 +205,7 @@ class PEFTTrainer:
             #         r=cur_lora_r,
             #         lora_alpha=32,
             #         lora_dropout=0.1,
-            #         target_modules=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"],
+            #         target_modules=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             #     )
             #     cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
             #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
@@ -209,16 +214,16 @@ class PEFTTrainer:
             from transformers.adapters import LoRAConfig
             config = LoRAConfig(r=cur_lora_r,
                                 alpha=16,
-                                attn_matrices=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"]
+                                attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
                                 )
             # self.model.add_adapter("lora_adapter", config=config)
             cur_trainable_params_percentage = self.convert_to_peft(config)
-            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                 cur_lora_r += 1
                 config = LoRAConfig(
                                 r=cur_lora_r,
                                 alpha=16,
-                                attn_matrices=list(self.arguments.lora_modules) if self.arguments.lora_modules else ["q", "v"]
+                                attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
                                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
@@ -229,107 +234,107 @@ class PEFTTrainer:
             
             
                 
-            self.arguments.lora_r = cur_lora_r
-            self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
-            if self.arguments.lora_modules:
-                self.arguments.run_name += "_lora_modules_" + self.arguments.lora_modules
-        elif self.arguments.mode == "ia3":
+            self.peft_args.lora_r = cur_lora_r
+            self.training_args.run_name += "_lora_r_" + str(cur_lora_r)
+            if self.peft_args.lora_modules:
+                self.training_args.run_name += "_lora_modules_" + self.peft_args.lora_modules
+        elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config
-            cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
-            assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
+            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
 
             config = IA3Config(
                 r = cur_lora_r,
             )
             cur_trainable_params_percentage = self.convert_to_peft(config)
             print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            while self.arguments.trainable_params_percentage and cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                 cur_lora_r += 1
                 config = IA3Config(
                     r = cur_lora_r,
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            self.arguments.run_name += "_lora_r_" + str(cur_lora_r)
+            self.training_args.run_name += "_lora_r_" + str(cur_lora_r)
             
             
-        elif self.arguments.mode in ["adapter", "compactor"]:
-            cur_reduction_factor = 64 if self.arguments.reduction_factor is  None else self.arguments.reduction_factor
-            assert self.arguments.trainable_params_percentage is not None or self.arguments.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
+        elif self.model_args.tuning_mode in ["adapter", "compactor"]:
+            cur_reduction_factor = 64 if self.peft_args.reduction_factor is  None else self.peft_args.reduction_factor
+            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
 
             from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
             # check existing adapter and remove them
             # config = AdapterConfig()
-            if self.arguments.mode == "adapter":
+            if self.model_args.tuning_mode == "adapter":
                 config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
             else:
                 config = CompacterConfig(reduction_factor=cur_reduction_factor,
-                                            phm_dim=self.arguments.phm_dimension )
+                                            phm_dim=self.peft_args.phm_dimension )
 
             cur_trainable_params_percentage = self.convert_to_peft(config)
-            while self.arguments.trainable_params_percentage and  cur_trainable_params_percentage < self.arguments.trainable_params_percentage:
+            while self.peft_args.trainable_params_percentage and  cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                 cur_reduction_factor /=1.01
-                if self.arguments.mode == "adapter":
+                if self.model_args.tuning_mode == "adapter":
                     config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 else:
                     config = CompacterConfig(reduction_factor=cur_reduction_factor,
-                                             phm_dim=self.arguments.phm_dimension)
+                                             phm_dim=self.peft_args.phm_dimension)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
             # only keep 4 digits for reduction factor
-            self.arguments.run_name += f"_reduction_factor_{cur_reduction_factor:.4f}"
-            if self.arguments.mode == "compactor":
-                self.arguments.run_name += f"_phm_dim_{self.arguments.phm_dimension}"
-        elif self.arguments.mode == "parallel_adapter":
+            self.training_args.run_name += f"_reduction_factor_{cur_reduction_factor:.4f}"
+            if self.model_args.tuning_mode == "compactor":
+                self.training_args.run_name += f"_phm_dim_{self.peft_args.phm_dimension}"
+        elif self.model_args.tuning_mode == "parallel_adapter":
             from transformers.adapters import ParallelConfig
-            config = ParallelConfig(reduction_factor= self.arguments.reduction_factor)
+            config = ParallelConfig(reduction_factor= self.peft_args.reduction_factor)
             cur_trainable_params_percentage = self.convert_to_peft(config)
             print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}")
-            self.arguments.run_name += f"_reduction_factor_{self.arguments.reduction_factor:.4f}"
-        elif self.arguments.mode == "embedding_tuning":
+            self.training_args.run_name += f"_reduction_factor_{self.peft_args.reduction_factor:.4f}"
+        elif self.model_args.tuning_mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
-            if self.num_soft_tokens > 0:
-                self.num_soft_tokens = 0
+            if self.peft_args.num_soft_tokens > 0:
+                self.peft_args.num_soft_tokens = 0
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
-        elif self.arguments.mode == "bitfit":
+        elif self.model_args.tuning_mode == "bitfit":
             self.convert_to_peft()
-        elif self.arguments.mode == "fine_tuning":
+        elif self.model_args.tuning_mode == "fine_tuning":
             # no converting needed
             pass
-        elif self.arguments.mode == "lm_head_tuning":
+        elif self.model_args.tuning_mode == "lm_head_tuning":
             for param in self.model.parameters():
                 param.requires_grad = False
             # lm head takes almost 10% paramaters
             for name, module in self.model.named_modules():
                 if "lm_head" in name:
                     module.weight.requires_grad = True
-        elif self.arguments.mode == "layer_tuning":
+        elif self.model_args.tuning_mode == "layer_tuning":
             
             for param in self.model.parameters():
                 param.requires_grad = False
             
             layers = []
             # NOTE: we only fine-tune attention weights for now
-            if self.arguments.layer_name == "first_encoder_layer":
+            if self.peft_args.layer_name == "first_encoder_layer":
                 layers.append(self.model.encoder.block[0].layer[0])
-            elif self.arguments.layer_name == "last_encoder_layer":
+            elif self.peft_args.layer_name == "last_encoder_layer":
                 layers.append(self.model.encoder.block[-1].layer[0])
-            elif self.arguments.layer_name == "first_decoder_layer":
+            elif self.peft_args.layer_name == "first_decoder_layer":
                 layers.append(self.model.decoder.block[0].layer[0])
-            elif self.arguments.layer_name == "last_decoder_layer":
+            elif self.peft_args.layer_name == "last_decoder_layer":
                 layers.append(self.model.decoder.block[-1].layer[0])
-            elif self.arguments.layer_name == "custom":
+            elif self.peft_args.layer_name == "custom":
                 # all decoder layer
                 modules = self.model.decoder.block
                 for m in modules:
                     layers.append(m.layer[0])
-            elif self.arguments.layer_name == "custom2":
+            elif self.peft_args.layer_name == "custom2":
                 # all decoder layer
                 modules = self.model.decoder.block
                 for m in modules:
                     layers.append(m.layer[0])
             else:
-                raise NotImplementedError(f"layer_name {self.arguments.layer_name} is not implemented")
+                raise NotImplementedError(f"layer_name {self.peft_args.layer_name} is not implemented")
             
             for l in layers:
                 for name, module in l.named_modules():
@@ -337,15 +342,15 @@ class PEFTTrainer:
                     if hasattr(module, "weight"):
                         module.weight.requires_grad = True
                         print("activate gradient for ", name)
-        elif self.arguments.mode == "lora+adapter":
+        elif self.model_args.tuning_mode == "lora+adapter":
             from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
             
             
             # model.base_model.model_frozen = True
             # print('cur_trainable_params_percentage', self.check_trainable_parameters())
             # # peft package
-            # cur_lora_r = 15 if self.arguments.lora_r is None else self.arguments.lora_r
-            # assert self.arguments.trainable_params_percentage is not None or self.arguments.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            # cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
+            # assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
             # task_type = TaskType.SEQ_2_SEQ_LM
             # config = LoraConfig(
             #     task_type=task_type,
@@ -360,7 +365,7 @@ class PEFTTrainer:
             
             
             # lora 2
-            cur_lora_r = 40 if self.arguments.lora_r is None else self.arguments.lora_r
+            cur_lora_r = 40 if self.peft_args.lora_r is None else self.peft_args.lora_r
             freeze_model = True
             from transformers.adapters import LoRAConfig
             config = LoRAConfig(r=cur_lora_r, alpha=16)
@@ -383,9 +388,9 @@ class PEFTTrainer:
             # self.model.train_adapter(["sst-2","lora_adapter"] , freeze_model=freeze_model)
             self.model.train_adapter(["sst-2", "lora_adapter"], freeze_model=freeze_model)
             
-            if self.arguments.model_arch == "encoder":
+            if self.model_args.model_arch == "encoder":
                 self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
-            elif self.arguments.model_arch == "encoder-decoder":
+            elif self.model_args.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
                 # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
                 self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
@@ -394,7 +399,7 @@ class PEFTTrainer:
                 
             else:
                 raise NotImplementedError(
-                    f"Not implemented for model arch: {self.arguments.model_arch}"
+                    f"Not implemented for model arch: {self.model_args.model_arch}"
                 )
             
             self.model.set_active_adapters(["sst-2", "lora_adapter"])
@@ -402,24 +407,24 @@ class PEFTTrainer:
             
             print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
 
-            self.arguments.lora_r = cur_lora_r
-            self.arguments.run_name += "_lora_r_" + str(cur_lora_r) 
+            self.peft_args.lora_r = cur_lora_r
+            self.training_args.run_name += "_lora_r_" + str(cur_lora_r) 
 
             
             # invalid
-        elif self.arguments.mode == "unipelt":
+        elif self.model_args.tuning_mode == "unipelt":
             from transformers.adapters import UniPELTConfig, PrefixTuningConfig, PfeifferConfig, LoRAConfig, HoulsbyConfig
             gating = False
             reset_peft=False
             # peft_config = UniPELTConfig(
-            #     PrefixTuningConfig(prefix_length=1, use_gating=self.arguments.use_pelt_gate),
-            #     PfeifferConfig(reduction_factor=500, use_gating=self.arguments.use_pelt_gate),
-            #     LoRAConfig(r=self.arguments.lora_r, use_gating=self.arguments.use_pelt_gate),
+            #     PrefixTuningConfig(prefix_length=1, use_gating=self.peft_args.use_pelt_gate),
+            #     PfeifferConfig(reduction_factor=500, use_gating=self.peft_args.use_pelt_gate),
+            #     LoRAConfig(r=self.peft_args.lora_r, use_gating=self.peft_args.use_pelt_gate),
             #     )
             peft_config = UniPELTConfig(
-                PrefixTuningConfig(prefix_length=1, use_gating=self.arguments.use_pelt_gate),
-                HoulsbyConfig(reduction_factor=500, use_gating=self.arguments.use_pelt_gate),
-                LoRAConfig(r=self.arguments.lora_r, use_gating=self.arguments.use_pelt_gate),
+                PrefixTuningConfig(prefix_length=1, use_gating=self.peft_args.use_pelt_gate),
+                HoulsbyConfig(reduction_factor=500, use_gating=self.peft_args.use_pelt_gate),
+                LoRAConfig(r=self.peft_args.lora_r, use_gating=self.peft_args.use_pelt_gate),
                 )
             self.model.add_adapter("sst-2", config = peft_config)
             self.model.train_adapter("sst-2")
@@ -432,28 +437,28 @@ class PEFTTrainer:
             self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
 
             print('cur_trainable_params_percentage', self.check_trainable_parameters())
-            self.arguments.run_name += "lora_r_" + str(self.arguments.lora_r)
-            self.arguments.run_name += "_use_peft_gate_" + str(self.arguments.use_pelt_gate)
+            self.training_args.run_name += "lora_r_" + str(self.peft_args.lora_r)
+            self.training_args.run_name += "_use_peft_gate_" + str(self.peft_args.use_pelt_gate)
         
         
         else:
-            raise NotImplementedError(f"mode {self.arguments.mode} is not implemented")
+            raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
     
     
 
     def set_up_hf_trainer(self):
         del self.model_cache
-        if self.arguments.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
-            if torch.cuda.device_count() != self.arguments.model_parallel_gpus:
+        if self.training_args.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
+            if torch.cuda.device_count() != self.training_args.model_parallel_gpus:
                 print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
             if hasattr(self.model, "parallelize"):
                 self.model.parallelize()
             else:
-                print(f"Model {self.model_names_or_path} cannot be parallelized")
+                print(f"Model {self.model_name_or_path} cannot be parallelized")
         optimizer = Adafactor(
             self.model.parameters(),
             # filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr= self.arguments.learning_rate,
+            lr= self.training_args.learning_rate,
             eps=(1e-30, 1e-3),
             clip_threshold=1.0,
             decay_rate=-0.8,
@@ -467,35 +472,36 @@ class PEFTTrainer:
 
         lr_scheduler = get_constant_schedule(optimizer)
 
-        if self.arguments.dataset_name == "ni":
+        
+        if self.data_args.dataset_name == "ni":
             dataset_dependent_data_collator = DataCollatorForNI(
                 self.tokenizer,
                 model=self.model,
-                padding="max_length" if self.arguments.pad_to_max_length else "longest",
-                max_source_length=self.arguments.max_source_length,
-                max_target_length=self.arguments.max_target_length,
+                padding="max_length" if self.data_args.pad_to_max_length else "longest",
+                max_source_length=self.data_args.max_source_length,
+                max_target_length=self.data_args.max_target_length,
                 label_pad_token_id=self.tokenizer.pad_token_id,
-                pad_to_multiple_of=8 if self.arguments.fp16 else None,
-                add_task_name=self.arguments.add_task_name,
-                add_task_definition=self.arguments.add_task_definition,
-                num_pos_examples=self.arguments.num_pos_examples,
-                num_neg_examples=self.arguments.num_neg_examples,
-                add_explanation=self.arguments.add_explanation,
-                tk_instruct=self.arguments.tk_instruct
+                pad_to_multiple_of=8 if self.training_args.bf16 else None,
+                add_task_name=self.data_args.add_task_name,
+                add_task_definition=self.data_args.add_task_definition,
+                num_pos_examples=self.data_args.num_pos_examples,
+                num_neg_examples=self.data_args.num_neg_examples,
+                add_explanation=self.data_args.add_explanation,
+                tk_instruct=self.data_args.tk_instruct
             )
-            self.arguments.remove_unused_columns = False
+            self.training_args.remove_unused_columns = False
         else:
             dataset_dependent_data_collator = default_data_collator
 
-        if self.arguments.mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]: # "prefix_tuning",
+        if self.model_args.tuning_mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]: # "prefix_tuning",
             self.trainer = Seq2SeqAdapterTrainer(
                 model = self.model,
                 tokenizer = self.tokenizer,
                 train_dataset = None,
                 eval_dataset = None,
-                args = self.arguments,
+                args = self.training_args,
                 optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
                 data_collator=dataset_dependent_data_collator,
             )
         else:
@@ -506,7 +512,7 @@ class PEFTTrainer:
             #     eval_dataset = None,
             #     args = self.arguments,
             #     optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-            #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+            #     compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
             #     data_collator=dataset_dependent_data_collator,
             # )
 
@@ -515,9 +521,9 @@ class PEFTTrainer:
                 tokenizer = self.tokenizer,
                 train_dataset = None,
                 eval_dataset = None,
-                args = self.arguments,
+                args = self.training_args,
                 optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
-                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.arguments.predict_with_generate),
+                compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
                 data_collator=dataset_dependent_data_collator,
             )
         self.trainer.model = self.model
@@ -597,105 +603,91 @@ class PEFTTrainer:
     def load_model(self):
         print(
             "Loading",
-            self.arguments.model_names_or_path,
+            self.model_args.model_name_or_path,
             "(for large models, this might take a while)",
         )
-        print("Files will be cached at:", self.arguments.cache_dir)
+        print("Files will be cached at:", self.training_args.cache_dir)
         print(
             "Ensure this directory is persistent if you do not want to download model files again!"
         )
         
-        # for self.model_names_or_path in self.model_names_or_path:
+        # for self.model_name_or_path in self.model_name_or_path:
             
         # self.config = AutoConfig.from_pretrained(
-        #     self.model_names_or_path,
-        #     cache_dir=self.arguments.cache_dir,
+        #     self.model_name_or_path,
+        #     cache_dir=self.training_args.cache_dir,
         #     gradient_checkpointing=self.arguments.gradient_checkpointing,
         #     use_cache=not self.arguments.gradient_checkpointing,
         # )
 
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_names_or_path,
-            cache_dir=self.arguments.cache_dir,
+            self.model_name_or_path,
+            cache_dir=self.training_args.cache_dir,
             # use_cache = self.arguments.use_cache,
             use_fast=True,
             return_tensors="pt"
         )
         # m = T5ForConditionalGeneration.from_pretrained(
-        #     self.model_names_or_path,
+        #     self.model_name_or_path,
         # )
-        if "t5" in self.model_names_or_path or "bart" in self.model_names_or_path:
+        if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             
-            # import vanilla T5 model
-            
-            # m_config = T5Config.from_pretrained(self.model_names_or_path)
-            # import pdb; pdb.set_trace()
-            # print('check config')
-            
-            # m =T5Model.from_pretrained("t5-small")
-            # torch.zeros(linear_layer.out_features)
-            
-            
-            if self.arguments.mode in ["fine_tuning"]:
+            if self.model_args.tuning_mode in ["fine_tuning"]:
                 # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
-            elif self.arguments.mode in ["adapter"]:
-                self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
-            elif self.arguments.mode in ["prompt_tuning"]:
-                self.model = PeftModelForSeq2Seq.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
+            elif self.model_args.tuning_mode in ["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]:
+                self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+            elif self.model_args.tuning_mode in ["prompt_tuning"]:
+                self.model = PeftModelForSeq2Seq.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+            else:
+                raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
+            self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir).lm_head.weight
 
-            self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir).lm_head.weight
-
-        elif "roberta" in self.model_names_or_path:
-            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_names_or_path)
-        elif "gpt2" in self.model_names_or_path or "bloom" in self.model_names_or_path or "opt" in self.model_names_or_path:
+        elif "roberta" in self.model_name_or_path:
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
+        elif "gpt2" in self.model_name_or_path or "bloom" in self.model_name_or_path or "opt" in self.model_name_or_path:
             from transformers import AutoModelForCausalLM
             self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_names_or_path,
-                # from_tf=bool(".ckpt" in self.model_names_or_path),
+                self.model_name_or_path,
+                # from_tf=bool(".ckpt" in self.model_name_or_path),
                 # config=m_config,
-                cache_dir=self.arguments.cache_dir,
+                cache_dir=self.training_args.cache_dir,
             )
         else:
-            raise NotImplementedError("Model not supported: " + self.model_names_or_path)
+            raise NotImplementedError("Model not supported: " + self.model_name_or_path)
         # Wrap model in adapter package
         # NOTE: temp implementation
         # import AutoModelWithHeads
         from transformers import AutoModelWithHeads
-        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3"] : # "prefix_tuning", 
-            self.model = AutoAdapterModel.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir,)
+        if self.model_args.tuning_mode in ["adapter", "compactor", "prefix_tuning", "ia3"] : # "prefix_tuning", 
+            self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
 
         if self.tokenizer.pad_token is None:
-            assert self.model_names_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
+            assert self.model_name_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
             # gpt2 model
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
             m.resize_token_embeddings(len(self.tokenizer))
         
         
-        self.padding = "max_length" if self.arguments.pad_to_max_length else False
+        self.padding = "max_length" if self.data_args.pad_to_max_length else False
         print('gpt2 requires padding to max length')
-        if "gpt2" in self.model_names_or_path:
+        if "gpt2" in self.model_name_or_path:
             self.padding = "max_length"
-        # self.config = m_config
-        # self.tokenizer = m_tokenizer
-            # self.models.append(m)
-            # self.configs.append(m_config)
-            # self.tokenizers.append(m_tokenizer)
-            
+        self.training_args.run_name += self.model_name_or_path
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
         # disable prefix prompt
-        # prefix_prompt = "".join(get_soft_prompt_token_list(self.num_soft_tokens))
+        # prefix_prompt = "".join(get_soft_prompt_token_list(self.peft_args.num_soft_tokens))
         prefix_prompt = ""
-        if self.num_soft_tokens ==0:
+        if self.peft_args.num_soft_tokens ==0:
             assert prefix_prompt == ""
-        if self.arguments.model_arch == "encoder":
+        if self.model_args.model_arch == "encoder":
             add_prompt_for_gen = False
         else:
             add_prompt_for_gen = True
-        if self.arguments.dataset_name == "sst2":
+        if self.data_args.dataset_name == "sst2":
             prompt_for_gen = "Sentiment:"
             inputs =["Sentence: " + sent for sent, label_id in zip(examples["sentence"], examples["label"]) if label_id in class_ids]
             
@@ -703,40 +695,40 @@ class PEFTTrainer:
             # it's not used for t5 evaluation though (label id is used instead)
             verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
-        elif self.arguments.dataset_name == "yelp_review_full":
+        elif self.data_args.dataset_name == "yelp_review_full":
             prompt_for_gen = "give the review score from 1-5 stars:"
             inputs =["Sentence: " + sent for sent, label_id in zip(examples["text"], examples["label"]) if label_id in class_ids]
             verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
             
-        elif self.arguments.dataset_name == "super_glue":
+        elif self.data_args.dataset_name == "super_glue":
             prompt_for_gen = "Answer:"
-            if self.arguments.dataset_config_name in['axb', 'axg'] :
+            if self.data_args.dataset_config_name in['axb', 'axg'] :
                 raise NotImplementedError("axb and axg are not implemented yet")
                 inputs = ["Premise: " + premise + " Hypothesis: " + hypothesis + "Given the premise, is the hypothesis correct? Answer: " for premise, hypothesis in zip(examples["premise"], examples["hypothesis"])]
                 verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
-            elif self.arguments.dataset_config_name in ["boolq", "multirc"]:
-                if self.arguments.dataset_config_name == "boolq":
+            elif self.data_args.dataset_config_name in ["boolq", "multirc"]:
+                if self.data_args.dataset_config_name == "boolq":
                     inputs = ["Question: " + question + "Passage: " + passage for question, passage, label_id in zip(examples["question"], examples["passage"], examples["label"]) if label_id in class_ids]
-                elif self.arguments.dataset_config_name == "multirc":
+                elif self.data_args.dataset_config_name == "multirc":
                     inputs = ["Question: " + question + "Paragraph: " + paragraph  for question, paragraph, label_id in zip(examples["question"], examples["paragraph"], examples["label"]) if label_id in class_ids]
                     # inputs = ["" for question, paragraph in zip(examples["question"], examples["paragraph"])]
                 # inputs = ["Passage: " + passage + " Question: " + question for question, passage in zip(examples["question"], examples["passage"])]
                 verbal_targets = [self.verbalizers[l]
                     for l in examples["label"] if l in class_ids]
-            elif self.arguments.dataset_config_name in ["wic"]:
+            elif self.data_args.dataset_config_name in ["wic"]:
                 prompt_for_gen = "" # NOTE: wic has a special format
                 inputs = ["Sentence1: " + sentence1 + " Sentence2: " + sentence2 + f" Question: does the word '{word}' have the same meaning in the two sentences? Answer: " for sentence1, sentence2, word, label_id in zip(examples["sentence1"], examples["sentence2"], examples["word"], examples["label"])  if label_id in class_ids]
                 verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["label"], examples["label"])  if label_id in class_ids]
-        elif self.arguments.dataset_name in ["trec"]:
+        elif self.data_args.dataset_name in ["trec"]:
             prompt_for_gen = " What's the type of the question? "
             inputs = ["Question: " + t for t, label_id in zip(examples["text"],examples["coarse_label"]) if label_id in class_ids]
             verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["coarse_label"], examples["coarse_label"])  if label_id in class_ids]
         else:
             
             
-            raise NotImplementedError("Dataset not supported: " + self.arguments.dataset_name)
+            raise NotImplementedError("Dataset not supported: " + self.data_args.dataset_name)
         if add_prompt_for_gen:
                 inputs = [inp + " " + prompt_for_gen for inp in inputs]
         formatted_inputs, verbal_targets =\
@@ -744,18 +736,9 @@ class PEFTTrainer:
                                     inputs,
                                     # [self.prefix_prompt]*len(inputs),
                                     verbal_targets,
-                                    self.arguments.include_labels_in_input,
         )
         print("Sample input: ", formatted_inputs[0])
 
-                        
-        def add_idx_to_inputs_keys(model_inputs, model_idx):
-            # add model_idx to the keys of model_inputs
-            # to avoid key conflict when merging model_inputs into one dict
-            model_inputs = {f"{key}_{model_idx}": value for key, value in model_inputs.items() if key != "class_ids"}
-            return model_inputs
-        # import pdb; pdb.set_trace()
-        # print('check inputs')
         
         model_inputs = {}
         
@@ -766,21 +749,21 @@ class PEFTTrainer:
 
         model_inputs = tokenizer(
                 formatted_inputs,
-                max_length=self.arguments.max_source_length,
+                max_length=self.data_args.max_source_length,
                 padding=self.padding,
                 truncation=True,
                 return_tensors='pt'
-            )
+        )
         # build label input ids
         with tokenizer.as_target_tokenizer():
             labels = tokenizer(
                 verbal_targets,
                 return_tensors='pt', padding="max_length", 
-                max_length=self.arguments.max_target_length,
+                max_length=self.data_args.max_target_length,
                 # padding=self.padding,
                 truncation=True,
             )
-        if self.padding == "max_length" and self.arguments.ignore_pad_token_for_loss:
+        if self.padding == "max_length" and self.data_args.ignore_pad_token_for_loss:
             labels["input_ids"][labels["input_ids"]==0] = -100
                 # labels["input_ids"] = [
                 #     [(l if l != self.tokenizer.pad_token_id else -100)
@@ -789,7 +772,7 @@ class PEFTTrainer:
                 # ]
             
             # if encoder only model
-            if self.arguments.model_arch == "encoder":
+            if self.model_args.model_arch == "encoder":
                 # for SequenceClassificationModel
                 # model_inputs["label"] = [l for l in examples["label"] if l in class_ids]
                 model_inputs["labels"] = [l for l in examples["label"] if l in class_ids]
@@ -798,65 +781,13 @@ class PEFTTrainer:
                 model_inputs["labels"] = labels["input_ids"]
             
         if evaluation:
-            label_name = "label" if self.arguments.dataset_name not in ["trec"] else "coarse_label"
+            label_name = "label" if self.data_args.dataset_name not in ["trec"] else "coarse_label"
             label_class_ids = [l for l in examples[label_name] if l in class_ids]
             model_inputs["class_ids"] = torch.tensor(label_class_ids)
             # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
+
         return model_inputs
 
-        # for model_idx in range(len(self.models)):
-        #     tokenizer = self.tokenizers[model_idx]
-        #     model_inputs = tokenizer(
-        #         formatted_inputs,
-        #         max_length=self.arguments.max_source_length,
-        #         padding=self.padding,
-        #         truncation=True,
-        #         return_tensors='pt'
-        #     )
-            
-        #     # build label input ids
-        #     with tokenizer.as_target_tokenizer():
-        #         labels = tokenizer(
-        #             verbal_targets,
-        #             return_tensors='pt', padding="max_length", 
-        #             max_length=self.arguments.max_target_length,
-        #             # padding=self.padding,
-        #             truncation=True,
-        #         )
-            
-        #     if self.padding == "max_length" and self.arguments.ignore_pad_token_for_loss:
-        #         labels["input_ids"][labels["input_ids"]==0] = -100
-        #         # labels["input_ids"] = [
-        #         #     [(l if l != self.tokenizer.pad_token_id else -100)
-        #         #     for l in label]
-        #         #     for label in labels["input_ids"]
-        #         # ]
-            
-        #     # if encoder only model
-        #     if self.arguments.model_arch == "encoder":
-        #         # for SequenceClassificationModel
-        #         # model_inputs["label"] = [l for l in examples["label"] if l in class_ids]
-        #         model_inputs["labels"] = [l for l in examples["label"] if l in class_ids]
-        #     else:
-        #         # model_inputs["label"] = labels["input_ids"]
-        #         model_inputs["labels"] = labels["input_ids"]
-            
-        #     # if evaluation:
-        #     #     model_inputs["class_ids"] = torch.tensor(class_ids)
-        #     multi_model_inputs[model_idx] = model_inputs
-        #     # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
-            
-        #     # model_inputs
-        #     multi_model_inputs_l.append(model_inputs)
-        # multi_model_inputs_d = {}
-        # for model_inputs in multi_model_inputs_l:
-        #     multi_model_inputs_d.update(model_inputs)
-        # if evaluation:
-        #     label_name = "label" if self.arguments.dataset_name not in ["trec"] else "coarse_label"
-        #     label_class_ids = [l for l in examples[label_name] if l in class_ids]
-        #     multi_model_inputs_d["class_ids"] = torch.tensor(label_class_ids)
-        
-        # return multi_model_inputs_d
 
     def load_dataset(self, train, valid):
         """
@@ -868,34 +799,29 @@ class PEFTTrainer:
         5. 
         
         """
-        if self.arguments.dataset_name == "ni":
-            assert self.arguments.task_dir is not None, "task_dir is required for NaturalInstructions dataset"
-            assert self.arguments.data_dir is not None, "data_dir is required for NaturalInstructions dataset"
+        if self.data_args.dataset_name == "ni":
+            assert self.data_args.task_dir is not None, "task_dir is required for NaturalInstructions dataset"
+            assert self.data_args.data_dir is not None, "data_dir is required for NaturalInstructions dataset"
             # Get the NaturalInstructions dataset
             raw_datasets = load_dataset(
                 "util/ni_dataset.py",
-                data_dir=self.arguments.data_dir,
-                task_dir=self.arguments.task_dir,
-                cache_dir=self.arguments.cache_dir,
-                max_num_instances_per_task=self.arguments.max_num_instances_per_task,
-                max_num_instances_per_eval_task=self.arguments.max_num_instances_per_eval_task,
-                download_mode = "reuse_dataset_if_exists" if not self.arguments.overwrite_cache else "force_redownload",
+                data_dir=self.data_args.data_dir,
+                task_dir=self.data_args.task_dir,
+                cache_dir=self.training_args.cache_dir,
+                max_num_instances_per_task=self.data_args.max_num_instances_per_task,
+                max_num_instances_per_eval_task=self.data_args.max_num_instances_per_eval_task,
+                download_mode = "reuse_dataset_if_exists" if not self.data_args.overwrite_cache else "force_redownload",
             )
-            
-            flat_data_dir = self.arguments.data_dir.replace("/", "_")
-            self.arguments.run_name += flat_data_dir
-            # max_num_instances_per_task
-            self.arguments.run_name += f"_max_num_instances_per_task_{self.arguments.max_num_instances_per_task}"
-            if self.arguments.dev:
+            flat_data_dir = self.data_args.data_dir.replace("/", "_")
+            self.training_args.run_name += flat_data_dir
+            self.training_args.run_name += f"_max_num_instances_per_task_{self.data_args.max_num_instances_per_task}"
+            if self.training_args.dev:
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(20))
             self.trainer.train_dataset = raw_datasets["train"]
             self.trainer.eval_dataset = raw_datasets["validation"]
             self.eval_dataset = raw_datasets["validation"]
-            
-            
-            
         else:
-            raw_datasets = load_dataset(self.arguments.dataset_name , self.arguments.dataset_config_name)
+            raw_datasets = load_dataset(self.data_args.dataset_name, self.data_args.dataset_config_name)
             column_names = raw_datasets["train"].column_names
 
             if train:
@@ -926,12 +852,12 @@ class PEFTTrainer:
                 self.trainer.train_dataset = self.train_dataset
 
             if valid:
-                if self.arguments.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
+                if self.data_args.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
                     valid_split_name = "test"
                 else:
                     valid_split_name = "validation"
                 
-                if self.arguments.dev:
+                if self.training_args.dev:
 
                     true_val_dataset = raw_datasets[valid_split_name].map(
                         self.preprocess,
@@ -1011,14 +937,14 @@ class PEFTTrainer:
             peft_config (_type_): _description_
         """
         
-        if self.arguments.mode in ["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]: # prefix_tuning
+        if self.model_args.tuning_mode in ["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]: # prefix_tuning
             
             # add and activate adapter
             self.model.add_adapter("sst-2", config = peft_config, overwrite_ok=reset_peft)
             self.model.train_adapter("sst-2")
-            if self.arguments.model_arch == "encoder":
+            if self.model_args.model_arch == "encoder":
                 self.model.add_classification_head("classification-head-sst-2", num_labels=2, overwrite_ok=reset_peft)
-            elif self.arguments.model_arch == "encoder-decoder":
+            elif self.model_args.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
                 # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
                 self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
@@ -1026,14 +952,14 @@ class PEFTTrainer:
                 
             else:
                 raise NotImplementedError(
-                    f"Not implemented for model arch: {self.arguments.model_arch}"
+                    f"Not implemented for model arch: {self.model_args.model_arch}"
                 )
             self.model.set_active_adapters("sst-2")
             
-            
             # self.model.freeze_model(True)
-        elif self.arguments.mode == "bitfit":
-            # if self.arguments.model_arch == "encoder":
+    
+        elif self.model_args.tuning_mode == "bitfit":
+            # if self.model_args.model_arch == "encoder":
             #     # deactivate gradients except for bias terms
             #     BIAS_TERMS_DICT = {
             #         'intermediate': 'intermediate.dense.bias',
@@ -1045,7 +971,7 @@ class PEFTTrainer:
             #         'attention_layernorm': 'attention.output.LayerNorm.bias',
             #         'all': 'bias',
             #     }
-            # elif self.arguments.model_arch == "encoder-decoder":
+            # elif self.model_args.model_arch == "encoder-decoder":
             #     BIAS_TERMS_DICT = {
             #         'intermediate': 'intermediate.dense.bias',
             #         'key': 'attention.self.key.bias',
@@ -1077,15 +1003,15 @@ class PEFTTrainer:
             for param in self.model.parameters():
                 param.requires_grad = False
             layers = []
-            if self.arguments.bias_name == "encoder_bias":
+            if self.peft_args.bias_name == "encoder_bias":
                 modules = self.model.encoder.block
                 for m in modules:
                     layers.append(m.layer[0])
-            elif self.arguments.bias_name == "decoder_bias":
+            elif self.peft_args.bias_name == "decoder_bias":
                 modules = self.model.decoder.block
                 for m in modules:
                     layers.append(m.layer[0])
-            elif  self.arguments.bias_name == "encoder_decoder_bias":
+            elif  self.peft_args.bias_name == "encoder_decoder_bias":
                 modules = self.model.encoder.block
                 for m in modules:
                     layers.append(m.layer[0])
@@ -1125,7 +1051,7 @@ class PEFTTrainer:
             verbalizer_ids = [self.tokenizer.encode(v) for v in self.verbalizers]
             
             if reset_peft:
-                # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_names_or_path, cache_dir=self.arguments.cache_dir)
+                # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
                 self.model = deepcopy(self.model_cache)
             # add tokens in models and tokenizers + freeze model
             self.model.enable_input_require_grads()
@@ -1155,9 +1081,9 @@ class PEFTTrainer:
         self.load_dataset(train = True, valid = True)
         self.trainer.train()
 
-        # self.tokenizer.save_pretrained(self.arguments.run_name)
+        # self.tokenizer.save_pretrained(self.training_args.run_name)
         # replace "/" to "-" in run_name
-        self.arguments.run_name = self.arguments.run_name.replace("/", "-")
+        self.training_args.run_name = self.training_args.run_name.replace("/", "-")
         
         # read current dir name not path
         cur_dir = os.path.basename(os.getcwd())
@@ -1166,7 +1092,7 @@ class PEFTTrainer:
             # extract checkpoint name
             best_check_point_dir_name = best_check_point.split("/")[-1]
             
-            model_out_dir= os.path.join(f"../{cur_dir}_cache", self.arguments.run_name.replace("/", "-") , best_check_point_dir_name)
+            model_out_dir= os.path.join(f"../{cur_dir}_cache", self.training_args.run_name.replace("/", "-") , best_check_point_dir_name)
             print("saving model to :", model_out_dir)
             self.trainer.save_model(model_out_dir)
         else:
@@ -1180,7 +1106,7 @@ class PEFTTrainer:
             eval_dataset = self.eval_dataset
         
         max_verbalizer_len = max([len(v) for v in self.verbalizers])
-        if "bloom" in self.arguments.model_names_or_path or "opt" in self.arguments.model_names_or_path:
+        if "bloom" in self.model_args.model_name_or_path or "opt" in self.model_args.model_name_or_path:
             eval_preds = []
             correct = 0
             for data in eval_dataset:
@@ -1216,7 +1142,7 @@ class PEFTTrainer:
             return preds, labels
         result = metrics
         
-        if self.arguments.dataset_name == "ni":
+        if self.data_args.dataset_name == "ni":
             save_prefix = None
             from util.compute_metrics import compute_metrics, compute_grouped_metrics
             dataset = self.eval_dataset
@@ -1243,7 +1169,7 @@ class PEFTTrainer:
             result["gen_len"] = np.mean(prediction_lens)
             result = {k: round(v, 4) for k, v in result.items()}
             if save_prefix is not None:
-                with open(os.path.join(training_args.output_dir, f"{save_prefix}_eval_predictions.jsonl"), "w") as fout:
+                with open(os.path.join(self.training_args.output_dir, f"{save_prefix}_eval_predictions.jsonl"), "w") as fout:
                     for example, pred in zip(dataset, decoded_preds):
                         fout.write(json.dumps({
                             "Task": example["Task"],
@@ -1301,7 +1227,7 @@ class PEFTTrainer:
         else:
             model = self.trainer.model
             
-            if self.arguments.model_arch == "encoder":
+            if self.model_args.model_arch == "encoder":
                 import evaluate
                 accuracy = evaluate.load("accuracy")
                 print("preds: ", preds)
@@ -1313,7 +1239,7 @@ class PEFTTrainer:
 
             dataloader = DataLoader(eval_dataset,
                                     # collate_fn=collate_fn,
-                                    batch_size=self.arguments.per_device_eval_batch_size)
+                                    batch_size=self.training_args.per_device_eval_batch_size)
             
             correct = 0
             for idx, data in enumerate(dataloader):
