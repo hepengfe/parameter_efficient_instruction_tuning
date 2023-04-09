@@ -303,6 +303,10 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default="", metadata={"help": "An optional descriptor for the run. Notably used for wandb logging."}
     )
     
+    do_train: bool = field(
+        default=True, metadata={"help": "Whether to run training."}
+    )
+    
 
     
 
@@ -386,9 +390,10 @@ if __name__ == "__main__":
     
     transformers.logging.set_verbosity_warning()
 
-        
+    if training_args.do_train:
+        trainer.train()
+
     if training_args.do_eval:
         trainer.evaluate()
-    else:
-        trainer.train()
+
 
