@@ -385,10 +385,10 @@ if __name__ == "__main__":
     trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
     
     transformers.logging.set_verbosity_warning()
-    if training_args.do_train:
-        trainer.train()
-    elif training_args.do_eval:
+
+        
+    if training_args.do_eval:
         trainer.evaluate()
     else:
-        raise ValueError("do_train or do_eval should be specified")
+        trainer.train()
 

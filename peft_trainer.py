@@ -614,14 +614,6 @@ class PEFTTrainer:
             "Ensure this directory is persistent if you do not want to download model files again!"
         )
         
-        # for self.model_name_or_path in self.model_name_or_path:
-            
-        # self.config = AutoConfig.from_pretrained(
-        #     self.model_name_or_path,
-        #     cache_dir=self.training_args.cache_dir,
-        #     gradient_checkpointing=self.arguments.gradient_checkpointing,
-        #     use_cache=not self.arguments.gradient_checkpointing,
-        # )
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_name_or_path,
@@ -630,9 +622,7 @@ class PEFTTrainer:
             use_fast=True,
             return_tensors="pt"
         )
-        # m = T5ForConditionalGeneration.from_pretrained(
-        #     self.model_name_or_path,
-        # )
+
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             
             if self.model_args.tuning_mode in ["fine_tuning"]:
@@ -821,6 +811,7 @@ class PEFTTrainer:
             if self.training_args.dev:
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(20))
             self.trainer.train_dataset = raw_datasets["train"]
+
             self.trainer.eval_dataset = raw_datasets["validation"]
             self.eval_dataset = raw_datasets["validation"]
             self.test_dataset = raw_datasets["test"]
