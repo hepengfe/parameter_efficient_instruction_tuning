@@ -1,4 +1,4 @@
-from transformers import AutoModelForSeq2SeqLM, HfArgumentParser
+from transformers import HfArgumentParser
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
 from transformers import Seq2SeqTrainingArguments, logging
@@ -231,7 +231,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Number of updates steps to accumulate before performing a backward/update pass." },
     )
     bf16: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "whether to use bf16"}
     )
     fp16: bool = field(
@@ -370,6 +370,7 @@ if __name__ == "__main__":
 
     run_name_list = []
     run_name_list.append(model_args.tuning_mode)
+    run_name_list.append(model_args.model_name_or_path)
     run_name_list.append(data_args.dataset_name)
     if peft_args.trainable_params_percentage is None: # if use preset config
         if model_args.tuning_mode == "lora":
@@ -380,9 +381,9 @@ if __name__ == "__main__":
         run_name_list.append("fp16")
     elif training_args.bf16:
         run_name_list.append("bf16")
-    run_name_list.append(model_args.tuning_mode)
     run_name_list.append("lr_" + str(training_args.lr))
     run_name = "-".join(run_name_list)
+    training_args.run_name = run_name
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
     training_args.label_names = [training_args.label_names]

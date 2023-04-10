@@ -656,7 +656,7 @@ class PEFTTrainer:
         print('gpt2 requires padding to max length')
         if "gpt2" in self.model_name_or_path:
             self.padding = "max_length"
-        self.training_args.run_name += self.model_name_or_path
+
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
@@ -798,7 +798,7 @@ class PEFTTrainer:
             self.training_args.run_name += flat_data_dir
             self.training_args.run_name += f"_max_num_instances_per_task_{self.data_args.max_num_instances_per_task}"
             if self.training_args.dev:
-                raw_datasets["validation"] = raw_datasets["validation"].select(range(20))
+                raw_datasets["validation"] = raw_datasets["validation"].select(range(200))
             self.trainer.train_dataset = raw_datasets["train"]
 
             self.trainer.eval_dataset = raw_datasets["validation"]
@@ -1065,6 +1065,10 @@ class PEFTTrainer:
     def train(self):
         # set the trainer logging level to warning
         self.load_dataset(train = True, valid = True)
+        
+        # if dev
+        if self.training_args.dev:
+            print("run name: ", self.training_args.run_name)
         self.trainer.train()
 
         # self.tokenizer.save_pretrained(self.training_args.run_name)
@@ -1279,3 +1283,4 @@ class PEFTTrainer:
             result[f"acc_{model_idx}"] = correct / len(eval_dataset)
 
         return result
+
