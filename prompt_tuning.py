@@ -347,8 +347,8 @@ if __name__ == "__main__":
             data_args.num_training_tasks = int(result[-1])
 
 
-    model_cache_path = "~/cache"
-    EXPR_DIR = "~/tmp/"
+    model_cache_path = "cache/model"
+    EXPR_DIR = "cache/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = os.path.join(EXPR_DIR, time)
     training_args.cache_dir = model_cache_path
