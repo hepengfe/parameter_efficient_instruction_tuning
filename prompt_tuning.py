@@ -347,11 +347,11 @@ if __name__ == "__main__":
             data_args.num_training_tasks = int(result[-1])
 
 
-    cache_path = "~/tmp/cache"
+    model_cache_path = "~/cache"
     EXPR_DIR = "~/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = os.path.join(EXPR_DIR, time)
-    training_args.cache_dir = cache_path
+    training_args.cache_dir = model_cache_path
     training_args.output_dir = output_path
     # add random number into output_path
     import random

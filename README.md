@@ -8,3 +8,6 @@ To install the package, do the following.
 * under `adapater-transfeomers` folder, `pip install -e .` to install adapter-transformer.
 * `pip uninstall transfomers` uninstall the original transformer installed by `peft` to use adapter-transformer instead.
 * rouge-score: `pip install rouge-score`
+
+
+* 1.10.2+cu113 by platform.  "torch>=1.13.0" by peft setup.
