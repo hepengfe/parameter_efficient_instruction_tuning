@@ -209,9 +209,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     per_device_eval_batch_size: int = field(
         default=1, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
-    lr: float = field(
-        default=1e-5, metadata={"help": "The initial learning rate."}
-    )
     
     full_determinism: bool = field(
         default=True,
@@ -334,7 +331,7 @@ if __name__ == "__main__":
             print("bias_name is set to encoder_decoder_bias since args.bias_name is not specified")
         
     if model_args.tuning_mode == "fine_tuning":
-        training_args.lr = 1e-5
+        training_args.learning_rate = 1e-5
         print("lr is set to 1e-5 due to fine_tuning mode")
         
     
@@ -381,7 +378,7 @@ if __name__ == "__main__":
         run_name_list.append("fp16")
     elif training_args.bf16:
         run_name_list.append("bf16")
-    run_name_list.append("lr_" + str(training_args.lr))
+    run_name_list.append("lr_" + str(training_args.learning_rate))
     run_name = "-".join(run_name_list)
     training_args.run_name = run_name
     # either max_steps or num_train_epochs should be specified
