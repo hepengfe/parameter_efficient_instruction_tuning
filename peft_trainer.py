@@ -29,7 +29,6 @@ from transformers import (
 )
 from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
-from utils import get_embedding_layer, get_soft_prompt_token_list, get_all_params, round_up
 import transformers
 from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig,PrefixTuningConfig
 from util.ni_dataset_collator import DataCollatorForNI
@@ -657,8 +656,6 @@ class PEFTTrainer:
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
-        # disable prefix prompt
-        # prefix_prompt = "".join(get_soft_prompt_token_list(self.peft_args.num_soft_tokens))
         prefix_prompt = ""
         if self.peft_args.num_soft_tokens ==0:
             assert prefix_prompt == ""
@@ -1028,7 +1025,12 @@ class PEFTTrainer:
 
     def train(self):
         """
-        Load training related components, and start training, and save the best model.
+        1. Load training related components
+        2. start training
+        3. save the best model.
+        4. evaluate the best model on test set
+        
+        Plus,
         - support resume training
         """
         # TODO: check resume checkpoint internally?
@@ -1068,7 +1070,7 @@ class PEFTTrainer:
         best_check_point = self.trainer.state.best_model_checkpoint
         self.trainer.save_model(os.path.join(self.training_args.output_dir, "best_model"))
 
-    
+        self.trainer.evaluate(self.test_dataset)
     
     def evaluate(self):
         """

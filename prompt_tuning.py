@@ -3,7 +3,6 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
 from transformers import Seq2SeqTrainingArguments, logging
 from peft_trainer import PEFTTrainer
-import datetime
 import argparse
 import os
 import torch
@@ -306,13 +305,25 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     do_test: bool = field(
         default=False, metadata={"help": "Whether to run test."}
     )
-
     
+    expr_dir : str = field(
+        default="cache/tmp/", metadata={"help": "The directory for all experiments logs, checkpoints, and results."}
+    )
 
+    saved_pretrained_model_path: str = field(
+        default="cache/saved_pretrained", metadata={"help": "The directory for saved pretrained model. It has a higher priority than model_cache_path."}
+    )
+    model_cache_path: str = field(
+        default="cache/model", metadata={"help": "The directory for model cache."}
+    )
+    
+from utils import flatten, build_peft_config_name
     
 if __name__ == "__main__":
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    
+    # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
     if data_args.dataset_name == "ni":
         assert training_args.predict_with_generate, "predict_with_generate is required for ni"
@@ -347,23 +358,6 @@ if __name__ == "__main__":
     assert training_args.do_train or training_args.do_test, "At least one of `do_train` or `do_test` must be True."
     assert not (training_args.do_train and training_args.do_test), "do_train and do_test cannot be both True"
 
-    if training_args.do_train:
-        training_args.do_eval = True
-
-    
-
-    model_cache_path = "cache/model"
-    EXPR_DIR = "cache/tmp/"
-    time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    output_path = os.path.join(EXPR_DIR, time)
-    training_args.cache_dir = model_cache_path
-    
-    if not training_args.output_dir:
-        training_args.output_dir = output_path
-    # add random number into output_path
-    import random
-    output_path += "_" + str(random.randint(0, 10000))
-    default_optimizer_n_scheduler = False
 
     
     if data_args.dataset_name == "ni":
@@ -373,28 +367,29 @@ if __name__ == "__main__":
         data_args.max_target_length = 128
         print("max_source_length is set to 1024")
         print("max_target_length is set to 128")
-    
 
-    run_name_list = []
-    run_name_list.append(model_args.tuning_mode)
-    run_name_list.append(model_args.model_name_or_path)
-    run_name_list.append(data_args.dataset_name)
-    if peft_args.trainable_params_percentage is None: # if use preset config
-        if model_args.tuning_mode == "lora":
-            run_name_list += ["lora_r", str(peft_args.lora_r)]
-        if model_args.tuning_mode == "prefix_tuning":
-            run_name_list += ["prefix_len", str(peft_args.prefix_len)]
-    if training_args.fp16:
-        run_name_list.append("fp16")
-    elif training_args.bf16:
-        run_name_list.append("bf16")
-    run_name_list.append("lr_" + str(training_args.learning_rate))
-    run_name = "-".join(run_name_list)
+    
+    peft_config_name = build_peft_config_name(model_args, peft_args, training_args)
+    
+    data_folder_name = os.path.basename(data_args.data_dir)
+    # output_dir:   xx/xx/xx
+    # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
+    output_dir = os.path.join(
+            training_args.expr_dir,
+            data_args.dataset_name,
+            data_folder_name, 
+            flatten(model_args.model_name_or_path, "/-", "_"),
+            model_args.tuning_mode, peft_config_name
+        )
+    if not training_args.output_dir:
+        training_args.output_dir = output_dir
+    
+    # run_name: xx-xx-xx
+    training_args.run_name = flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
     
     import pdb; pdb.set_trace()
     print('checkpoint for variables')
     
-    training_args.run_name = run_name
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
     training_args.label_names = [training_args.label_names]
@@ -404,7 +399,7 @@ if __name__ == "__main__":
 
     if training_args.do_train:
         trainer.train() # train from scratch
-        trainer.evaluate()
+
 
 
     if training_args.do_test:
