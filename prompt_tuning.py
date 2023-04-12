@@ -403,36 +403,18 @@ if __name__ == "__main__":
     transformers.logging.set_verbosity_warning()
 
     if training_args.do_train:
-        if os.path.exist(training_args.output_dir)
-            # might overwrite loaded model?
-            trainer.train(resume_from_checkpoint=True) # latest checkpoint
-        else:
-            # load original model and train
-            trainer.train() # train from scratch
+        trainer.train() # train from scratch
         trainer.evaluate()
 
 
     if training_args.do_test:
-        # load model from best checkpoint or the best checkpoint in the trainer state
-        if "checkpoint" in model_args.model_name_or_path:
-            model = AutoModelForSequenceClassification.from_pretrained('./results/checkpoint-xxx')
-        elif os.path.exist(training_args.output_dir)
-            state = TrainerState.load_from_json(training_args.output_dir)
-            # Get the path to the best checkpoint
-            best_model_path = state.best_model_checkpoint
-
-            # Load the checkpoint into the model
-            model = AutoModelForSequenceClassification.from_pretrained(best_model_path)
-        else:
-            raise ValueError("trainer output path is not specified, so model cannot be loaded for testing")
-            
-        trainer.model = model
         trainer.evaluate()
     
     # TODO:
     # if training_args.do_search_peft_config_by_trainable_params:
     #     trainer.search_peft_config_by_trainable_params()
-    
+    # training_args.do_search_peft_config_by_trainable_params can be 
+    # 0.1, 0.2, 0.3
     #  self.model_cache = deepcopy(self.model)
 
 

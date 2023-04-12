@@ -512,76 +512,8 @@ class PEFTTrainer:
                 data_collator=dataset_dependent_data_collator,
             )
         # self.trainer.model = self.model
-        
-    def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
-        prompts = [""] * len(source_strs)
-        prompts = [""]* len(source_strs)
-        formatted_inputs = [f"{prefix} {s_1} {prompt} " for s_1, prompt in zip(source_strs, prompts)]
-        formatted_inputs = [f"{input} " for input in formatted_inputs]
 
-        if include_labels_in_input:
-            labels = ",".join(verbal_targets)
-            formatted_inputs = [f"{input} Decide the label in {self.verbalizers}." for input in formatted_inputs]    
 
-        return formatted_inputs, verbal_targets
-
-    def get_dataset_verbalizers(self, dataset):
-        if dataset in ['sst-2', 'sst2', 
-                       'yelp-2', 'mr', 'cr']:
-            # verbalizers = ['\u0120terrible', '\u0120great'] # num_classes
-            verbalizers = ['terrible', 'great']
-        elif dataset == 'agnews': 
-            verbalizers = ['World', 'Sports', 'Business', 'Tech'] # num_classes
-        elif dataset in ['sst-5', 'yelp-5']:
-            # verbalizers = ['\u0120terrible', '\u0120bad', '\u0120okay', 
-            #             '\u0120good', '\u0120great'] # num_classes
-            verbalizers = ['terrible', 'bad', 'okay', 'good', 'great']
-        elif dataset == 'subj':
-            # verbalizers = ['\u0120subjective', '\u0120objective']
-            verbalizers = ['subjective', 'objective']
-        elif dataset == 'trec':
-            verbalizers = ['Description', 'Entity',
-                        'Expression', 'Human',
-                        'Location', 'Number']
-            verbalizers = ['Description', 'Entity', 'Expression', 'Human', 'Location', 'Number']
-        elif dataset == 'yahoo':
-            verbalizers = ['culture', 'science',
-                        'health', 'education',
-                        'computer', 'sports',
-                        'business', 'music',
-                        'family', 'politics']
-        elif dataset == 'dbpedia':
-            verbalizers = ['\u0120Company', '\u0120Education',
-                        '\u0120Artist', '\u0120Sports',
-                        '\u0120Office', '\u0120Transportation',
-                        '\u0120Building', '\u0120Natural',
-                        '\u0120Village', '\u0120Animal',
-                        '\u0120Plant', '\u0120Album',
-                        '\u0120Film', '\u0120Written']
-            verbalizers = ['Company', 'Education', 'Artist', 'Sports', 'Office', 'Transportation', 'Building', 'Natural', 'Village', 'Animal', 'Plant', 'Album', 'Film', 'Written']
-        elif dataset in ['axb', 'axg']:
-            verbalizers = ["No", "Yes"]
-        elif dataset in ['cb', "rtx"]:
-            verbalizers = ["Yes", "No"]
-        elif dataset in ['copa', ]:
-            verbalizers = ["choice1", "choice2"]
-        elif dataset in ['boolq','multirc', 'wic', 'wsc', 'wsc_fixed']:
-            if dataset == 'boolq':
-                # only boolq
-                verbalizers = ["True", "False"]
-            else:
-                verbalizers = ["False", "True"]
-        elif dataset == 'record':
-            verbalizers = [None] # answer is text
-        elif dataset == 'yelp_review_full':
-            verbalizers = ['1', '2', '3', '4', '5']
-        elif dataset == 'ag_news':
-            verbalizers = ['World', 'Sports', 'Business', 'Sci/Tech']
-        elif dataset == 'ni':
-            verbalizers = []
-        else:
-            raise NotImplementedError("Dataset not supported: " + dataset)
-        return verbalizers
 
 
 
@@ -602,14 +534,16 @@ class PEFTTrainer:
         """
         if training_args.do_train:
             if os.path.exist(training_args.output_dir):
-                continue # resume checkpoint
+                pass # resume checkpoint, assume it has checkpoint for now
             else:
                 self.load_peft_model()
 
         if training_args.do_test:
-            if "checkpoint" in model_args.model_name_or_path:
+            if "checkpoint" in self.model_args.model_name_or_path:
+                print("Found checkpoint in model_name_or_path, so load model from checkpoint: ", self.model_args.model_name_or_path)
                 model_path = self.model_args.model_name_or_path
-            elif os.path.exist(training_args.output_dir)
+            elif os.path.exist(training_args.output_dir):
+                print("Found trainer output path, so load best model checkpoint from trainer state: ", training_args.output_dir)
                 state = TrainerState.load_from_json(training_args.output_dir)
                 # Get the path to the best checkpoint
                 model_path = state.best_model_checkpoint
@@ -617,15 +551,15 @@ class PEFTTrainer:
                 raise ValueError("trainer output path is not specified, so model cannot be loaded for testing")
         
             if self.model_args.tuning_mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]:
-                    self.model = AutoAdapterForSeq2SeqLM.from_pretrained(
-                        model_path,
-                        cache_dir = self.training_args.cache_dir,
-                    )
-                else:
-                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                        model_path,
-                        cache_dir = self.training_args.cache_dir,
-                    )
+                self.model = AutoAdapterForSeq2SeqLM.from_pretrained(
+                    model_path,
+                    cache_dir = self.training_args.cache_dir,
+                )
+            else:
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    model_path,
+                    cache_dir = self.training_args.cache_dir,
+                )
         
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
         trainer.model = self.model
@@ -712,12 +646,12 @@ class PEFTTrainer:
             self.padding = "max_length"
             
         if self.training_args.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
-        if torch.cuda.device_count() != self.training_args.model_parallel_gpus:
-            print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
-        if hasattr(self.model, "parallelize"):
-            self.model.parallelize()
-        else:
-            print(f"Model {self.model_name_or_path} cannot be parallelized")
+            if torch.cuda.device_count() != self.training_args.model_parallel_gpus:
+                print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
+            if hasattr(self.model, "parallelize"):
+                self.model.parallelize()
+            else:
+                print(f"Model {self.model_name_or_path} cannot be parallelized")
 
 
 
@@ -841,7 +775,6 @@ class PEFTTrainer:
         2. preprocess dataset
         3. tokenize dataset and have multi-model inputs like (input_ids_0, input_ids_1, input_ids_2, labels), also padding and convert to tensor
         4. dataloader with tokenizer inside, it requires tokenizer to provide padding token id
-        5. 
         
         """
         if self.data_args.dataset_name == "ni":
@@ -943,38 +876,6 @@ class PEFTTrainer:
                     )
                 self.eval_dataset.set_format(type="torch")
                 self.trainer.eval_dataset = self.eval_dataset
-
-
-
-    def _deactivate_relevant_gradients(self, trainable_components):
-        """
-        https://github.com/benzakenelad/BitFit/blob/7ead19a8350a01d5701f9e2df896a1c5b42c3723/glue_evaluator.py#L612
-        """
-        for param in self.model.parameters():
-            param.requires_grad = False
-        if trainable_components:
-            trainable_components = trainable_components + ['pooler.dense.bias']
-        trainable_components = trainable_components + ['classifier']
-        # it iterates exsiting parameters only
-        # bias init must be done before this
-        for name, param in self.model.named_parameters():
-            for component in trainable_components:
-                # print(f"check component {name}")
-                # if component in name:
-                #     print(f"activate {name}")
-                #     param.requires_grad = True
-                #     break
-                
-                # brute force bias activation
-                if "bias" in name:
-                    print(f"activate {name}")
-                    param.requires_grad = True
-                    break
-
-        # import pdb; pdb.set_trace()
-        # print('break point for bias activiation')
-        
-
 
     def convert_to_peft(self, peft_config=None, reset_peft=False):
         """
@@ -1126,6 +1027,10 @@ class PEFTTrainer:
 
 
     def train(self):
+        """
+        Load training related components, and start training, and save the best model.
+        - support resume training
+        """
         # TODO: check resume checkpoint internally?
         
         
@@ -1151,34 +1056,29 @@ class PEFTTrainer:
         if self.training_args.dev:
             print("run name: ", self.training_args.run_name)
         # TODO: possibly resume training
-        self.trainer.train()
-
-        # self.tokenizer.save_pretrained(self.training_args.run_name)
-        # replace "/" to "-" in run_name
-        self.training_args.run_name = self.training_args.run_name.replace("/", "-")
-        
-        # read current dir name not path
-        cur_dir = os.path.basename(os.getcwd())
-        best_check_point = self.trainer.state.best_model_checkpoint
-        if best_check_point is not None:
-            # extract checkpoint name
-            best_check_point_dir_name = best_check_point.split("/")[-1]
-            
-            model_out_dir= os.path.join(f"../{cur_dir}_cache", self.training_args.run_name.replace("/", "-") , best_check_point_dir_name)
-            print("saving model to :", model_out_dir)
-            self.trainer.save_model(model_out_dir)
+        if os.path.exist(self.training_args.output_dir):
+            # might overwrite loaded model?
+            print("resume training from checkpoint: ", self.training_args.output_dir)
+            self.trainer.train(resume_from_checkpoint=True) # latest checkpoint
         else:
-            print("best checkpoint is None, no model is saved")
+            # load original model and train
+            self.trainer.train() # train from scratch
+
+        # best model loaded after training
+        best_check_point = self.trainer.state.best_model_checkpoint
+        self.trainer.save_model(os.path.join(self.training_args.output_dir, "best_model"))
+
     
     
-    def evaluate(self, eval_dataset=None):
-        
+    def evaluate(self):
+        """
+        currently only supports evaluation on test set.
+        """
         # 0. set up a trainer without model, train_dataset, eval_dataset, optimizer
-        
+        self.set_up_hf_trainer()
         # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
-        
+        self.load_model()
         # 2. load test dataset only 
-        
         self.load_dataset(train=False, valid=False, test = True)
         self.trainer.evaluate(self.test_dataset)
         
@@ -1373,3 +1273,101 @@ class PEFTTrainer:
 
         return result
 
+    def get_dataset_verbalizers(self, dataset):
+        if dataset in ['sst-2', 'sst2', 
+                       'yelp-2', 'mr', 'cr']:
+            # verbalizers = ['\u0120terrible', '\u0120great'] # num_classes
+            verbalizers = ['terrible', 'great']
+        elif dataset == 'agnews': 
+            verbalizers = ['World', 'Sports', 'Business', 'Tech'] # num_classes
+        elif dataset in ['sst-5', 'yelp-5']:
+            # verbalizers = ['\u0120terrible', '\u0120bad', '\u0120okay', 
+            #             '\u0120good', '\u0120great'] # num_classes
+            verbalizers = ['terrible', 'bad', 'okay', 'good', 'great']
+        elif dataset == 'subj':
+            # verbalizers = ['\u0120subjective', '\u0120objective']
+            verbalizers = ['subjective', 'objective']
+        elif dataset == 'trec':
+            verbalizers = ['Description', 'Entity',
+                        'Expression', 'Human',
+                        'Location', 'Number']
+            verbalizers = ['Description', 'Entity', 'Expression', 'Human', 'Location', 'Number']
+        elif dataset == 'yahoo':
+            verbalizers = ['culture', 'science',
+                        'health', 'education',
+                        'computer', 'sports',
+                        'business', 'music',
+                        'family', 'politics']
+        elif dataset == 'dbpedia':
+            verbalizers = ['\u0120Company', '\u0120Education',
+                        '\u0120Artist', '\u0120Sports',
+                        '\u0120Office', '\u0120Transportation',
+                        '\u0120Building', '\u0120Natural',
+                        '\u0120Village', '\u0120Animal',
+                        '\u0120Plant', '\u0120Album',
+                        '\u0120Film', '\u0120Written']
+            verbalizers = ['Company', 'Education', 'Artist', 'Sports', 'Office', 'Transportation', 'Building', 'Natural', 'Village', 'Animal', 'Plant', 'Album', 'Film', 'Written']
+        elif dataset in ['axb', 'axg']:
+            verbalizers = ["No", "Yes"]
+        elif dataset in ['cb', "rtx"]:
+            verbalizers = ["Yes", "No"]
+        elif dataset in ['copa', ]:
+            verbalizers = ["choice1", "choice2"]
+        elif dataset in ['boolq','multirc', 'wic', 'wsc', 'wsc_fixed']:
+            if dataset == 'boolq':
+                # only boolq
+                verbalizers = ["True", "False"]
+            else:
+                verbalizers = ["False", "True"]
+        elif dataset == 'record':
+            verbalizers = [None] # answer is text
+        elif dataset == 'yelp_review_full':
+            verbalizers = ['1', '2', '3', '4', '5']
+        elif dataset == 'ag_news':
+            verbalizers = ['World', 'Sports', 'Business', 'Sci/Tech']
+        elif dataset == 'ni':
+            verbalizers = []
+        else:
+            raise NotImplementedError("Dataset not supported: " + dataset)
+        return verbalizers
+    
+    def _deactivate_relevant_gradients(self, trainable_components):
+        """
+        https://github.com/benzakenelad/BitFit/blob/7ead19a8350a01d5701f9e2df896a1c5b42c3723/glue_evaluator.py#L612
+        """
+        for param in self.model.parameters():
+            param.requires_grad = False
+        if trainable_components:
+            trainable_components = trainable_components + ['pooler.dense.bias']
+        trainable_components = trainable_components + ['classifier']
+        # it iterates exsiting parameters only
+        # bias init must be done before this
+        for name, param in self.model.named_parameters():
+            for component in trainable_components:
+                # print(f"check component {name}")
+                # if component in name:
+                #     print(f"activate {name}")
+                #     param.requires_grad = True
+                #     break
+                
+                # brute force bias activation
+                if "bias" in name:
+                    print(f"activate {name}")
+                    param.requires_grad = True
+                    break
+
+        # import pdb; pdb.set_trace()
+        # print('break point for bias activiation')
+        
+            
+    def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
+        prompts = [""] * len(source_strs)
+        prompts = [""]* len(source_strs)
+        formatted_inputs = [f"{prefix} {s_1} {prompt} " for s_1, prompt in zip(source_strs, prompts)]
+        formatted_inputs = [f"{input} " for input in formatted_inputs]
+
+        if include_labels_in_input:
+            labels = ",".join(verbal_targets)
+            formatted_inputs = [f"{input} Decide the label in {self.verbalizers}." for input in formatted_inputs]    
+
+        return formatted_inputs, verbal_targets
