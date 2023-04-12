@@ -48,17 +48,16 @@ class PEFTTrainer:
         self.model_name_or_path = self.model_args.model_name_or_path
         self.verbalizers = self.get_dataset_verbalizers(self.data_args.dataset_name if self.data_args.dataset_name != "super_glue" else self.data_args.dataset_config_name)
 
-        self.load_model()
-        
-        
-        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-        self.org_vocab_size = self.tokenizer.vocab_size
-        # assert len(self.models) == len(self.tokenizers) == len(self.configs)
+        self.model_trainable_params = None
+        # self.load_peft_model()   
+        # self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
+        # self.org_vocab_size = self.tokenizer.vocab_size
+        # # assert len(self.models) == len(self.tokenizers) == len(self.configs)
 
-        self.new_vocab_sizes = [self.org_vocab_size]
+        # self.new_vocab_sizes = [self.org_vocab_size]
 
-        self.model_cache = deepcopy(self.model)
-        self.default_optimizer_n_scheduler = self.training_args.default_optimizer_n_scheduler
+        # self.model_cache = deepcopy(self.model)
+
         """
         Model is loaded, now we need to set up the trainer
         1. prepare peft model
@@ -123,7 +122,7 @@ class PEFTTrainer:
     
     def configure_n_convert_peft(self):
         # model loading procedure:
-        # 1. load model from model_name_or_path    (self.load_model())
+        # 1. load model from model_name_or_path    (self.load_peft_model())
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
         if self.model_args.tuning_mode == "prompt_tuning":
             cur_prompt_len = 1
@@ -447,17 +446,7 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
     
-    
-
-    def set_up_hf_trainer(self):
-        del self.model_cache
-        if self.training_args.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
-            if torch.cuda.device_count() != self.training_args.model_parallel_gpus:
-                print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
-            if hasattr(self.model, "parallelize"):
-                self.model.parallelize()
-            else:
-                print(f"Model {self.model_name_or_path} cannot be parallelized")
+    def load_optimizer_n_scheduler(self):
         optimizer = Adafactor(
             self.model.parameters(),
             # filter(lambda p: p.requires_grad, self.model.parameters()),
@@ -474,12 +463,16 @@ class PEFTTrainer:
         )
 
         lr_scheduler = get_constant_schedule(optimizer)
+        self.trainer.optimizer = optimizer if not self.training_args.default_optimizer_n_scheduler else None
+        self.trainer.lr_scheduler = lr_scheduler if not self.training_args.default_optimizer_n_scheduler else None
+        
 
+    def set_up_hf_trainer(self):
         
         if self.data_args.dataset_name == "ni":
             dataset_dependent_data_collator = DataCollatorForNI(
                 self.tokenizer,
-                model=self.model,
+                # model=self.model,
                 padding="max_length" if self.data_args.pad_to_max_length else "longest",
                 max_source_length=self.data_args.max_source_length,
                 max_target_length=self.data_args.max_target_length,
@@ -498,27 +491,27 @@ class PEFTTrainer:
 
         if self.model_args.tuning_mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]: # "prefix_tuning",
             self.trainer = Seq2SeqAdapterTrainer(
-                model = self.model,
+                # model = self.model,
                 tokenizer = self.tokenizer,
                 train_dataset = None,
                 eval_dataset = None,
                 args = self.training_args,
-                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+                # optimizers=[optimizer, lr_scheduler] if not self.training_args.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
                 data_collator=dataset_dependent_data_collator,
             )
         else:
             self.trainer = Seq2SeqTrainer(
-                model = self.model,
+                # model = self.model,
                 tokenizer = self.tokenizer,
                 train_dataset = None,
                 eval_dataset = None,
                 args = self.training_args,
-                optimizers=[optimizer, lr_scheduler] if not self.default_optimizer_n_scheduler else [None, None],
+                # optimizers=[optimizer, lr_scheduler] if not self.training_args.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
                 data_collator=dataset_dependent_data_collator,
             )
-        self.trainer.model = self.model
+        # self.trainer.model = self.model
         
     def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
         prompts = [""] * len(source_strs)
@@ -591,8 +584,58 @@ class PEFTTrainer:
         return verbalizers
 
 
-    
+
     def load_model(self):
+        """
+        train mode:
+        - load model from scratch
+        - not load model (resume from trainer state)
+
+        test mode:
+        - load model from checkpoint
+        - load model from trainer state
+
+        Generally,
+        1. load self.model
+        2. compute trainable params stats, record it into self.model_trainable_params
+        2. load into trainer.model
+        """
+        if training_args.do_train:
+            if os.path.exist(training_args.output_dir):
+                continue # resume checkpoint
+            else:
+                self.load_peft_model()
+
+        if training_args.do_test:
+            if "checkpoint" in model_args.model_name_or_path:
+                model_path = self.model_args.model_name_or_path
+            elif os.path.exist(training_args.output_dir)
+                state = TrainerState.load_from_json(training_args.output_dir)
+                # Get the path to the best checkpoint
+                model_path = state.best_model_checkpoint
+            else:
+                raise ValueError("trainer output path is not specified, so model cannot be loaded for testing")
+        
+            if self.model_args.tuning_mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]:
+                    self.model = AutoAdapterForSeq2SeqLM.from_pretrained(
+                        model_path,
+                        cache_dir = self.training_args.cache_dir,
+                    )
+                else:
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                        model_path,
+                        cache_dir = self.training_args.cache_dir,
+                    )
+        
+        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
+        trainer.model = self.model
+            
+    
+    def load_peft_model(self):
+        """
+        1. load self.model
+        2. set self.trainer.model = self.model
+        """
         print(
             "Loading",
             self.model_args.model_name_or_path,
@@ -611,16 +654,27 @@ class PEFTTrainer:
             use_fast=True,
             return_tensors="pt"
         )
-
+        potential_model_path = os.path.join("cache/saved_pretrained", self.model_name_or_path)
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
-            
-            if self.model_args.tuning_mode in ["fine_tuning"]:
+            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
                 # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
+                if os.path.exists(potential_model_path):
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(potential_model_path)
+                else:
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
             elif self.model_args.tuning_mode in ["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]:
-                self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
-            elif self.model_args.tuning_mode in ["prompt_tuning"]:
-                self.model = PeftModelForSeq2Seq.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+                if os.path.exists(potential_model_path):
+                    self.model = AutoAdapterModel.from_pretrained(potential_model_path)
+                else:
+                    self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+                    
+            elif self.model_args.tuning_mode in []:
+                # NOTE: this is not compatible if loading for the first time as
+                # for peft package, loading by AutoModelForSeq2SeqLM is good enough
+                if os.path.exists(potential_model_path):
+                    self.model = PeftModelForSeq2Seq.from_pretrained(potential_model_path)
+                else:
+                    self.model = PeftModelForSeq2Seq.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -656,6 +710,15 @@ class PEFTTrainer:
         print('gpt2 requires padding to max length')
         if "gpt2" in self.model_name_or_path:
             self.padding = "max_length"
+            
+        if self.training_args.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
+        if torch.cuda.device_count() != self.training_args.model_parallel_gpus:
+            print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
+        if hasattr(self.model, "parallelize"):
+            self.model.parallelize()
+        else:
+            print(f"Model {self.model_name_or_path} cannot be parallelized")
+
 
 
 
@@ -771,7 +834,7 @@ class PEFTTrainer:
         return model_inputs
 
 
-    def load_dataset(self, train, valid, test=False):
+    def load_dataset(self, train, valid, test):
         """
         dataset loading pipeline:
         1. load dataset from huggingface datasets
@@ -1063,12 +1126,31 @@ class PEFTTrainer:
 
 
     def train(self):
+        # TODO: check resume checkpoint internally?
+        
+        
+        # 0. set up a hf trainer 
+        # - with data collator (as it's shared by training and evaluation)
+        # - without model, train_dataset, eval_dataset, optimizer
+        self.set_up_hf_trainer()
+        # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
+        
+        del self.model_cache
+        self.load_peft_model()
+        
+        # 2. load dataset
+        self.load_dataset(train = True, valid = True, test=True)
+        # 3. load optimizer
+        self.load_optimizer_n_scheduler()
+        
+        
         # set the trainer logging level to warning
         self.load_dataset(train = True, valid = True)
         
         # if dev
         if self.training_args.dev:
             print("run name: ", self.training_args.run_name)
+        # TODO: possibly resume training
         self.trainer.train()
 
         # self.tokenizer.save_pretrained(self.training_args.run_name)
@@ -1090,6 +1172,13 @@ class PEFTTrainer:
     
     
     def evaluate(self, eval_dataset=None):
+        
+        # 0. set up a trainer without model, train_dataset, eval_dataset, optimizer
+        
+        # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
+        
+        # 2. load test dataset only 
+        
         self.load_dataset(train=False, valid=False, test = True)
         self.trainer.evaluate(self.test_dataset)
         

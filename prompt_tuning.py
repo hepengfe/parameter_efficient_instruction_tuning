@@ -301,9 +301,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     )
     
     do_train: bool = field(
-        default=True, metadata={"help": "Whether to run training."}
+        default=False, metadata={"help": "Whether to run training."}
     )
-    
+    do_test: bool = field(
+        default=False, metadata={"help": "Whether to run test."}
+    )
 
     
 
@@ -342,14 +344,22 @@ if __name__ == "__main__":
         result = re.findall(r'\d+', data_args.data_dir)
         if len(result) != 0:
             data_args.num_training_tasks = int(result[-1])
+    assert training_args.do_train or training_args.do_test, "At least one of `do_train` or `do_test` must be True."
+    assert not (training_args.do_train and training_args.do_test), "do_train and do_test cannot be both True"
 
+    if training_args.do_train:
+        training_args.do_eval = True
+
+    
 
     model_cache_path = "cache/model"
     EXPR_DIR = "cache/tmp/"
     time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     output_path = os.path.join(EXPR_DIR, time)
     training_args.cache_dir = model_cache_path
-    training_args.output_dir = output_path
+    
+    if not training_args.output_dir:
+        training_args.output_dir = output_path
     # add random number into output_path
     import random
     output_path += "_" + str(random.randint(0, 10000))
@@ -380,6 +390,10 @@ if __name__ == "__main__":
         run_name_list.append("bf16")
     run_name_list.append("lr_" + str(training_args.learning_rate))
     run_name = "-".join(run_name_list)
+    
+    import pdb; pdb.set_trace()
+    print('checkpoint for variables')
+    
     training_args.run_name = run_name
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
@@ -389,9 +403,36 @@ if __name__ == "__main__":
     transformers.logging.set_verbosity_warning()
 
     if training_args.do_train:
-        trainer.train()
-
-    if training_args.do_eval:
+        if os.path.exist(training_args.output_dir)
+            # might overwrite loaded model?
+            trainer.train(resume_from_checkpoint=True) # latest checkpoint
+        else:
+            # load original model and train
+            trainer.train() # train from scratch
         trainer.evaluate()
+
+
+    if training_args.do_test:
+        # load model from best checkpoint or the best checkpoint in the trainer state
+        if "checkpoint" in model_args.model_name_or_path:
+            model = AutoModelForSequenceClassification.from_pretrained('./results/checkpoint-xxx')
+        elif os.path.exist(training_args.output_dir)
+            state = TrainerState.load_from_json(training_args.output_dir)
+            # Get the path to the best checkpoint
+            best_model_path = state.best_model_checkpoint
+
+            # Load the checkpoint into the model
+            model = AutoModelForSequenceClassification.from_pretrained(best_model_path)
+        else:
+            raise ValueError("trainer output path is not specified, so model cannot be loaded for testing")
+            
+        trainer.model = model
+        trainer.evaluate()
+    
+    # TODO:
+    # if training_args.do_search_peft_config_by_trainable_params:
+    #     trainer.search_peft_config_by_trainable_params()
+    
+    #  self.model_cache = deepcopy(self.model)
 
 
