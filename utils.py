@@ -3,6 +3,10 @@ def build_peft_config_name(model_args, peft_args, training_args):
         if model_args.tuning_mode == "lora":
             peft_config_name += "r_" + str(peft_args.lora_r)
             peft_config_name += "_module_" + str(peft_args.lora_modules)
+        elif model_args.tuning_mode == "ia3":
+            peft_config_name += "r_" + str(peft_args.lora_r)
+        elif model_args.tuning_mode == "prompt_tuning":
+            peft_config_name +=  "_prompt_len_{}" + str(peft_args.num_soft_tokens)
         elif model_args.tuning_mode == "prefix_tuning":
             peft_config_name += "prefix_len_" + str(peft_args.prefix_len)
         elif model_args.tuning_mode == "layer_tuning":
@@ -10,11 +14,13 @@ def build_peft_config_name(model_args, peft_args, training_args):
         elif model_args.tuning_mode == "bitfit":
             peft_config_name += "bias_name_" + str(peft_args.bias_name)
         elif model_args.tuning_mode == "adaptor":
-            peft_config_name += "reduction_factor_" + str(peft_args.reduction_factor)
+            peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
         elif model_args.tuning_mode == "compactor":
-            peft_config_name += "reduction_factor_" + str(peft_args.reduction_factor)
+            peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
             # phm_dimension
             peft_config_name += "_phm_dimension_" + str(peft_args.phm_dimension)
+        elif model_args.tuning_mode == "parallel_adapter":
+            peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
         elif model_args.tuning_mode == "fine_tuning":
             pass
         elif model_args.tuning_mode == "pelt":
@@ -31,6 +37,7 @@ def build_peft_config_name(model_args, peft_args, training_args):
         # trainable_params_percentage is None, use preset config 
         if peft_args.trainable_params_percentage is not None:
             peft_config_name += "_trainable_params_percentage_" + str(peft_args.trainable_params_percentage)
+        peft_config_name += += f"_num_training_tasks_{data_args.num_training_tasks}"
         return peft_config_name
 
 def flatten(s, source_char="/", flatten_char="_"):

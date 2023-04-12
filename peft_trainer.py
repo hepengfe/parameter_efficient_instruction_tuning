@@ -92,29 +92,7 @@ class PEFTTrainer:
             # not check compactor
             assert abs(self.peft_args.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.peft_args.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
             
-        # deactivate 
-    
-            
-        # NOTE: set lm head trainable again
-        # if hasattr(self.model, "lm_head"): # peft model
-        #     self.model.lm_head.weight.requires_grad = True
-        # else: # adapter model
-        #     self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad
-        # self.training_args.run_name += f"lm_head_trainable"
-        
-        time = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        # self.model = self.model_cache
-        if self.peft_args.trainable_params_percentage:
-            self.training_args.run_name += f"_trainable_params_percentage_{self.peft_args.trainable_params_percentage}"
-        # prepare runname before passing to trainer
-        
-        
-        if self.data_args.num_training_tasks:
-            self.training_args.run_name += f"_num_training_tasks_{self.data_args.num_training_tasks}"
-        self.training_args.run_name += f"_{time}"
-        
-        # import pdb; pdb.set_trace()
-        # print("check run_name", self.training_args.run_name)
+
         self.set_up_hf_trainer()
         self.tokenizer = self.tokenizer
     
@@ -155,7 +133,7 @@ class PEFTTrainer:
                 print("prompt length is {}".format(cur_prompt_len))
                 print("trainable params percentage is {}".format(cur_trainable_params_percentage))
                 cur_prompt_len += 1
-            self.training_args.run_name += "_prompt_len_{}".format(cur_prompt_len-1)
+
         elif self.model_args.tuning_mode == "prefix_tuning":
             from transformers.adapters import PrefixTuningConfig
             # from peft import PrefixTuningConfig
@@ -177,8 +155,6 @@ class PEFTTrainer:
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("prefix length is {}".format(cur_prefix_len))
                 
-            self.training_args.run_name += "_prefix_len_{}".format(cur_prefix_len)
-
             
         
         elif self.model_args.tuning_mode == "lora":
@@ -235,9 +211,6 @@ class PEFTTrainer:
             
                 
             self.peft_args.lora_r = cur_lora_r
-            self.training_args.run_name += "_lora_r_" + str(cur_lora_r)
-            if self.peft_args.lora_modules:
-                self.training_args.run_name += "_lora_modules_" + self.peft_args.lora_modules
         elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config
             cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
@@ -255,8 +228,7 @@ class PEFTTrainer:
                 )
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            self.training_args.run_name += "_lora_r_" + str(cur_lora_r)
-            
+
             
         elif self.model_args.tuning_mode in ["adapter", "compactor"]:
             cur_reduction_factor = 64 if self.peft_args.reduction_factor is  None else self.peft_args.reduction_factor
@@ -281,16 +253,11 @@ class PEFTTrainer:
                                              phm_dim=self.peft_args.phm_dimension)
                 cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
-            # only keep 4 digits for reduction factor
-            self.training_args.run_name += f"_reduction_factor_{cur_reduction_factor:.4f}"
-            if self.model_args.tuning_mode == "compactor":
-                self.training_args.run_name += f"_phm_dim_{self.peft_args.phm_dimension}"
         elif self.model_args.tuning_mode == "parallel_adapter":
             from transformers.adapters import ParallelConfig
             config = ParallelConfig(reduction_factor= self.peft_args.reduction_factor)
             cur_trainable_params_percentage = self.convert_to_peft(config)
             print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}")
-            self.training_args.run_name += f"_reduction_factor_{self.peft_args.reduction_factor:.4f}"
         elif self.model_args.tuning_mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.peft_args.num_soft_tokens > 0:
@@ -409,7 +376,6 @@ class PEFTTrainer:
             print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
 
             self.peft_args.lora_r = cur_lora_r
-            self.training_args.run_name += "_lora_r_" + str(cur_lora_r) 
 
             
             # invalid
@@ -438,9 +404,6 @@ class PEFTTrainer:
             self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight.requires_grad = False
 
             print('cur_trainable_params_percentage', self.check_trainable_parameters())
-            self.training_args.run_name += "lora_r_" + str(self.peft_args.lora_r)
-            self.training_args.run_name += "_use_peft_gate_" + str(self.peft_args.use_pelt_gate)
-        
         
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
@@ -787,9 +750,7 @@ class PEFTTrainer:
                 max_num_instances_per_eval_task=self.data_args.max_num_instances_per_eval_task,
                 download_mode = "reuse_dataset_if_exists" if not self.data_args.overwrite_cache else "force_redownload",
             )
-            flat_data_dir = self.data_args.data_dir.replace("/", "_")
-            self.training_args.run_name += flat_data_dir
-            self.training_args.run_name += f"_max_num_instances_per_task_{self.data_args.max_num_instances_per_task}"
+
             if self.training_args.dev:
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(200))
             self.trainer.train_dataset = raw_datasets["train"]
@@ -1041,22 +1002,15 @@ class PEFTTrainer:
         # - without model, train_dataset, eval_dataset, optimizer
         self.set_up_hf_trainer()
         # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
-        
-        del self.model_cache
         self.load_peft_model()
-        
         # 2. load dataset
         self.load_dataset(train = True, valid = True, test=True)
         # 3. load optimizer
         self.load_optimizer_n_scheduler()
         
-        
         # set the trainer logging level to warning
         self.load_dataset(train = True, valid = True)
-        
-        # if dev
-        if self.training_args.dev:
-            print("run name: ", self.training_args.run_name)
+
         # TODO: possibly resume training
         if os.path.exist(self.training_args.output_dir):
             # might overwrite loaded model?

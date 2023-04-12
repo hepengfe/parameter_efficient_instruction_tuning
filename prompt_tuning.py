@@ -59,7 +59,7 @@ class PeftArguments:
     
     
     # adaptor
-    reduction_factor: int = field(
+    reduction_factor: float = field(
         default=None,
         metadata={"help": "reduction factor for adaptor"}
     )
@@ -387,8 +387,9 @@ if __name__ == "__main__":
     # run_name: xx-xx-xx
     training_args.run_name = flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
     
-    import pdb; pdb.set_trace()
-    print('checkpoint for variables')
+    print("output_dir: ", training_args.output_dir)
+    print("run_name: ", training_args.run_name)
+    
     
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
@@ -411,5 +412,6 @@ if __name__ == "__main__":
     # training_args.do_search_peft_config_by_trainable_params can be 
     # 0.1, 0.2, 0.3
     #  self.model_cache = deepcopy(self.model)
+    # del self.model_cache
 
 
