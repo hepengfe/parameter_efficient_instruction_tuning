@@ -286,8 +286,9 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     
     
     save_total_limit: Optional[int] = field(
-        default=1, metadata={"help": "The maximum total amount of checkpoints to save."}
+        default=2, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 2 (the best model and the last checkpoint)."}
     )
+
     max_steps: Optional[int] = field(
         default=-1, metadata={"help": "If set, the training will override num_train_epochs and stop after max_steps."}
     )
@@ -374,12 +375,14 @@ if __name__ == "__main__":
     data_folder_name = os.path.basename(data_args.data_dir)
     # output_dir:   xx/xx/xx
     # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
+    data_config_name = f"num_training_tasks_{data_args.num_training_tasks}"
     output_dir = os.path.join(
             training_args.expr_dir,
             data_args.dataset_name,
             data_folder_name, 
             flatten(model_args.model_name_or_path, "/-", "_"),
-            model_args.tuning_mode, peft_config_name
+            model_args.tuning_mode,
+            "_".join([peft_config_name, data_config_name]),
         )
     if not training_args.output_dir:
         training_args.output_dir = output_dir

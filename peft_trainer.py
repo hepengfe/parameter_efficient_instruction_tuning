@@ -35,6 +35,8 @@ from util.ni_dataset_collator import DataCollatorForNI
 from copy import deepcopy
 import datetime
 
+from peft import PeftModelForSeq2SeqLM
+
 class PEFTTrainer:
     def __init__(self, training_args, data_args, model_args, peft_args):
         
@@ -47,15 +49,15 @@ class PEFTTrainer:
         self.model_name_or_path = self.model_args.model_name_or_path
         self.verbalizers = self.get_dataset_verbalizers(self.data_args.dataset_name if self.data_args.dataset_name != "super_glue" else self.data_args.dataset_config_name)
 
+        self.model = None
         self.model_trainable_params = None
-        # self.load_peft_model()   
-        # self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-        # self.org_vocab_size = self.tokenizer.vocab_size
-        # # assert len(self.models) == len(self.tokenizers) == len(self.configs)
-
-        # self.new_vocab_sizes = [self.org_vocab_size]
-
-        # self.model_cache = deepcopy(self.model)
+        
+        # recover from will be set in load_model() method
+        # 1. None. start training from scratch.
+        # 2. checkpoint
+        # 3. trainer state
+        self.recover_from = None
+        # self.load_pretrained_model_for_peft()   
 
         """
         Model is loaded, now we need to set up the trainer
@@ -74,32 +76,16 @@ class PEFTTrainer:
         prompt_tuning_init_text=" ".join(self.verbalizers)
         init_text_tokenizer_name_or_path = self.model_name_or_path
 
-        
-
-        # given that model is already loaded, we can check if
-        # model path exsits locally
-        if not os.path.exists(self.model_args.model_name_or_path):
-            self.configure_n_convert_peft()
-        else:
-            # TODO: maybe read available peft module rather than
-            # read by module name
-            adapter_name = self.model_args.tuning_mode
-            self.model.set_active_adapters(adapter_name)
-            
-
-
         if self.peft_args.trainable_params_percentage and not self.model_args.tuning_mode in ["compactor","fine_tuning"]:
             # not check compactor
             assert abs(self.peft_args.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.peft_args.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
-            
 
-        self.set_up_hf_trainer()
-        self.tokenizer = self.tokenizer
-    
+        
+        
     
     def configure_n_convert_peft(self):
         # model loading procedure:
-        # 1. load model from model_name_or_path    (self.load_peft_model())
+        # 1. load model from model_name_or_path    (self.load_pretrained_model_for_peft())
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
         if self.model_args.tuning_mode == "prompt_tuning":
             cur_prompt_len = 1
@@ -114,7 +100,7 @@ class PEFTTrainer:
                 # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
 
             )
-            cur_trainable_params_percentage = self.convert_to_peft(config)
+            cur_trainable_params_percentage = self.load_peft_module(config)
             while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                     
                 config = PromptTuningConfig(
@@ -128,7 +114,7 @@ class PEFTTrainer:
                     # prompt_tuning_init_text=prompt_tuning_init_text,
                     # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
                 )
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             
                 print("prompt length is {}".format(cur_prompt_len))
                 print("trainable params percentage is {}".format(cur_trainable_params_percentage))
@@ -145,14 +131,14 @@ class PEFTTrainer:
             config = PrefixTuningConfig(prefix_length=cur_prefix_len,       bottleneck_size=bottleneck_size,
                                         encoder_prefix=True,
                                         cross_prefix=True)
-            cur_trainable_params_percentage = self.convert_to_peft(config)
+            cur_trainable_params_percentage = self.load_peft_module(config)
             while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage  < self.peft_args.trainable_params_percentage:
                 cur_prefix_len += 1
                 # config = PrefixTuningConfig(prefix_length=cur_prefix_len, flat=True)
                 config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
                                             encoder_prefix=True,
                                             cross_prefix=True)
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
                 print("prefix length is {}".format(cur_prefix_len))
                 
             
@@ -171,7 +157,7 @@ class PEFTTrainer:
             #     # lora_modules
             #     target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             # )
-            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             # print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             # while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
             #     cur_lora_r += 1
@@ -183,7 +169,7 @@ class PEFTTrainer:
             #         lora_dropout=0.1,
             #         target_modules=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             #     )
-            #     cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            #     cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
 
             
@@ -193,7 +179,7 @@ class PEFTTrainer:
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
                                 )
             # self.model.add_adapter("lora_adapter", config=config)
-            cur_trainable_params_percentage = self.convert_to_peft(config)
+            cur_trainable_params_percentage = self.load_peft_module(config)
             while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                 cur_lora_r += 1
                 config = LoRAConfig(
@@ -201,12 +187,12 @@ class PEFTTrainer:
                                 alpha=16,
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
                                 )
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             
             
             
-            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             
             
                 
@@ -219,14 +205,14 @@ class PEFTTrainer:
             config = IA3Config(
                 r = cur_lora_r,
             )
-            cur_trainable_params_percentage = self.convert_to_peft(config)
+            cur_trainable_params_percentage = self.load_peft_module(config)
             print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                 cur_lora_r += 1
                 config = IA3Config(
                     r = cur_lora_r,
                 )
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
                 print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
 
             
@@ -243,7 +229,7 @@ class PEFTTrainer:
                 config = CompacterConfig(reduction_factor=cur_reduction_factor,
                                             phm_dim=self.peft_args.phm_dimension )
 
-            cur_trainable_params_percentage = self.convert_to_peft(config)
+            cur_trainable_params_percentage = self.load_peft_module(config)
             while self.peft_args.trainable_params_percentage and  cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
                 cur_reduction_factor /=1.01
                 if self.model_args.tuning_mode == "adapter":
@@ -251,12 +237,12 @@ class PEFTTrainer:
                 else:
                     config = CompacterConfig(reduction_factor=cur_reduction_factor,
                                              phm_dim=self.peft_args.phm_dimension)
-                cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
                 print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}, cur_reduction_factor: {cur_reduction_factor}")
         elif self.model_args.tuning_mode == "parallel_adapter":
             from transformers.adapters import ParallelConfig
             config = ParallelConfig(reduction_factor= self.peft_args.reduction_factor)
-            cur_trainable_params_percentage = self.convert_to_peft(config)
+            cur_trainable_params_percentage = self.load_peft_module(config)
             print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}")
         elif self.model_args.tuning_mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
@@ -264,7 +250,7 @@ class PEFTTrainer:
                 self.peft_args.num_soft_tokens = 0
                 print("num_soft_tokens is set to 0 for embedding tuning mode")
         elif self.model_args.tuning_mode == "bitfit":
-            self.convert_to_peft()
+            self.load_peft_module()
         elif self.model_args.tuning_mode == "fine_tuning":
             # no converting needed
             pass
@@ -326,7 +312,7 @@ class PEFTTrainer:
             #     lora_alpha=32,
             #     lora_dropout=0.1
             # )
-            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             
             
             
@@ -337,7 +323,7 @@ class PEFTTrainer:
             from transformers.adapters import LoRAConfig
             config = LoRAConfig(r=cur_lora_r, alpha=16)
             self.model.add_adapter("lora_adapter", config=config)
-            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             self.check_trainable_parameters()
             print("lora_adapter is added, trainable parameters: ", self.check_trainable_parameters())
 
@@ -345,7 +331,7 @@ class PEFTTrainer:
             cur_reduction_factor=18
             peft_config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
             reset_peft = False
-            # cur_trainable_params_percentage = self.convert_to_peft(config, reset_peft=True)
+            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             self.model.add_adapter(self.model_args.tuning_mode,
                                    config = peft_config, overwrite_ok=reset_peft)
             self.model.train_adapter(self.model_args.tuning_mode)
@@ -361,7 +347,8 @@ class PEFTTrainer:
             elif self.model_args.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head("seq2seq-head-sst-2", overwrite_ok=reset_peft)
                 # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
-                self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
+                # self.model.heads["seq2seq-head-sst-2"][0].weight = self.model_lm_head_weight
+
                 self.model.heads["seq2seq-head-sst-2"][0].weight.requires_grad = False
                 
                 
@@ -400,7 +387,8 @@ class PEFTTrainer:
             self.model.add_seq2seq_lm_head(f"seq2seq-head-{adapter_name}", overwrite_ok=reset_peft)
             self.model.set_active_adapters(adapter_name)
             # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
-            self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight = self.model_lm_head_weight
+            # self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight = self.model_lm_head_weight
+
             self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight.requires_grad = False
 
             print('cur_trainable_params_percentage', self.check_trainable_parameters())
@@ -430,51 +418,37 @@ class PEFTTrainer:
         
 
     def set_up_hf_trainer(self):
+        """
+        requires model or load_model.
         
-        if self.data_args.dataset_name == "ni":
-            dataset_dependent_data_collator = DataCollatorForNI(
-                self.tokenizer,
-                # model=self.model,
-                padding="max_length" if self.data_args.pad_to_max_length else "longest",
-                max_source_length=self.data_args.max_source_length,
-                max_target_length=self.data_args.max_target_length,
-                label_pad_token_id=self.tokenizer.pad_token_id,
-                pad_to_multiple_of=8 if self.training_args.bf16 else None,
-                add_task_name=self.data_args.add_task_name,
-                add_task_definition=self.data_args.add_task_definition,
-                num_pos_examples=self.data_args.num_pos_examples,
-                num_neg_examples=self.data_args.num_neg_examples,
-                add_explanation=self.data_args.add_explanation,
-                tk_instruct=self.data_args.tk_instruct
-            )
-            self.training_args.remove_unused_columns = False
-        else:
-            dataset_dependent_data_collator = default_data_collator
-
+        As we pass load_model to trainer, we don't need to load model again
+        """
         if self.model_args.tuning_mode in ["adapter",  "compactor", "prefix_tuning", "ia3", "parallel_adapter"]: # "prefix_tuning",
             self.trainer = Seq2SeqAdapterTrainer(
-                # model = self.model,
-                tokenizer = self.tokenizer,
+                model = None,
+                # tokenizer = self.tokenizer,
+                model_init = self.load_model,
                 train_dataset = None,
                 eval_dataset = None,
                 args = self.training_args,
                 # optimizers=[optimizer, lr_scheduler] if not self.training_args.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
-                data_collator=dataset_dependent_data_collator,
+                # data_collator=dataset_dependent_data_collator,
             )
         else:
             self.trainer = Seq2SeqTrainer(
-                # model = self.model,
-                tokenizer = self.tokenizer,
+                model = None,
+                # tokenizer = self.tokenizer,
+                model_init = self.load_model,
                 train_dataset = None,
                 eval_dataset = None,
                 args = self.training_args,
                 # optimizers=[optimizer, lr_scheduler] if not self.training_args.default_optimizer_n_scheduler else [None, None],
                 compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
-                data_collator=dataset_dependent_data_collator,
+                # data_collator=dataset_dependent_data_collator,
             )
-        # self.trainer.model = self.model
-
+        # self.trainer.model = self.model  it is already set inside*
+        self.trainer.tokenizer = self.tokenizer
 
 
 
@@ -492,23 +466,36 @@ class PEFTTrainer:
         Generally,
         1. load self.model
         2. compute trainable params stats, record it into self.model_trainable_params
-        2. load into trainer.model
+        3. load into trainer.model
+        4. Also, determine self.recover_from
         """
-        if training_args.do_train:
-            if os.path.exist(training_args.output_dir):
-                pass # resume checkpoint, assume it has checkpoint for now
+        if self.training_args.do_train:
+            # we don't consider a situation that we load a specific checkpoint for training
+            # check under ouput_dir if there is checkpoint folder
+            if os.path.exists(self.training_args.output_dir):
+                # resume checkpoint from trainer state, assume it has checkpoint for now
+                # no need for conversion
+                self.recover_from = "trainer_state"
             else:
-                self.load_peft_model()
+                # start training
+                self.load_pretrained_model_for_peft()
+                # self.load_peft_module() # load peft module for training start
+        assert self.model is not None, ""
 
-        if training_args.do_test:
+        
+        
+        if self.training_args.do_test:
             if "checkpoint" in self.model_args.model_name_or_path:
                 print("Found checkpoint in model_name_or_path, so load model from checkpoint: ", self.model_args.model_name_or_path)
                 model_path = self.model_args.model_name_or_path
-            elif os.path.exist(training_args.output_dir):
-                print("Found trainer output path, so load best model checkpoint from trainer state: ", training_args.output_dir)
-                state = TrainerState.load_from_json(training_args.output_dir)
+                self.recover_from = "checkpoint"
+            elif os.path.exist(self.training_args.output_dir):
+                # in test mode, state needs to be used to load the best checkpoint explicitly
+                print("Found trainer output path, so load best model checkpoint from trainer state: ", self.training_args.output_dir)
+                state = TrainerState.load_from_json(self.training_args.output_dir)
                 # Get the path to the best checkpoint
                 model_path = state.best_model_checkpoint
+                self.recover_from = "trainer_state"
             else:
                 raise ValueError("trainer output path is not specified, so model cannot be loaded for testing")
         
@@ -517,20 +504,23 @@ class PEFTTrainer:
                     model_path,
                     cache_dir = self.training_args.cache_dir,
                 )
+            elif self.model_args.tuning_mode in ["prompt_tuning"]:
+                raise NotImplementedError("prompt tuning model loading is not supported yet for testing")
             else:
                 self.model = AutoModelForSeq2SeqLM.from_pretrained(
                     model_path,
                     cache_dir = self.training_args.cache_dir,
                 )
+
         
-        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-        trainer.model = self.model
+        return self.model
             
     
-    def load_peft_model(self):
+    def load_pretrained_model_for_peft(self):
         """
-        1. load self.model
-        2. set self.trainer.model = self.model
+        Load model by model architecture and peft packages.
+        Also handles model parallel if needed.
+        NOTE: it doesn't load peft module if it's not from checkpoint.
         """
         print(
             "Loading",
@@ -541,16 +531,12 @@ class PEFTTrainer:
         print(
             "Ensure this directory is persistent if you do not want to download model files again!"
         )
-        
 
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name_or_path,
-            cache_dir=self.training_args.cache_dir,
-            # use_cache = self.arguments.use_cache,
-            use_fast=True,
-            return_tensors="pt"
+        
+        potential_model_path = os.path.join(
+            self.training_args.saved_pretrained_model_path,
+            self.model_name_or_path
         )
-        potential_model_path = os.path.join("cache/saved_pretrained", self.model_name_or_path)
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
                 # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
@@ -563,8 +549,9 @@ class PEFTTrainer:
                     self.model = AutoAdapterModel.from_pretrained(potential_model_path)
                 else:
                     self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+                
                     
-            elif self.model_args.tuning_mode in []:
+            elif self.model_args.tuning_mode in ["prompt_tuning"]:
                 # NOTE: this is not compatible if loading for the first time as
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
                 if os.path.exists(potential_model_path):
@@ -574,8 +561,21 @@ class PEFTTrainer:
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
-            self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir).lm_head.weight
+           
+            if os.path.exists(potential_model_path):
+                self.tokenizer = AutoTokenizer.from_pretrained(potential_model_path)
+  
+                
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name_or_path,
+                    cache_dir=self.training_args.cache_dir,
+                    # use_cache = self.arguments.use_cache,
+                    use_fast=True,
+                    return_tensors="pt"
+                )
 
+            
         elif "roberta" in self.model_name_or_path:
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
         elif "gpt2" in self.model_name_or_path or "bloom" in self.model_name_or_path or "opt" in self.model_name_or_path:
@@ -588,10 +588,7 @@ class PEFTTrainer:
             )
         else:
             raise NotImplementedError("Model not supported: " + self.model_name_or_path)
-        # Wrap model in adapter package
-        # NOTE: temp implementation
-        # import AutoModelWithHeads
-        from transformers import AutoModelWithHeads
+
         if self.model_args.tuning_mode in ["adapter", "compactor", "prefix_tuning", "ia3"] : # "prefix_tuning", 
             self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
 
@@ -615,7 +612,10 @@ class PEFTTrainer:
             else:
                 print(f"Model {self.model_name_or_path} cannot be parallelized")
 
+        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
 
+
+        
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
@@ -834,8 +834,32 @@ class PEFTTrainer:
                     )
                 self.eval_dataset.set_format(type="torch")
                 self.trainer.eval_dataset = self.eval_dataset
+                
+    def load_data_collator(self):
+                
+        if self.data_args.dataset_name == "ni":
+            dataset_dependent_data_collator = DataCollatorForNI(
+                self.tokenizer,
+                # model=self.model,
+                padding="max_length" if self.data_args.pad_to_max_length else "longest",
+                max_source_length=self.data_args.max_source_length,
+                max_target_length=self.data_args.max_target_length,
+                label_pad_token_id=self.tokenizer.pad_token_id,
+                pad_to_multiple_of=8 if self.training_args.bf16 else None,
+                add_task_name=self.data_args.add_task_name,
+                add_task_definition=self.data_args.add_task_definition,
+                num_pos_examples=self.data_args.num_pos_examples,
+                num_neg_examples=self.data_args.num_neg_examples,
+                add_explanation=self.data_args.add_explanation,
+                tk_instruct=self.data_args.tk_instruct
+            )
+            self.training_args.remove_unused_columns = False
+        else:
+            dataset_dependent_data_collator = default_data_collator
+        self.trainer = dataset_dependent_data_collator
 
-    def convert_to_peft(self, peft_config=None, reset_peft=False):
+
+    def load_peft_module(self, peft_config=None, reset_peft=False):
         """
         1. prepare peft model
         2. set up trainer
@@ -854,8 +878,6 @@ class PEFTTrainer:
                 self.model.add_classification_head(f"classification-head-{adapter_name}", num_labels=2, overwrite_ok=reset_peft)
             elif self.model_args.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head(f"seq2seq-head-{adapter_name}", overwrite_ok=reset_peft)
-                # reset weight self.model.heads["seq2seq-head-sst-2"][0].weight
-                self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight = self.model_lm_head_weight
                 self.model.heads[f"seq2seq-head-{adapter_name}"][0].weight.requires_grad = False
                 
             else:
@@ -994,31 +1016,42 @@ class PEFTTrainer:
         Plus,
         - support resume training
         """
-        # TODO: check resume checkpoint internally?
-        
-        
         # 0. set up a hf trainer 
-        # - with data collator (as it's shared by training and evaluation)
-        # - without model, train_dataset, eval_dataset, optimizer
+        # - load model, but no train_dataset, eval_dataset, optimizer
+        # - no data collator (as it's shared by training and evaluation)
         self.set_up_hf_trainer()
-        # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
-        self.load_peft_model()
-        # 2. load dataset
+        
+
+        # 2. convert 
+        # given that model is already loaded, we can check if
+        # model path exsits locally
+        if not os.path.exists(self.model_args.model_name_or_path):
+            self.configure_n_convert_peft()
+        else:
+            # TODO: maybe read available peft module rather than
+            # read by module name
+            adapter_name = self.model_args.tuning_mode
+            self.model.set_active_adapters(adapter_name)
+        
+        
+        # 3. load dataset and data collator
+        self.load_data_collator()
         self.load_dataset(train = True, valid = True, test=True)
-        # 3. load optimizer
+        # 4. load optimizer
         self.load_optimizer_n_scheduler()
         
-        # set the trainer logging level to warning
-        self.load_dataset(train = True, valid = True)
-
+        import pdb; pdb.set_trace()
+        print('break point trainer init')
         # TODO: possibly resume training
-        if os.path.exist(self.training_args.output_dir):
+        if self.recover_from == "trainer_state":
             # might overwrite loaded model?
             print("resume training from checkpoint: ", self.training_args.output_dir)
             self.trainer.train(resume_from_checkpoint=True) # latest checkpoint
+        elif self.recover_from is None:
+            # loaded pretrained model and start training from scratch
+            self.trainer.train()
         else:
-            # load original model and train
-            self.trainer.train() # train from scratch
+            raise ValueError("recover from not supported: ", self.recover_from)
 
         # best model loaded after training
         best_check_point = self.trainer.state.best_model_checkpoint
@@ -1033,8 +1066,11 @@ class PEFTTrainer:
         # 0. set up a trainer without model, train_dataset, eval_dataset, optimizer
         self.set_up_hf_trainer()
         # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
-        self.load_model()
-        # 2. load test dataset only 
+        # self.load_model()
+        
+
+        # 2. load data collator and test dataset only 
+        self.load_data_collator()
         self.load_dataset(train=False, valid=False, test = True)
         self.trainer.evaluate(self.test_dataset)
         
