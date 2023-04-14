@@ -452,48 +452,6 @@ class PEFTTrainer:
             warmup_init=False,
         )
         self.scheduler = get_constant_schedule(self.optimizer)
-        # self.trainer.optimizer = optimizer if not self.training_args.default_optimizer_n_scheduler else None
-        # self.trainer.lr_scheduler = lr_scheduler if not self.training_args.default_optimizer_n_scheduler else None
-        
-
-    # def set_up_hf_trainer(self):
-    #     """
-    #     requires model or load_model.
-        
-    #     As we pass load_model to trainer, we don't need to load model again
-    #     """
-        
-    #     from peft_trainer_callback import SaveBestCheckpointCallback, SaveLatestCheckpointCallback
-    #     if self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES: # "prefix_tuning",
-    #         self.trainer = Seq2SeqAdapterTrainer(
-    #             model = self.model,
-    #             train_dataset = None,
-    #             eval_dataset = None,
-    #             args = self.training_args,
-    #             # optimizers=[optimizer, lr_scheduler] if not self.training_args.default_optimizer_n_scheduler else [None, None],
-    #             compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
-    #             # data_collator=dataset_dependent_data_collator,
-    #             # callbacks=[SaveLatestCheckpointCallback, SaveBestCheckpointCallback],
-    #             callbacks=[SaveLatestCheckpointCallback]
-    #         )
-    #     else:
-    #         self.trainer = Seq2SeqTrainer(
-    #             # tokenizer = self.tokenizer,
-    #             model = self.model,
-    #             train_dataset = None,
-    #             eval_dataset = None,
-    #             args = self.training_args,
-    #             # optimizers=[optimizer, lr_scheduler] if not self.training_args.default_optimizer_n_scheduler else [None, None],
-    #             compute_metrics=partial(self.compute_metrics, is_pred_logits = not self.training_args.predict_with_generate),
-    #             # data_collator=dataset_dependent_data_collator,
-    #             # callbacks=[SaveLatestCheckpointCallback, SaveBestCheckpointCallback],
-    #             callbacks=[SaveLatestCheckpointCallback]
-    #         )
-    #     # self.trainer.model = self.model  it is already set inside*
-    #     self.trainer.tokenizer = self.tokenizer
-
-
-
 
     def load_model(self):
         """
@@ -846,9 +804,7 @@ class PEFTTrainer:
 
             if self.training_args.dev:
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(200))
-            # self.trainer.train_dataset = raw_datasets["train"]
 
-            # self.trainer.eval_dataset = raw_datasets["validation"]
             if train:
                 self.train_dataset = raw_datasets["train"]
                 self.eval_dataset = raw_datasets["validation"]
@@ -883,8 +839,6 @@ class PEFTTrainer:
                 print("train dataset input sample", sample_input, "\n", self.tokenizer.decode(sample_input))
                 print("train dataset label sample", sample_label,"\n", self.tokenizer.decode(sample_label))
                 self.train_dataset.set_format(type="torch")
-
-                self.trainer.train_dataset = self.train_dataset
 
             if valid:
                 if self.data_args.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
@@ -930,7 +884,7 @@ class PEFTTrainer:
                         desc="Running tokenizer on validation dataset",
                     )
                 self.eval_dataset.set_format(type="torch")
-                self.trainer.eval_dataset = self.eval_dataset
+
                 
     def load_data_collator(self):
                 
@@ -953,7 +907,6 @@ class PEFTTrainer:
             self.training_args.remove_unused_columns = False
         else:
             dataset_dependent_data_collator = default_data_collator
-        # self.trainer.data_collator = dataset_dependent_data_collator
         self.data_collator = dataset_dependent_data_collator
 
 
@@ -974,23 +927,16 @@ class PEFTTrainer:
             self.model.train_adapter(adapter_name)
             
             # trainer.model
-            # self.trainer.model.add_adapter(adapter_name, config = peft_config, overwrite_ok=reset_peft)
-            # self.trainer.model.train_adapter(adapter_name)
             if self.model_args.model_arch == "encoder":
                 self.model.add_classification_head(f"lm_head-{adapter_name}", num_labels=2, overwrite_ok=reset_peft)
             elif self.model_args.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head(f"lm_head-{adapter_name}", overwrite_ok=reset_peft)
                 self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = False
-                
-                # trainer.model
-                # self.trainer.model.add_seq2seq_lm_head(f"lm_head-{adapter_name}", overwrite_ok=reset_peft)
-                # self.trainer.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = False
+
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.model_args.model_arch}"
                 )
-            # trainer.model
-            # self.trainer.model.set_active_adapters(self.model_args.tuning_mode)
             self.model.set_active_adapters(self.model_args.tuning_mode)
             
             # self.model.freeze_model(True)
@@ -1148,20 +1094,6 @@ class PEFTTrainer:
         }
         accelerator.init_trackers("huggingface",config=config)
 
-        # TODO: possibly resume training
-        # if self.recover_from == "trainer_state":
-        #     # might overwrite loaded model?
-        #     print("resume training from checkpoint: ", self.training_args.output_dir)
-        #     self.trainer.train(resume_from_checkpoint=True) # latest checkpoint
-        # elif self.recover_from is None:
-        #     # loaded pretrained model and start training from scratch
-        #     self.trainer.train()
-        # else:
-        #     raise ValueError("recover from not supported: ", self.recover_from)
-        # # best model loaded after training
-        # best_check_point = self.trainer.state.best_model_checkpoint
-        # self.trainer.save_model(os.path.join(self.training_args.output_dir, "best_model"))
-        # self.trainer.evaluate(self.test_dataset)
         self.train_dataloader = DataLoader(self.train_dataset, shuffle=True, batch_size=16, collate_fn=self.data_collator)
 
         # if epoch == epochs_trained and resume_from_checkpoint is not None and steps_trained_in_current_epoch == 0:
@@ -1267,55 +1199,7 @@ class PEFTTrainer:
                 range(stop*self.training_args.per_device_eval_batch_size)
             )
         )
-
         return results
-
-        
-
-        # raise NotImplementedError("customized evaluate is not implemented yet")
-        # 0. set up a trainer without model, train_dataset, eval_dataset, optimizer
-        # self.set_up_hf_trainer()
-        # 1. load model, if resume training, no need for model loading, if training mode, load from pretrained model
-        # self.load_model()
-        
-
-        # 2. load data collator and test dataset only 
-        # self.load_data_collator()
-        # self.load_dataset(train=False, valid=False, test = True)
-        # self.trainer.evaluate(self.test_dataset)
-        
-        
-        
-        # if eval_dataset is None:
-        #     if self.eval_dataset is None:
-        #         self.load_dataset(train = False, valid = True)
-        #     eval_dataset = self.eval_dataset
-        
-        # max_verbalizer_len = max([len(v) for v in self.verbalizers])
-        # if "bloom" in self.model_args.model_name_or_path or "opt" in self.model_args.model_name_or_path:
-        #     eval_preds = []
-        #     correct = 0
-        #     for data in eval_dataset:
-        #         out = self.model.generate(data["input_ids_0"].unsqueeze(0).cuda())
-        #         decoded_out = self.tokenizer.decode(out[0]).lower()
-        #         print(decoded_out)
-        #         decoded_out = decoded_out[-max_verbalizer_len:]
-        #         if self.verbalizers[0].strip().lower() in decoded_out.strip().lower() or "negative" in decoded_out or "no" in decoded_out:
-        #             pred = 0
-        #         elif self.verbalizers[1].strip().lower() in decoded_out.strip().lower() or "positive" in decoded_out or "yes" in decoded_out:
-        #             pred = 1
-        #         else:
-        #             print("missed prediction: ", decoded_out)
-        #             pred = -1
-        #         if pred == data["class_ids"]:
-        #             correct += 1
-        #     results = {"acc": correct/len(eval_dataset)}
-        # else:
-        #     results = self.trainer.evaluate(eval_dataset=eval_dataset)
-        # print(results)
-        # return results
-
-    
     
     def compute_metrics(self, eval_preds, eval_dataset, is_pred_logits = False, model_idx = 0, metrics = {}):
         preds, labels = eval_preds
