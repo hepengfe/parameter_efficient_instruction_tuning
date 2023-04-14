@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 # import Optional
 from typing import Optional, List
-
+from utils import flatten, build_peft_config_name
 
 
 
@@ -20,14 +20,15 @@ class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
     """
-
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
+
     model_arch: str = field(
         default="encoder-decoder",
         metadata={"help": "model architecture"}
     )
+
     tuning_mode: str = field(
         default="lora",
         metadata={"help": "tuning mode, either fine tuning or peft"}
@@ -45,7 +46,7 @@ class PeftArguments:
         default=None,
         metadata={"help": "percentage of trainable parameters of peft methods w.r.t to the original pre-trained model"}
     )
-    
+
     # lora
     lora_r: int = field(
         default=1,
@@ -56,59 +57,54 @@ class PeftArguments:
         default="qv",
         metadata={"help": "lore modules to be reparameterized."}
     )
-    
-    
+
     # adaptor
     reduction_factor: float = field(
         default=None,
         metadata={"help": "reduction factor for adaptor"}
     )
-    
+
     # compactor
     phm_dimension: int = field(
         default=2,
         metadata={"help": "dimension of phm"}
     )
-    
+
     # prompt tuning
     num_soft_tokens: int = field(
         default=10,
         metadata={"help": "number of soft tokens"}
     )
-    
-    
+
     # prefix tuning
     prefix_len: int = field(
         default=None,
         metadata={"help": "prefix length"}
     )
-    
-    
 
     # bitfit
     bias_name: str = field(
         default=None,
         metadata={"help": "bias name to be tuned"}
     )
-    
+
     # pelt
     use_pelt_gate: bool = field(
         default=False,
         metadata={"help": "whether to use pelt gate"}
     )
-    
-    
+
     # layer tuning
     layer_name: str = field(
         default=None,
         metadata={"help": "layer name to be tuned"}
     )
-    
+
     module_device: int = field(
         default=0,
         metadata={"help": "device id of the module to be tuned"}
     )
-    
+
     
     
     
@@ -283,15 +279,15 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     load_best_model_at_end: bool = field(
         default=True, metadata={"help": "Whether to load the best model found during training at the end of training."}
     )
-    
-    
+
     save_total_limit: Optional[int] = field(
-        default=2, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 2 (the best model and the last checkpoint)."}
+        default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 2 (the best model and the last checkpoint)."}
     )
 
     max_steps: Optional[int] = field(
         default=-1, metadata={"help": "If set, the training will override num_train_epochs and stop after max_steps."}
     )
+
     num_train_epochs: float = field(
         default=2.0, metadata={"help": "Total number of training epochs to perform."}
     )
@@ -306,7 +302,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     do_test: bool = field(
         default=False, metadata={"help": "Whether to run test."}
     )
-    
     expr_dir : str = field(
         default="cache/tmp/", metadata={"help": "The directory for all experiments logs, checkpoints, and results."}
     )
@@ -314,13 +309,18 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     saved_pretrained_model_path: str = field(
         default="cache/saved_pretrained", metadata={"help": "The directory for saved pretrained model. It has a higher priority than model_cache_path."}
     )
+
     model_cache_path: str = field(
         default="cache/model", metadata={"help": "The directory for model cache."}
     )
     
-from utils import flatten, build_peft_config_name
+    log_level: str = field(
+        default="warning",
+        metadata={ "help": "The logging level." },
+    )
+        
     
-if __name__ == "__main__":
+def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
@@ -343,7 +343,6 @@ if __name__ == "__main__":
         if peft_args.bias_name is None:
             peft_args.bias_name = "encoder_decoder_bias"
             print("bias_name is set to encoder_decoder_bias since args.bias_name is not specified")
-        
     if model_args.tuning_mode == "fine_tuning":
         training_args.learning_rate = 1e-5
         print("lr is set to 1e-5 due to fine_tuning mode")
@@ -399,8 +398,6 @@ if __name__ == "__main__":
     training_args.label_names = [training_args.label_names]
     trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
     
-    transformers.logging.set_verbosity_warning()
-
     if training_args.do_train:
         trainer.train() # train from scratch
 
@@ -416,5 +413,9 @@ if __name__ == "__main__":
     # 0.1, 0.2, 0.3
     #  self.model_cache = deepcopy(self.model)
     # del self.model_cache
+
+    
+if __name__ == "__main__":
+    main()
 
 
