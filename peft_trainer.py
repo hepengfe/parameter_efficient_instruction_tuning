@@ -36,11 +36,69 @@ from copy import deepcopy
 import datetime
 import accelerator
 from peft import PeftModelForSeq2SeqLM
-
+import json
 
 # modules use two pacakges 
 ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]
 PEFT_MODULES=["prompt_tuning"]
+
+BEST_CP_FOLDER_NAME="best_checkpoint"
+LATEST_CP_FOLDER_NAME="latest_checkpoint"
+
+import logging
+from accelerate.logging import get_logger
+# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
+logger = get_logger(__name__)
+
+
+class TrainingState:
+    """
+    Track current training state.
+    """
+    def __init__(self, epoch=0, step =0 , global_step=0, loss=0, best_metric_val=0, metric="rougel"):
+        self.epoch = epoch
+        self.step = step
+        self.global_step = global_step
+        self.loss = loss
+        self.eval_metric = metric
+        self.best_metric_val = best_metric_val
+        self.best_checkpoint_path = None # for easier loading
+        self.best_checkpoint_global_step = None
+        self.best_checkpoint_epoch = None
+        self.best_checkpoint_step = None
+        self.file_name = "training_state.json"
+
+    def update(self, dict):
+        for k, v in dict.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
+            else:
+                logger.warning(f"key {k} is not in TrainingState")
+
+    def to_dict(self):
+        return dict([(k, v) for k, v in self.__dict__.items() if not k.startswith("_")])
+
+
+    def validate(self):
+        if not isinstance(self.epoch, int):
+            raise ValueError("Epoch must be an integer.")
+        if not isinstance(self.loss, float):
+            raise ValueError("Loss must be a float.")
+        if not isinstance(self.accuracy, float):
+            raise ValueError("Accuracy must be a float.")
+
+    def save_to_json(self, cp_path):
+        file_path = os.path.join(cp_path, self.file_name)
+        with open(file_path, "w") as f:
+            json.dump(self.to_dict(), f)
+
+
+    def load_from_json(self, cp_path):
+        file_path = os.path.join(cp_path, self.file_name)
+        with open(file_path, "r") as f:
+            data = json.load(f)
+        return self.update(data)
 
 class PEFTTrainer:
     def __init__(self, training_args, data_args, model_args, peft_args):
@@ -731,10 +789,6 @@ class PEFTTrainer:
 
         
         model_inputs = {}
-        
-        
-        # multi_model_inputs_l = []# initalize as list of dict, finally merge dict into one dict
-        # multi_model_inputs = {}
         tokenizer = self.tokenizer
 
         model_inputs = tokenizer(
@@ -755,11 +809,6 @@ class PEFTTrainer:
             )
         if self.padding == "max_length" and self.data_args.ignore_pad_token_for_loss:
             labels["input_ids"][labels["input_ids"]==0] = -100
-                # labels["input_ids"] = [
-                #     [(l if l != self.tokenizer.pad_token_id else -100)
-                #     for l in label]
-                #     for label in labels["input_ids"]
-                # ]
             
             # if encoder only model
             if self.model_args.model_arch == "encoder":
@@ -887,7 +936,6 @@ class PEFTTrainer:
 
                 
     def load_data_collator(self):
-                
         if self.data_args.dataset_name == "ni":
             dataset_dependent_data_collator = DataCollatorForNI(
                 self.tokenizer,
@@ -1040,8 +1088,6 @@ class PEFTTrainer:
             self.model.enable_input_require_grads()
             
             self.model = get_peft_model(self.model, peft_config)
-        
-        
         return self.check_trainable_parameters()
 
 
@@ -1063,17 +1109,18 @@ class PEFTTrainer:
 
     def train(self):
         """
-        0. load pretrained model or from checkpoint
-        1. load hf trainer and move model to device
-        2. load peft module and move it to model device
+        0. load pretrained model, dataset, optimizer and scheduler
+        1. set up accelerator
+        2. load previous checkpoint if resume training
         3. load training components such as data_collator, dataset and optimizer.
         4. start training.
-        5. save the best model.
+        5. save the best model during evaluation
         5. evaluate the best model on test set
         
         Plus,
         - support resume training
         """
+
 
         self.load_dataset(train = True, valid = True, test=True)
         # 4. load optimizer
@@ -1081,79 +1128,276 @@ class PEFTTrainer:
         
         from accelerate import Accelerator
         from accelerate.tracking import WandBTracker, GeneralTracker
+        from accelerate.utils import ProjectConfiguration
+        # ProjectConfiguration()
         accelerator = Accelerator(
             log_with="wandb",
-            logging_dir=self.training_args.output_dir,
-            project_dir="./accelerate",
+            
+            # log_with="all",
+            project_dir="/home/murphy/pengfei_2022/workspaces/peft/accelerate",
+            # total_limit = 3,
             gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
             )
+        import wandb
         lr = self.scheduler.get_last_lr()[0]
         config = {
             "num_iterations": 5,
             "learning_rate": lr,
         }
-        accelerator.init_trackers("huggingface",config=config)
+        
 
         self.train_dataloader = DataLoader(self.train_dataset, shuffle=True, batch_size=16, collate_fn=self.data_collator)
 
-        # if epoch == epochs_trained and resume_from_checkpoint is not None and steps_trained_in_current_epoch == 0:
-        #    self._load_rng_state(resume_from_checkpoint)
         self.model, self.optimizer, self.train_dataloader, self.scheduler = accelerator.prepare(self.model, self.optimizer, self.train_dataloader, self.scheduler)
         device = accelerator.device
         # get scheduler lr
-        # wandb_tracker = accelerator.get_tracker("wandb")
+        
         i = 0
         
-        # save training arguments
-        self.training_args.save_to_json_file(os.path.join(self.training_args.output_dir, "training_args.json"))
+        # TODO: save training arguments
+        # torch.save(self.training_args, os.path.join(self.training_args.output_dir, "training_args.json"))
         
         
         # steps/epoches 
         assert self.training_args.num_train_epochs is not None, "num_train_epochs is not set"
         assert self.training_args.max_steps == -1, "max_steps is not supported yet, but got {}".format(self.training_args.max_steps)
         import math
-        len_dataloader = len(self.train_dataloader)
-        num_update_steps_per_epoch = len_dataloader // self.training_args.gradient_accumulation_steps
-        num_update_steps_per_epoch = max(num_update_steps_per_epoch, 1)
-        max_steps = math.ceil(self.training_args.num_train_epochs * num_update_steps_per_epoch)
-        num_train_epochs = math.ceil(self.training_args.num_train_epochs)
-        num_train_samples = len(self.train_dataset) * self.training_args.num_train_epochs
-        tmp_dir = self.training_args.output_dir + "_test"
-        # accelerator.save_state(self.training_args.output_dir)
-        if os.path.exists(tmp_dir):
-            print("load from existing state")
-            accelerator.load_state(tmp_dir)
+        
+        
+        # init run 
+        global_step = 0
+        best_metric_val = 0
+        start_epoch = 0
+        start_step = 0
 
-        # epochs_trained = self.state.global_step // num_update_steps_per_epoch
-        for epoch in range(epochs_trained, num_train_epochs):
-            for step, inputs in enumerate(self.train_dataloader):
+        
+        train_state = TrainingState(epoch = 0, step = 0, global_step = 0, loss = 0, best_metric_val = -1)
+
+        # save the info above into a json file
+     
+        import json
+
+        # accelerator.save_state(self.training_args.output_dir)
+        
+        from utils import get_latest_checkpoint
+        # it has past run but might not have model checkpoint and wandb file
+        # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
+
+        # if os.path.exists(os.path.join(self.training_args.output_dir, "latest_checkpoint")):
+        
+
+        # TODO: add while loop + try except to keep reading the latest checkpoint. If checkpoint is corrupted, then remove and reload the previous checkpoint.
+        # try to load 
+        # 1. load one checkpoint failed, remove it and load the previous one
+        # 2. if all checkpoints are failed, then re-init training
+        loaded = False
+        import shutil
+        while not loaded:
+            if os.path.exists(self.training_args.output_dir):
+                print("load from existing state")
+                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+                
+                # if no checkpoint, then remove the folder and re-init the tracker
+                if latest_cp is None:
+                    shutil.rmtree(self.training_args.output_dir)
+                    logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+
+                # try to load the latest checkpoint
+                try:
+                    accelerator.load_state(latest_cp)
+                    # accelerator.load_state(os.path.join(self.training_args.output_dir, "latest_checkpoint"))
+                    accelerator.init_trackers("huggingface",
+                                        config=config,
+                                        init_kwargs={
+                                            "wandb":{
+                                                    "name":"Idea10",
+                                                    "tags": ["tag_a", "tag_b"],
+                                                    "dir": self.training_args.output_dir,
+                                                    # "resume": "auto"
+                                                    "resume": "must"
+                                                }
+                                            }
+                                        )
+                    train_state.load_from_json(latest_cp)
+                    loaded = True
+                except Exception as e:
+                    # it can be state dict file corrupted or model checkpoint corrupted
+                    # in any case, remove the checkpoint folder and reload the previous one
+                    print("load failed due to {}".format(e))
+                    print(e)
+                    # remove the latest checkpoint
+                    # output_dir might already has been removed
+                    if latest_cp is not None:
+                        shutil.rmtree(latest_cp)
+                    # still not loaded
+                    continue
+            else:
+                # create output dir and rewrite it if it exists (as model cannot be loaded)
+                # if os.path.exists(self.training_args.output_dir):
+                #     # TODO: logging.WARN
+                #     shutil.rmtree(self.training_args.output_dir)
+                os.makedirs(self.training_args.output_dir)
+                accelerator.init_trackers("huggingface",
+                                        config=config,
+                                        init_kwargs={
+                                            "wandb":{
+                                                    "name":"Idea10",
+                                                    "tags": ["tag_a", "tag_b"],
+                                                    "dir": self.training_args.output_dir,
+                                                    # "resume": "auto"
+                                                    "resume": False
+                                                    }
+                                            }
+                                        )
+                loaded = True
+
+
+        metric_for_best_model = "best_rougel"
+        # import pdb; pdb.set_trace()
+        # print(' wandb.run.resumed    wandb.run.epoch  wandb.run.step')
+        
+        if loaded:
+            global_step =  train_state.global_step
+            start_epoch = train_state.epoch
+            start_step = train_state.step
+            best_metric_val = train_state.best_metric_val
+        # wandb.run.summary.best_rougel
+        
+
+        logger.info("skip first %s steps in train_dataloader",  start_step)
+        # what about epoch + step for resume checkpoint?
+        # global_step
+        accelerator.skip_first_batches(self.train_dataloader,  start_step)
+
+        accelerator.save_state(
+            os.path.join(self.training_args.output_dir,f"checkpoint-{global_step}")
+        )
+        
+        
+        
+        
+        
+        # if read from state failed but wandb load succeeded? it's wrong
+        # i stoped at global step 7, it should have step 6 wandb and checkpoint
+        # check wandb has step 6
+        
+        
+
+        # TODO: check wandb folder
+        # TODO: check accelerator state separately
+
+        for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
+            
+            for step, inputs in enumerate(self.train_dataloader, start=start_step):
+                print("------------epoch: ", epoch, "global_step: ", global_step)
                 with accelerator.accumulate(self.model):
-                    i += 1
-                    if i > 5:
+                    train_state.update(
+                        {
+                            "step": step,
+                            "epoch": epoch,
+                            "global_step": global_step,
+                        }
+                    )
+                    if step > 5:
                         break
-                    
+
                     # move inputs to device
-                    # inputs = {k: v.to("cuda") for k, v in inputs.items()}
                     outputs = self.model(**inputs)
                     loss = outputs["loss"]
                     accelerator.backward(loss) # it does gradient acc internally
-                    
-                    accelerator.log({"training_loss": loss.item()}, step=step)
+                    accelerator.log(
+                        {
+                        "epoch": epoch,
+                        "step": step,
+                        "global_step": global_step,
+                        "training_loss": loss.item(),
+                        "best_rougel": global_step
+                        },
+                        step=global_step
+                    )
                     self.optimizer.step()
                     self.scheduler.step()
                     self.optimizer.zero_grad()
+                    # rename lasteset_checkpoint to last_but_one_checkpoint
+                    # os.rename(os.path.join(
+                    #         self.training_args.output_dir, f"latest_checkpoint"
+                    #     ), os.path.join(
+                    #         self.training_args.output_dir, f"last_but_one_checkpoint"
+                    #     ))
                     
-                    # wandb_tracker.log({"training_loss": loss}, step=step)
-                    print("step: ", step)
-            accelerator.save_state(tmp_dir)
+                    accelerator.save_state(
+                        os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
+                    )
+                        # os.path.join(
+                        #     self.training_args.output_dir, f"latest_checkpoint"
+                        # )
+                    # )
+                    cur_metric_val= global_step
+                    if cur_metric_val > best_metric_val:
+                        print("cur_metric_val > best_metric_val, save best checkpoint")
+                        best_metric_val = cur_metric_val
+                        best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
+                        accelerator.save_state(best_checkpoint_path)
+                        # os.path.join(self.training_args.output_dir, "best_checkpoint"))
+
+                        train_state.update(
+                            {
+                                "best_metric_val": best_metric_val,
+                                "best_checkpoint_path": best_checkpoint_path,
+                                "best_checkpoint_global_step": global_step,
+                                "best_checkpoint_epoch": epoch,
+                                "best_checkpoint_step": step,
+                            }
+                        )
+                        train_state.save_to_json(best_checkpoint_path)
+                        # sleep 3 seconds
+                        import time
+                        print("sleep")
+                        time.sleep(2)
+                    
+
+
+                    train_state.save_to_json(os.path.join(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")))
+                    # save_state_dict(state_dict, os.path.join(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"), "state_dict.json"))
+                    
+                    
+                    
+                    # TODO: suspend signal
+                    # wandb.mark_preempting()
+                    global_step += 1
+                    
+                    
+                # TODO: will the step be a new step that skipped batches
+        accelerator.save_state(
+            self.training_args.output_dir
+        )
+        # for epoch in range(epochs_trained, num_train_epochs):
+        #     for step, inputs in enumerate(self.train_dataloader):
+        #         with accelerator.accumulate(self.model):
+        #             i += 1
+        #             if i > 5:
+        #                 break
+
+        #             # move inputs to device
+        #             outputs = self.model(**inputs)
+        #             loss = outputs["loss"]
+        #             accelerator.backward(loss) # it does gradient acc internally
+
+        #             accelerator.log({"training_loss": loss.item()}, step=step)
+        #             self.optimizer.step()
+        #             self.scheduler.step()
+        #             self.optimizer.zero_grad()
+
+        #             # wandb_tracker.log({"training_loss": loss}, step=step)
+        #             print("step: ", step)
+        #     accelerator.save_state(tmp_dir)
         accelerator.end_training()
-    
+
+
     def evaluate(self):
         """
         currently only supports evaluation on test set.
         """
-        
-        
         self.load_dataset(train = False, valid = False, test=True)
         from accelerate import Accelerator
         accelerator = Accelerator(

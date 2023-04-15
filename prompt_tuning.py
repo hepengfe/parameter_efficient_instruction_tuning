@@ -1,7 +1,7 @@
 from transformers import HfArgumentParser
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
-from transformers import Seq2SeqTrainingArguments, logging
+from transformers import Seq2SeqTrainingArguments
 from peft_trainer import PEFTTrainer
 import argparse
 import os
@@ -288,8 +288,8 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=-1, metadata={"help": "If set, the training will override num_train_epochs and stop after max_steps."}
     )
 
-    num_train_epochs: float = field(
-        default=2.0, metadata={"help": "Total number of training epochs to perform."}
+    num_train_epochs: int = field(
+        default=2, metadata={"help": "Total number of training epochs to perform."}
     )
     
     run_name: Optional[str] = field(
@@ -335,10 +335,9 @@ def main():
         if model_args.tuning_mode == "prefix_tuning":
             assert peft_args.prefix_len is not None, "prefix_len is required for prefix_tuning"
 
-    
     if model_args.tuning_mode == "layer_tuning":
         assert peft_args.layer_name is not None, "layer_name should be specified for layer tuning mode"
-    
+
     if model_args.tuning_mode == "bitfit":
         if peft_args.bias_name is None:
             peft_args.bias_name = "encoder_decoder_bias"
@@ -346,8 +345,7 @@ def main():
     if model_args.tuning_mode == "fine_tuning":
         training_args.learning_rate = 1e-5
         print("lr is set to 1e-5 due to fine_tuning mode")
-        
-    
+
 
     # extract suffix number from data_dir
     if data_args.data_dir is not None:
