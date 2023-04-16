@@ -284,8 +284,12 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     #     default=True, metadata={"help": "Whether to load the best model found during training at the end of training."}
     # )
 
-    save_total_limit: Optional[int] = field(
-        default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 2 (the best model and the last checkpoint)."}
+    checkpoint_save_total_limit: Optional[int] = field(
+        default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
+    )
+    
+    best_checkpoint_save_total_limit:  Optional[int] = field(
+        default=2, metadata={"help": "The maximum total amount of best checkpoints to save."}
     )
 
     max_steps: Optional[int] = field(
@@ -372,7 +376,7 @@ def main():
         import re
         result = re.findall(r'\d+', data_args.data_dir)
         if len(result) != 0:
-            data_args.num_training_tasks = int(result[-1])
+            num_validation_tasks = int(result[-1])
     assert training_args.do_train or training_args.do_test, "At least one of `do_train` or `do_test` must be True."
     assert not (training_args.do_train and training_args.do_test), "do_train and do_test cannot be both True"
 
@@ -392,7 +396,7 @@ def main():
     data_folder_name = os.path.basename(data_args.data_dir)
     # output_dir:   xx/xx/xx
     # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
-    data_config_name = f"num_training_tasks_{data_args.num_training_tasks}"
+    data_config_name = f"num_validation_tasks_{num_validation_tasks}"
     output_dir = os.path.join(
             training_args.expr_dir,
             data_args.dataset_name,
