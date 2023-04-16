@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 def build_peft_config_name(model_args, peft_args, training_args):
     peft_config_name = ""
     if model_args.tuning_mode == "lora":
@@ -56,3 +57,11 @@ def get_latest_checkpoint(output_dir):
         return None
     latest_checkpoint = max(checkpoint_dirs, key=lambda x: int(x.split('-')[1]))
     return os.path.join(output_dir, latest_checkpoint)
+
+def remove_old_checkpoints(output_dir, num_to_keep=1):
+    checkpoint_dirs = [d for d in os.listdir(output_dir) if re.match(r'^checkpoint-\d+$', d)]
+    if len(checkpoint_dirs) <= num_to_keep:
+        return
+    checkpoint_dirs = sorted(checkpoint_dirs, key=lambda x: int(x.split('-')[1]))
+    for d in checkpoint_dirs[:-num_to_keep]:
+        shutil.rmtree(os.path.join(output_dir, d))

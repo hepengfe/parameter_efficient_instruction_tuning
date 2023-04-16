@@ -204,6 +204,10 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     per_device_eval_batch_size: int = field(
         default=1, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
+    per_device_test_batch_size: int = field(
+        default=1, metadata={"help": "Batch size per GPU/TPU core/CPU for testing."}
+    )
+    
     
     full_determinism: bool = field(
         default=True,
@@ -276,9 +280,9 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     save_steps: int = field(
         default=5000, metadata={"help": "Save checkpoint every X steps."}
     )
-    load_best_model_at_end: bool = field(
-        default=True, metadata={"help": "Whether to load the best model found during training at the end of training."}
-    )
+    # load_best_model_at_end: bool = field(
+    #     default=True, metadata={"help": "Whether to load the best model found during training at the end of training."}
+    # )
 
     save_total_limit: Optional[int] = field(
         default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 2 (the best model and the last checkpoint)."}
@@ -317,6 +321,22 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     log_level: str = field(
         default="warning",
         metadata={ "help": "The logging level." },
+    )
+    
+    
+    eval_metric: str = field(
+        default="rougeL",
+    )
+    
+    
+    dev_run: bool = field(
+        default=False,
+        metadata={ "help": "Whether to run in dev mode." },
+    )
+    
+    dev_train: bool = field(
+        default=False,
+        metadata={ "help": "Whether to run in dev mode." },
     )
         
     
