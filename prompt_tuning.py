@@ -343,10 +343,42 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to run in dev mode." },
     )
         
+    dev_offline: bool = field(
+        default=False,
+        metadata={ "help": "Whether to run in dev mode." },
+    )
     
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    
+    
+
+    
+    
+    if training_args.dev_run:
+        os.environ["WANDB_MODE"] = "disabled"
+        model_args.model_name_or_path="google/t5-small-lm-adapt"
+        training_args.num_train_epochs = 1
+        training_args.eval_steps = 10
+        training_args.save_steps = 10 
+        training_args.dev_run_data_size = 20
+    
+    
+    if training_args.dev_train:
+        os.environ["WANDB_MODE"] = "disabled"
+        # try to adjust train/eval bs during dev run
+        training_args.dev_train_data_size = 200
+        training_args.eval_steps = 20
+        
+        # test eval bs
+        training_args.eval_steps = 1
+        training_args.save_steps = 1000 # no save needed actually
+
+
+    if training_args.dev_offline:
+        os.environ["WANDB_MODE"] = "offline"
+        os.environ["TRANSFORMERS_OFFLINE"] = 1
     
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
