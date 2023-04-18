@@ -207,8 +207,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     per_device_test_batch_size: int = field(
         default=1, metadata={"help": "Batch size per GPU/TPU core/CPU for testing."}
     )
-    
-    
+
     full_determinism: bool = field(
         default=True,
         metadata={ "help": "Whether to use full determinism." },
@@ -358,21 +357,21 @@ def main():
     
     if training_args.dev_run:
         os.environ["WANDB_MODE"] = "disabled"
-        model_args.model_name_or_path="google/t5-small-lm-adapt"
-        training_args.num_train_epochs = 1
+        # model_args.model_name_or_path="google/t5-small-lm-adapt"
+        training_args.num_train_epochs = 3
         training_args.eval_steps = 10
         training_args.save_steps = 10 
-        training_args.dev_run_data_size = 20
+        training_args.dev_run_data_size = 24
     
     
     if training_args.dev_train:
         os.environ["WANDB_MODE"] = "disabled"
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 200
-        training_args.eval_steps = 20
-        
-        # test eval bs
-        training_args.eval_steps = 1
+        training_args.dev_train_data_size = 100
+        training_args.eval_steps = 40
+        training_args.num_train_epochs = 10
+        # # test eval bs
+        # training_args.eval_steps = 1
         training_args.save_steps = 1000 # no save needed actually
 
 

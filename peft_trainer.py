@@ -200,7 +200,7 @@ class PEFTTrainer:
         self.optimizer = Adafactor(
             self.model.parameters(),
             # filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr= self.training_args.learning_rate * self.accelerator.num_processes,
+            lr= self.training_args.learning_rate / self.accelerator.num_processes,
             eps=(1e-30, 1e-3),
             clip_threshold=1.0,
             decay_rate=-0.8,
@@ -902,6 +902,16 @@ class PEFTTrainer:
 
                     # eval and save at local process
                     if self.accelerator.is_local_main_process:
+                        # save first as eval is prone to error
+                        if global_step != 0 and global_step % self.training_args.save_steps == 0:
+                        
+                            cur_metric_val= global_step
+                            self.accelerator.save_state(
+                                os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
+                            )
+                            train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
+                            remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
+                            
                         # eval
                         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
                             results = self.evaluate()
@@ -928,22 +938,17 @@ class PEFTTrainer:
                                     }
                                 )
                                 train_state.save_to_json(best_checkpoint_path)
-                        # save
-                        if global_step != 0 and global_step % self.training_args.save_steps == 0:
                         
-                            cur_metric_val= global_step
-                            self.accelerator.save_state(
-                                os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
-                            )
-                            train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
-                            remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
                     # wait for main process to finish evaluation?
                     self.accelerator.wait_for_everyone()
                     # TODO: suspend signal
                     # wandb.mark_preempting()
                     global_step += 1
                     progress_bar.update(1)
-                    
+                    # if accelerator.sync_gradients:
+                    #     current_step += 1
+                    #     accelerator.print(torch.mean(avg_loss / total_accumulation_steps))
+                                        
                     
                 # TODO: will the step be a new step that skipped batches
         self.accelerator.save_state(
@@ -1003,7 +1008,7 @@ class PEFTTrainer:
                                         # synced_gpus = True,
                                         # synced_gpus = False,
                                         # pad_token_id=self.tokenizer.pad_token_id,
-                            )
+                )
 
 
                 # least working code with generation
@@ -1021,7 +1026,8 @@ class PEFTTrainer:
                 # torch.cuda.set_device(self.accelerator.device)
                 
                 outputs = self.tokenizer.batch_decode(outputs)
-                # labels = self.tokenizer.batch_decode(labels)**
+            
+                labels = self.tokenizer.batch_decode(labels)
                 # assert len(outputs) == self.training_args.per_device_eval_batch_size, f"eval bs per process should be consistent with self.training_args.per_device_eval_batch_size but got {( len(outputs), self.training_args.per_device_eval_batch_size)}"
                 # print("gathering:   ", outputs, labels)
                 
@@ -1059,10 +1065,10 @@ class PEFTTrainer:
                 output_host += outputs
                     # label_host += labels
                 
-                # for o, l in zip(outputs, labels):
-                #     print("------------")
-                #     print("output: ", o)
-                #     print("label: ", l)
+                for o, l in zip(outputs, labels):
+                    print("------------")
+                    print("output: ", o)
+                    print("label: ", l)
                 # self.accelerator.wait_for_everyone()
 
                 
@@ -1072,7 +1078,8 @@ class PEFTTrainer:
         # print("num of output: ", len(output_host))
         # exit()
 
-                
+        for o in output_host:
+            print(o)
         labels = None
         results = self.compute_metrics(
             (output_host, labels),
@@ -1086,9 +1093,17 @@ class PEFTTrainer:
         # print("prepare model")
         # self.model = self.accelerator.prepare(self.model)
         # print("after prepare model")
+        # import pdb; pdb.set_trace()
+        # print('check memory changes')
         
+        # print("finished evaluation and try self.accelerator.clear()")
+        # del inputs
+        # del outputs
+        # torch.cuda.empty_cache()
+        # import pdb; pdb.set_trace()
+        # print('check effect of clear')
         
-        print("finished evaluation")
+        # self.accelerator.clear()
         return results
 
     
@@ -1115,7 +1130,7 @@ class PEFTTrainer:
                 print("pred: ", pred, "ref: ", ref)
             # import pdb; pdb.set_trace()
             # print('')
-                
+
 
             result = compute_metrics(predictions=decoded_preds, references=references)
             result_per_task = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=eval_dataset["Task"])
