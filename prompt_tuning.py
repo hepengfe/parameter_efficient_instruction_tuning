@@ -347,6 +347,12 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to run in dev mode." },
     )
     
+    
+    use_accelerate: bool = field(
+        default=False,
+        metadata={ "help": "Whether to use accelerate." },
+    )
+    
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -381,6 +387,9 @@ def main():
     
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
+    assert training_args.logging_steps > 0, "logging_steps should be larger than 0"
+    
+    
     if data_args.dataset_name == "ni":
         assert training_args.predict_with_generate, "predict_with_generate is required for ni"
     
@@ -449,7 +458,7 @@ def main():
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
     training_args.label_names = [training_args.label_names]
-    trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
+    trainer = PEFTTrainer(training_args, data_args, model_args, peft_args, training_args.use_accelerate)
     
     if training_args.do_train:
         trainer.train() # train from scratch

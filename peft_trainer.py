@@ -114,12 +114,13 @@ class TrainingState:
         return str(self.to_dict())
 
 class PEFTTrainer:
-    def __init__(self, training_args, data_args, model_args, peft_args):
+    def __init__(self, training_args, data_args, model_args, peft_args, use_accelerator = False):
         
         self.training_args = training_args
         self.data_args = data_args
         self.model_args = model_args
         self.peft_args = peft_args
+        self.use_accelerator = use_accelerator
         
         # self.arguments = arguments
         self.model_name_or_path = self.model_args.model_name_or_path
@@ -130,40 +131,37 @@ class PEFTTrainer:
         self.recover_from = None
         
         
-        
-        
-        self.accelerator = Accelerator(
-            log_with="wandb",
-            project_dir="accelerate",
-            gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
-        )
-        
-        with self.accelerator.main_process_first():
-        
-        
-            # TODO: accelerator needs to load model and peft module first anyway
-            # is there anyway to not load the original model? since if model is large then it will take a lot of time
-            # maybe empty weights is an option
-            self.load_model_n_peft_module()
-            assert self.model is not None, "model should loaded"
-            # assert self.model_trainable_params is not None, "model_trainable_params should be counted"
-            self.load_tokenzier()
-            assert self.tokenizer is not None, "tokenizer should loaded"
-            self.load_optimizer_n_scheduler()
-            self.prepare_dataloader()
+        if self.use_accelerator:
+            self.accelerator = Accelerator(
+                log_with="wandb",
+                project_dir="accelerate",
+                gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
+            )
 
-            # import pdb; pdb.set_trace()
-            # print('check model')
-        # model should be prepared first for FSDP
-        # Also, prepare optimizer and scheduler after model is prepared so
-        # that optimizer is consistent with model
+        # TODO: accelerator needs to load model and peft module first anyway
+        # is there anyway to not load the original model? since if model is large then it will take a lot of time
+        # maybe empty weights is an option
+        self.load_model_n_peft_module()
+        assert self.model is not None, "model should loaded"
+        # assert self.model_trainable_params is not None, "model_trainable_params should be counted"
+        self.load_tokenzier()
+        assert self.tokenizer is not None, "tokenizer should loaded"
+        self.load_optimizer_n_scheduler()
+        self.prepare_dataloader()
 
-        self.model = self.accelerator.prepare(self.model)
+        if self.use_accelerator:
         
-        
-        # self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader  = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader)
-        
-        self.optimizer, self.scheduler, self.train_dataloader = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader)
+            
+            self.device = self.accelerator.device
+            self.model = self.accelerator.prepare(self.model)
+            
+            
+            # self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader  = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader)
+            
+            self.optimizer, self.scheduler, self.train_dataloader = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader)
+        else:
+            self.device = "cuda"
+            self.model = self.model.to(self.device)
         
         # self.eval_dataloader, self.test_dataloader = self.accelerator.prepare( self.eval_dataloader, self.test_dataloader)
 
@@ -197,10 +195,13 @@ class PEFTTrainer:
 
     def load_optimizer_n_scheduler(self):
         # lr should be scaled linearly with the number of processes
+        if self.use_accelerator:
+            self.training_args.learning_rate = self.training_args.learning_rate * self.accelerator.num_processes
+            # lr  = self.training_args.learning_rate / self.accelerator.num_processes
         self.optimizer = Adafactor(
             self.model.parameters(),
             # filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr= self.training_args.learning_rate / self.accelerator.num_processes,
+            lr= self.training_args.learning_rate,
             eps=(1e-30, 1e-3),
             clip_threshold=1.0,
             decay_rate=-0.8,
@@ -769,12 +770,13 @@ class PEFTTrainer:
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
         loaded = False
+
         
-        # with self.accelerator.main_process_first():
-        if self.accelerator.is_local_main_process:
+        # NOTE: non-accelerator resume training is not supported
+        if self.use_accelerator:
             while not loaded:
                 if os.path.exists(self.training_args.output_dir):
-                    print("load from existing state")
+                    logger.info("load from existing state")
                     latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                     
 
@@ -837,24 +839,22 @@ class PEFTTrainer:
             best_metric_val = train_state.best_metric_val
 
 
-
-        # reloading and configs are updated in the above code
-        # wandb.config.update(self.training_args.to_dict())
-        self.accelerator.log(self.training_args.to_dict())
-
-
         if global_step >= self.training_args.num_train_epochs * len(self.train_dataloader):
             logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             logger.info("Ending training...")
             return
         
+        if self.use_accelerator:
+            self.accelerator.log(self.training_args.to_dict())
+            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process)
+            logger.info("Resume training from epoch %s, step %s, global_step %s", start_epoch, start_step, global_step)
 
-        progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process)
-        logger.info("Resume training from epoch %s, step %s, global_step %s", start_epoch, start_step, global_step)
 
-
-        self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
-        logger.info("skip first %s steps in train_dataloader",  start_step)
+            self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
+            logger.info("skip first %s steps in train_dataloader",  start_step)
+        else:
+            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)))
+        
         
         
         
@@ -868,94 +868,125 @@ class PEFTTrainer:
         #     self.accelerator.wait_for_everyone()
             
         
-
+        logging_loss = 0
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
             print("------------new epoch: ", epoch, "global_step: ", global_step)
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
-                with self.accelerator.accumulate(self.model):
-                    train_state.update(
-                        {
-                            "step": step,
-                            "epoch": epoch,
-                            "global_step": global_step,
-                        }
-                    )
+                if self.use_accelerator:
+                    with self.accelerator.accumulate(self.model):
+                        
+                        train_state.update(
+                            {
+                                "step": step,
+                                "epoch": epoch,
+                                "global_step": global_step,
+                            }
+                        )
 
-                    
-                    # move inputs to device
+                        
+                            
+                        # move inputs to device
+                        outputs = self.model(**inputs)
+                        loss = outputs["loss"]
+                        # log before backward
+                        # self.accelerator.log(
+                        #     {
+                        #     "training_loss": loss.item(),
+                        #     },
+                        #     step=global_step
+                        # )
+                        self.accelerator.backward(loss) # it does gradient acc internally
+                        
+
+                        self.optimizer.step()
+                        self.scheduler.step()
+                        self.optimizer.zero_grad()
+
+                        # eval and save at local process
+                        if self.accelerator.is_local_main_process:
+                            # save first as eval is prone to error
+                            if global_step != 0 and global_step % self.training_args.save_steps == 0:
+                            
+                                cur_metric_val= global_step
+                                self.accelerator.save_state(
+                                    os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
+                                )
+                                train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
+                                remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
+                                
+                            # eval
+                            if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+                                
+                            # if global_step % self.training_args.eval_steps == 0:
+                                results = self.evaluate()
+                                
+                                
+                                assert self.training_args.eval_metric in results, f"eval_metric {self.training_args.eval_metric} not in evaluation results"
+                                
+                                self.accelerator.log(results, step=global_step)
+                                cur_metric_val = results[self.training_args.eval_metric]
+                                if cur_metric_val > best_metric_val:
+                                    best_metric_val = cur_metric_val
+                                    print("cur_metric_val > best_metric_val, save best checkpoint")
+                                    best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
+                                    self.accelerator.save_state(best_checkpoint_path)
+                                    remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
+                                    train_state.update(
+                                        {
+                                            "best_metric_val": best_metric_val,
+                                            "best_checkpoint_path": best_checkpoint_path,
+                                            "best_checkpoint_global_step": global_step,
+                                            "best_checkpoint_epoch": epoch,
+                                            "best_checkpoint_step": step,
+                                        }
+                                    )
+                                    train_state.save_to_json(best_checkpoint_path)
+
+                                import pdb; pdb.set_trace()
+                                print('check eval results')
+                        # wait for main process to finish evaluation?
+                        self.accelerator.wait_for_everyone()
+                        # TODO: suspend signal
+                        # wandb.mark_preempting()
+                        
+                        # if accelerator.sync_gradients:
+                        #     current_step += 1
+                        #     accelerator.print(torch.mean(avg_loss / total_accumulation_steps))
+                else:
+                    for k in inputs:
+                        inputs[k] = inputs[k].to(self.device)
                     outputs = self.model(**inputs)
                     loss = outputs["loss"]
-                    # log before backward
-                    # self.accelerator.log(
-                    #     {
-                    #     "training_loss": loss.item(),
-                    #     },
-                    #     step=global_step
-                    # )
-                    self.accelerator.backward(loss) # it does gradient acc internally
-                    
-                    
-                    print("loss: ", loss.item(), "global_step: ", global_step)
+                    loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
-                    self.optimizer.zero_grad()
-
-                    # eval and save at local process
-                    if self.accelerator.is_local_main_process:
-                        # save first as eval is prone to error
-                        if global_step != 0 and global_step % self.training_args.save_steps == 0:
-                        
-                            cur_metric_val= global_step
-                            self.accelerator.save_state(
-                                os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
-                            )
-                            train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
-                            remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-                            
-                        # eval
-                        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
-                            results = self.evaluate()
-                            # import pdb; pdb.set_trace()
-                            # print('check eval results')
-                            
-                            assert self.training_args.eval_metric in results, f"eval_metric {self.training_args.eval_metric} not in evaluation results"
-                            
-                            self.accelerator.log(results, step=global_step)
-                            cur_metric_val = results[self.training_args.eval_metric]
-                            if cur_metric_val > best_metric_val:
-                                best_metric_val = cur_metric_val
-                                print("cur_metric_val > best_metric_val, save best checkpoint")
-                                best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
-                                self.accelerator.save_state(best_checkpoint_path)
-                                remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
-                                train_state.update(
-                                    {
-                                        "best_metric_val": best_metric_val,
-                                        "best_checkpoint_path": best_checkpoint_path,
-                                        "best_checkpoint_global_step": global_step,
-                                        "best_checkpoint_epoch": epoch,
-                                        "best_checkpoint_step": step,
-                                    }
-                                )
-                                train_state.save_to_json(best_checkpoint_path)
-                        
-                    # wait for main process to finish evaluation?
-                    self.accelerator.wait_for_everyone()
-                    # TODO: suspend signal
-                    # wandb.mark_preempting()
-                    global_step += 1
-                    progress_bar.update(1)
-                    # if accelerator.sync_gradients:
-                    #     current_step += 1
-                    #     accelerator.print(torch.mean(avg_loss / total_accumulation_steps))
-                                        
                     
-                # TODO: will the step be a new step that skipped batches
-        self.accelerator.save_state(
-            self.training_args.output_dir
-        )
+                    if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+                        
+                    # if global_step % self.training_args.eval_steps == 0:
+                        results = self.evaluate()
+                        cur_metric_val = results[self.training_args.eval_metric]
+                        logger.info(f"rougel score: {cur_metric_val}")
+                        import pdb; pdb.set_trace()
+                        print('')
+                        
 
-        self.accelerator.end_training()
+                        
+                        
+                logging_loss += loss.item()
+                if global_step != 0 and global_step % self.training_args.logging_steps == 0:
+                    logger.info(f"loss: {logging_loss/self.training_args.logging_steps}  global_step: {global_step}")
+                    logging_loss = 0
+                global_step += 1
+                progress_bar.update(1)
+
+        if self.use_accelerator:
+            # TODO: will the step be a new step that skipped batches
+            self.accelerator.save_state(
+                self.training_args.output_dir
+            )
+
+            self.accelerator.end_training()
 
 
     def evaluate(self, mode="eval"):
@@ -996,9 +1027,9 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
-                # move inputs to accelerator device 
+
                 for k in inputs:
-                    inputs[k] = inputs[k].to(self.accelerator.device)
+                    inputs[k] = inputs[k].to(self.device)
                 
                 print("generating")
                 
