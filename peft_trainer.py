@@ -34,7 +34,6 @@ from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTu
 from util.ni_dataset_collator import DataCollatorForNI
 from copy import deepcopy
 import datetime
-import accelerator
 from peft import PeftModelForSeq2SeqLM
 from utils import get_latest_checkpoint, remove_old_checkpoints
 import json
@@ -155,11 +154,14 @@ class PEFTTrainer:
             # self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader  = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader)
             
             self.optimizer, self.scheduler, self.train_dataloader = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader)
+            
+            self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
+            
         else:
             self.device = "cuda"
             self.model = self.model.to(self.device)
         
-        # self.eval_dataloader, self.test_dataloader = self.accelerator.prepare( self.eval_dataloader, self.test_dataloader)
+
 
         """
         Model is loaded, now we need to set up the trainer
@@ -840,16 +842,19 @@ class PEFTTrainer:
             logger.info("Ending training...")
             return
         
+        # with gradient accumulation, per gradient update step is actually multiple steps
+        end_step = self.training_args.num_train_epochs * len(self.train_dataloader) // self.training_args.gradient_accumulation_steps
         if self.use_accelerator:
             self.accelerator.log(self.training_args.to_dict())
-            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process)
+            
+            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process, initial=global_step)
             logger.info("Resume training from epoch %s, step %s, global_step %s", start_epoch, start_step, global_step)
 
 
             self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
             logger.info("skip first %s steps in train_dataloader",  start_step)
         else:
-            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)))
+            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), initial=global_step)
         
         
         
@@ -962,7 +967,6 @@ class PEFTTrainer:
                         
                     # if global_step % self.training_args.eval_steps == 0:
                         results = self.evaluate()
-                        torch.cuda.empty_cache()
                         cur_metric_val = results[self.training_args.eval_metric]
                         logger.info(f"rougel score: {cur_metric_val}")
                         import pdb; pdb.set_trace()
@@ -1050,9 +1054,10 @@ class PEFTTrainer:
                 #                 )
                 #     outputs = self.accelerator.gather(outputs)
 
-
-                # padded_outputs = self.accelerator.pad_across_processes(outputs)
+                print("pre-pad shape: ", outputs.shape)
+                outputs = self.accelerator.pad_across_processes(outputs)
                 # torch.cuda.set_device(self.accelerator.device)
+                print("post-pad shape: ", outputs.shape)
                 
                 outputs = self.tokenizer.batch_decode(outputs)
             
@@ -1081,7 +1086,7 @@ class PEFTTrainer:
                 
                 
                 # labels = self.accelerator.gather(labels)
-                # outputs = self.accelerator.gather(outputs)
+                outputs = self.accelerator.gather(outputs)
                 
                 # print("output hosting")
                 # output_host += [o.to("cpu") for o in outputs]
