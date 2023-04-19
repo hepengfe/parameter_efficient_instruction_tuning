@@ -447,24 +447,33 @@ class PEFTTrainer:
     def build_dataloader(self):
         self.load_data_collator()
         self.load_dataset()
-        if self.use_accelerator:    
-            if len(self.eval_dataset) % self.accelerator.num_processes != 0:
+
+        min_eval_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_eval_batch_size
+        min_test_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_test_batch_size
+        if self.use_accelerator:
+            assert len(self.eval_dataset) > min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
+            assert len(self.test_dataset) > min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
+
+            if len(self.eval_dataset) % min_eval_data_size_per_process != 0:
                 org_len = len(self.eval_dataset)
-                new_size = len(self.eval_dataset)  - len(self.eval_dataset) % self.accelerator.num_processes 
+                new_size = len(self.eval_dataset)  - len(self.eval_dataset) % min_eval_data_size_per_process 
 
                 self.eval_dataset = self.eval_dataset.select(range(new_size))
                 new_len = len(self.eval_dataset)
-                logger.info(f"eval dataset size must be divisible by number of processes {self.accelerator.num_processes}, truncating from {org_len} to {new_len} examples")
+                logger.info(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.accelerator.num_processes}, truncating from {org_len} to {new_len} examples")
                 
-            if len(self.test_dataset) % self.accelerator.num_processes != 0:
+
+            if len(self.test_dataset) % min_test_data_size_per_process != 0:
                 org_len = len(self.test_dataset)
-                new_size = len(self.test_dataset)  - len(self.test_dataset) % self.accelerator.num_processes
+                new_size = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
                 self.test_dataset = self.test_dataset.select(range(new_size))
-                logger.info(f"test dataset size must be divisible by number of processes {self.accelerator.num_processes}, truncating from {org_len} to {new_len} examples")
+                logger.info(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
             
-            assert len(self.eval_dataset) % self.accelerator.num_processes == 0, "eval dataset size must be divisible by number of processes"
-            assert len(self.test_dataset) % self.accelerator.num_processes == 0, "test dataset size must be divisible by number of processes"
+            assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
+            assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
         self.load_dataloader()
+
+
     
     
     def load_dataloader(self):
@@ -809,7 +818,12 @@ class PEFTTrainer:
         
         # NOTE: non-accelerator resume training is not supported
         # if self.use_accelerator and self.accelerator.is_local_main_process:
+        
+        # a better way: main process check and rm corrumpted checkpoint
+        # if a latest_cp is found, all processes load it
+        
         while not loaded:
+            self.accelerator.wait_for_everyone()
             if os.path.exists(self.training_args.output_dir):
                 logger.info("load from existing state")
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
@@ -923,9 +937,6 @@ class PEFTTrainer:
                                 "global_step": global_step,
                             }
                         )
-
-                        
-                            
                         # move inputs to device
                         outputs = self.model(**inputs)
                         loss = outputs["loss"]
@@ -953,7 +964,9 @@ class PEFTTrainer:
                                     os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
                                 )
                                 train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
-                                remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
+                                if self.accelerator.is_main_process:
+                                    remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
+                                self.accelerator.wait_for_everyone()
                                 
                             # eval
                             if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
@@ -973,7 +986,7 @@ class PEFTTrainer:
                                     if cur_metric_val > best_metric_val:
                                         best_metric_val = cur_metric_val
                                         print("cur_metric_val > best_metric_val, save best checkpoint")
-                                        logger.info(f"cur_metric_val{cur_metric_val} > best_metric_val{best_metric_val}, save best checkpoint")
+                                        logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
                                         best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
                                         
                                         self.accelerator.save_state(best_checkpoint_path)
@@ -1040,8 +1053,8 @@ class PEFTTrainer:
             self.accelerator.save_state(
                 self.training_args.output_dir
             )
-
             self.accelerator.end_training()
+
 
 
     def evaluate(self, mode="eval"):
@@ -1076,11 +1089,6 @@ class PEFTTrainer:
             model = self.model
         from copy import deepcopy
         
-        # model = deepcopy(model).to(self.accelerator.device)
-        # model = model.to(self.accelerator.device)
-        # model = self.model
-        # self.accelerator.is_local_main_process
-        # with torch.no_grad():
 
         with NoOpContextManager():
             for inputs in tqdm(dataloader2eval):
@@ -1133,6 +1141,7 @@ class PEFTTrainer:
                 # outputs = self.accelerator.gather(outputs)
                 
                 # print("output hosting")
+                # print("gathered shape: ", outputs.shape)
                 input_host += self.tokenizer.batch_decode(inputs)
                 output_host += self.tokenizer.batch_decode(outputs)
                 label_host += self.tokenizer.batch_decode(labels)
@@ -1168,7 +1177,9 @@ class PEFTTrainer:
 
         
         if self.accelerator.is_local_main_process:
-            assert len(input_host) == len(dataset2eval) , f"length of input_host, dataset2eval must be the same, but got {len(input_host)}, {len(dataset2eval)}. Please check distributed settings"
+            # len(dataset2eval) might be less than len(input_host) and  len(output_host), because the latter two are flattened dataset
+            # assert len(input_host) == len(dataset2eval) == len(output_host), "length of input_host, dataset2eval, output_host must be the same but got {} {} {}".format(len(input_host), len(dataset2eval), len(output_host))
+            # 108, 96, 108
             results = self.compute_metrics(
                 (output_host, label_host),
                 dataset2eval
