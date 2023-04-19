@@ -857,7 +857,7 @@ class PEFTTrainer:
                                         # config=config,
                                         init_kwargs={
                                             "wandb":{
-                                                    "name":"Idea10",
+                                                    "name":self.training_args.run_name,
                                                     "tags": ["tag_a", "tag_b"],
                                                     "dir": self.training_args.output_dir,
                                                     # "resume": "auto"
@@ -948,8 +948,7 @@ class PEFTTrainer:
                         if True:
                             # save first as eval is prone to error
                             if global_step != 0 and global_step % self.training_args.save_steps == 0:
-                            
-                                cur_metric_val= global_step
+
                                 self.accelerator.save_state(
                                     os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
                                 )
@@ -970,9 +969,11 @@ class PEFTTrainer:
                                     
                                     
                                     cur_metric_val = results[eval_metric_name]
+                                    logger.info(f"cur_metric_val: {cur_metric_val}")
                                     if cur_metric_val > best_metric_val:
                                         best_metric_val = cur_metric_val
                                         print("cur_metric_val > best_metric_val, save best checkpoint")
+                                        logger.info(f"cur_metric_val{cur_metric_val} > best_metric_val{best_metric_val}, save best checkpoint")
                                         best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
                                         
                                         self.accelerator.save_state(best_checkpoint_path)

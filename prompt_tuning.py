@@ -452,19 +452,19 @@ def main():
     # output_dir:   xx/xx/xx
     # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
     data_config_name = f"num_validation_tasks_{num_validation_tasks}"
-    test_config_name = ""
-    if training_args.dev_run:
-        test_config_name = "dev_run"
-    elif training_args.dev_train:
-        test_config_name = "dev_train"
+    
     output_dir = os.path.join(
             training_args.expr_dir,
             data_args.dataset_name,
             data_folder_name, 
             flatten(model_args.model_name_or_path, "/-", "_"),
             model_args.tuning_mode,
-            "_".join([peft_config_name, data_config_name, test_config_name]),
+            "_".join([peft_config_name, data_config_name]),
         )
+    if training_args.dev_run:
+        output_dir += "_dev_run"
+    elif training_args.dev_train:
+        output_dir += "_dev_train"
     if not training_args.output_dir:
         training_args.output_dir = output_dir
     
