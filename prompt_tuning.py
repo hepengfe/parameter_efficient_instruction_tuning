@@ -367,15 +367,15 @@ def main():
     if training_args.dev_run:
         os.environ["WANDB_MODE"] = "disabled"
         # model_args.model_name_or_path="google/t5-small-lm-adapt"
-        training_args.num_train_epochs = 2
+        training_args.num_train_epochs = 5
         training_args.eval_steps = 10
         training_args.save_steps = 10 
         training_args.dev_run_data_size = 24
-        training_args.per_device_train_batch_size = 2
+        training_args.per_device_train_batch_size = 4
         training_args.per_device_eval_batch_size = 2
         training_args.per_device_test_batch_size = 2
         # A6000
-        training_args.per_device_train_batch_size = 4
+        training_args.per_device_train_batch_size = 1
         training_args.per_device_eval_batch_size = 2
         training_args.per_device_test_batch_size = 2
     
@@ -452,13 +452,18 @@ def main():
     # output_dir:   xx/xx/xx
     # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
     data_config_name = f"num_validation_tasks_{num_validation_tasks}"
+    test_config_name = ""
+    if training_args.dev_run:
+        test_config_name = "dev_run"
+    elif training_args.dev_train:
+        test_config_name = "dev_train"
     output_dir = os.path.join(
             training_args.expr_dir,
             data_args.dataset_name,
             data_folder_name, 
             flatten(model_args.model_name_or_path, "/-", "_"),
             model_args.tuning_mode,
-            "_".join([peft_config_name, data_config_name]),
+            "_".join([peft_config_name, data_config_name, test_config_name]),
         )
     if not training_args.output_dir:
         training_args.output_dir = output_dir
