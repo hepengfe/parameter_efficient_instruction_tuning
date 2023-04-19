@@ -143,7 +143,8 @@ class PEFTTrainer:
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
-        self.prepare_dataloader()
+
+        self.build_dataloader()
         # if self.accelerator.is_main_process:
         # #     # maybe empty weights is an option
             
@@ -152,7 +153,7 @@ class PEFTTrainer:
         # #     self.load_tokenzier()
         # #     assert self.tokenizer is not None, "tokenizer should loaded"
         #     # self.load_optimizer_n_scheduler()
-        # #     self.prepare_dataloader()
+        # #     self.build_dataloader()
         #     pass
         # else:
         #     self.accelerator.wait_for_everyone()
@@ -166,8 +167,7 @@ class PEFTTrainer:
             
             self.optimizer, self.scheduler, self.train_dataloader = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader)
             
-            assert len(self.eval_dataset) % self.accelerator.num_processes == 0, "eval dataset size must be divisible by number of processes"
-            assert len(self.test_dataset) % self.accelerator.num_processes == 0, "test dataset size must be divisible by number of processes"
+
             # self.eval_dataloader = accelerate.data_loader.prepare_data_loader(
             #     self.eval_dataloader, split_batches=True
             # )
@@ -443,9 +443,26 @@ class PEFTTrainer:
             # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
 
         return model_inputs
-    def prepare_dataloader(self):
+    def build_dataloader(self):
         self.load_data_collator()
         self.load_dataset()
+        if self.use_accelerator:    
+            if len(self.eval_dataset) % self.accelerator.num_processes != 0:
+                org_len = len(self.eval_dataset)
+                new_size = len(self.eval_dataset)  - len(self.eval_dataset) % self.accelerator.num_processes 
+
+                self.eval_dataset = self.eval_dataset.select(range(new_size))
+                new_len = len(self.eval_dataset)
+                logger.info(f"eval dataset size must be divisible by number of processes {self.accelerator.num_processes}, truncating from {org_len} to {new_len} examples")
+                
+            if len(self.test_dataset) % self.accelerator.num_processes != 0:
+                org_len = len(self.test_dataset)
+                new_size = len(self.test_dataset)  - len(self.test_dataset) % self.accelerator.num_processes
+                self.test_dataset = self.test_dataset.select(range(new_size))
+                logger.info(f"test dataset size must be divisible by number of processes {self.accelerator.num_processes}, truncating from {org_len} to {new_len} examples")
+            
+            assert len(self.eval_dataset) % self.accelerator.num_processes == 0, "eval dataset size must be divisible by number of processes"
+            assert len(self.test_dataset) % self.accelerator.num_processes == 0, "test dataset size must be divisible by number of processes"
         self.load_dataloader()
     
     
@@ -798,7 +815,7 @@ class PEFTTrainer:
                 
 
                 # if no checkpoint, then remove the folder and re-init the tracker
-                if latest_cp is None:
+                if latest_cp is None and self.accelerator.is_local_main_process:
                     # if os.path.exists(self.training_args.output_dir):
                     shutil.rmtree(self.training_args.output_dir)
                     logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
@@ -827,7 +844,7 @@ class PEFTTrainer:
                     # in any case, remove the checkpoint folder and reload the previous one
                     # remove the latest checkpoint
                     # output_dir might already has been removed
-                    if latest_cp is not None:
+                    if latest_cp is not None and self.accelerator.is_local_main_process:
                         logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
                         shutil.rmtree(latest_cp)
                     # still not loaded
@@ -945,13 +962,13 @@ class PEFTTrainer:
                                 # parallel evaluation
                                 # only main process results is valid
                                 results = self.evaluate()
-
-                                
+                                self.accelerator.log(results, step=global_step)
                                 if self.accelerator.is_main_process:
-                                    assert self.training_args.eval_metric in results, f"eval_metric {self.training_args.eval_metric} not in evaluation results"
+                                    eval_metric_name = "eval/"+self.training_args.eval_metric
+                                    assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
                                     
-                                    self.accelerator.log(results, step=global_step)
-                                    cur_metric_val = results[self.training_args.eval_metric]
+                                    
+                                    cur_metric_val = results[eval_metric_name]
                                     if cur_metric_val > best_metric_val:
                                         best_metric_val = cur_metric_val
                                         print("cur_metric_val > best_metric_val, save best checkpoint")
@@ -1069,11 +1086,11 @@ class PEFTTrainer:
                 # if distrubted data parallel object 
                 
 
-                for k in inputs:
-                    print("move to device: ", k, self.device)
-                    inputs[k] = inputs[k].to(self.device)
+                # for k in inputs:
+                #     print("move to device: ", k, self.device)
+                #     inputs[k] = inputs[k].to(self.device)
                 
-                print("generating")
+                # print("generating")
                 
                 
                 outputs = model.generate(**inputs,
@@ -1084,11 +1101,11 @@ class PEFTTrainer:
                 )
 
 
-                print("pre-pad shape: ", outputs.device, outputs.shape)
+                # print("pre-pad shape: ", outputs.device, outputs.shape)
                 inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
                 outputs = self.accelerator.pad_across_processes(outputs, pad_index=self.tokenizer.pad_token_id, dim=1)
                 # # torch.cuda.set_device(self.accelerator.device)
-                print("post-pad shape: ",outputs.shape)
+                # print("post-pad shape: ",outputs.shape)
                 
                 # outputs, labels = self.accelerator.gather_for_metrics([outputs, labels])
                 # with self.accelerator.main_process_first():
@@ -1154,6 +1171,9 @@ class PEFTTrainer:
                 (output_host, label_host),
                 dataset2eval
             )
+            results_with_mode = {}
+            for k in results:
+                results_with_mode[f"{mode}/{k}"] = results[k]
 
         # del model
         # import pdb; pdb.set_trace()
@@ -1175,7 +1195,7 @@ class PEFTTrainer:
         # print('check effect of clear')
         self.model.train()
 
-        return results if self.accelerator.is_local_main_process else None
+        return results_with_mode if self.accelerator.is_local_main_process else None
 
     
     def compute_metrics(self, eval_preds, eval_dataset, is_pred_logits = False, model_idx = 0, metrics = {}):
