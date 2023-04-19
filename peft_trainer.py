@@ -135,16 +135,27 @@ class PEFTTrainer:
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
             )
 
+        # model needs to be loaded on all machines
+        self.load_model_n_peft_module()
         # TODO: accelerator needs to load model and peft module first anyway
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
-        # maybe empty weights is an option
-        self.load_model_n_peft_module()
         assert self.model is not None, "model should loaded"
-        # assert self.model_trainable_params is not None, "model_trainable_params should be counted"
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
         self.prepare_dataloader()
+        # if self.accelerator.is_main_process:
+        # #     # maybe empty weights is an option
+            
+            
+        # #     # assert self.model_trainable_params is not None, "model_trainable_params should be counted"
+        # #     self.load_tokenzier()
+        # #     assert self.tokenizer is not None, "tokenizer should loaded"
+        #     # self.load_optimizer_n_scheduler()
+        # #     self.prepare_dataloader()
+        #     pass
+        # else:
+        #     self.accelerator.wait_for_everyone()
 
         if self.use_accelerator:
             self.device = self.accelerator.device
@@ -155,12 +166,20 @@ class PEFTTrainer:
             
             self.optimizer, self.scheduler, self.train_dataloader = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader)
             
-            self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
+            assert len(self.eval_dataset) % self.accelerator.num_processes == 0, "eval dataset size must be divisible by number of processes"
+            assert len(self.test_dataset) % self.accelerator.num_processes == 0, "test dataset size must be divisible by number of processes"
+            # self.eval_dataloader = accelerate.data_loader.prepare_data_loader(
+            #     self.eval_dataloader, split_batches=True
+            # )
+            # self.test_dataloader = accelerate.data_loader.prepare_data_loader(
+            #     self.test_dataloader, split_batches=True
+            # )
             
+            self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
+            # print("accelerator is used for device: ", self.device)
         else:
             self.device = "cuda"
             self.model = self.model.to(self.device)
-        
 
 
         """
@@ -771,72 +790,74 @@ class PEFTTrainer:
 
         
         # NOTE: non-accelerator resume training is not supported
-        if self.use_accelerator:
-            while not loaded:
-                if os.path.exists(self.training_args.output_dir):
-                    logger.info("load from existing state")
-                    latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-                    
+        # if self.use_accelerator and self.accelerator.is_local_main_process:
+        while not loaded:
+            if os.path.exists(self.training_args.output_dir):
+                logger.info("load from existing state")
+                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+                
 
-                    # if no checkpoint, then remove the folder and re-init the tracker
-                    if latest_cp is None:
-                        # if os.path.exists(self.training_args.output_dir):
-                        shutil.rmtree(self.training_args.output_dir)
-                        logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
-                        time.sleep(3)
+                # if no checkpoint, then remove the folder and re-init the tracker
+                if latest_cp is None:
+                    # if os.path.exists(self.training_args.output_dir):
+                    shutil.rmtree(self.training_args.output_dir)
+                    logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+                    time.sleep(3)
 
-                    # try to load the latest checkpoint
-                    try:
-                        self.accelerator.load_state(latest_cp)
-                        # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
-                        self.accelerator.init_trackers("huggingface",
-                                            # config=config,
-                                            init_kwargs={
-                                                "wandb":{
-                                                        "name": self.training_args.run_name,
-                                                        "tags": ["tag_a", "tag_b"],
-                                                        "dir": self.training_args.output_dir,
-                                                        "resume": "auto"
-                                                        # "resume": "must"
-                                                    }
-                                                }
-                                            )
-                        train_state.load_from_json(latest_cp)
-                        loaded = True
-                    except Exception as e:
-                        # it can be state dict file corrupted or model checkpoint corrupted
-                        # in any case, remove the checkpoint folder and reload the previous one
-                        # remove the latest checkpoint
-                        # output_dir might already has been removed
-                        if latest_cp is not None:
-                            logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
-                            shutil.rmtree(latest_cp)
-                        # still not loaded
-                        continue
-                else:
-                    logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
-                    os.makedirs(self.training_args.output_dir, exist_ok = True)
+                # try to load the latest checkpoint
+                try:
+                    self.accelerator.load_state(latest_cp)
+                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
                     self.accelerator.init_trackers("huggingface",
-                                            # config=config,
-                                            init_kwargs={
-                                                "wandb":{
-                                                        "name":"Idea10",
-                                                        "tags": ["tag_a", "tag_b"],
-                                                        "dir": self.training_args.output_dir,
-                                                        # "resume": "auto"
-                                                        "resume": False
-                                                        }
+                                        # config=config,
+                                        init_kwargs={
+                                            "wandb":{
+                                                    "name": self.training_args.run_name,
+                                                    "tags": ["tag_a", "tag_b"],
+                                                    "dir": self.training_args.output_dir,
+                                                    "resume": "auto"
+                                                    # "resume": "must"
                                                 }
-                                            )
+                                            }
+                                        )
+                    train_state.load_from_json(latest_cp)
                     loaded = True
+                except Exception as e:
+                    # it can be state dict file corrupted or model checkpoint corrupted
+                    # in any case, remove the checkpoint folder and reload the previous one
+                    # remove the latest checkpoint
+                    # output_dir might already has been removed
+                    if latest_cp is not None:
+                        logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
+                        shutil.rmtree(latest_cp)
+                    # still not loaded
+                    continue
+            else:
+                logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
+                os.makedirs(self.training_args.output_dir, exist_ok = True)
+                self.accelerator.init_trackers("huggingface",
+                                        # config=config,
+                                        init_kwargs={
+                                            "wandb":{
+                                                    "name":"Idea10",
+                                                    "tags": ["tag_a", "tag_b"],
+                                                    "dir": self.training_args.output_dir,
+                                                    # "resume": "auto"
+                                                    "resume": False
+                                                    }
+                                            }
+                                        )
+                loaded = True
+
 
         if loaded:
             global_step =  train_state.global_step
             start_epoch = train_state.epoch
             start_step = train_state.step
             best_metric_val = train_state.best_metric_val
-
-
+        time.sleep(self.accelerator.process_index * 3)
+        print("global_step", global_step)
+        print("self.training_args.num_train_epochs * len(self.train_dataloader): " , self.training_args.num_train_epochs * len(self.train_dataloader))
         if global_step >= self.training_args.num_train_epochs * len(self.train_dataloader):
             logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             logger.info("Ending training...")
@@ -873,6 +894,7 @@ class PEFTTrainer:
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
             print("------------new epoch: ", epoch, "global_step: ", global_step)
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
+                self.model.train()
                 if self.use_accelerator:
                     with self.accelerator.accumulate(self.model):
                         
@@ -904,7 +926,8 @@ class PEFTTrainer:
                         self.optimizer.zero_grad()
 
                         # eval and save at local process
-                        if self.accelerator.is_local_main_process:
+                        # if self.accelerator.is_local_main_process:
+                        if True:
                             # save first as eval is prone to error
                             if global_step != 0 and global_step % self.training_args.save_steps == 0:
                             
@@ -919,35 +942,46 @@ class PEFTTrainer:
                             if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
                                 
                             # if global_step % self.training_args.eval_steps == 0:
+                                # parallel evaluation
+                                # only main process results is valid
                                 results = self.evaluate()
-                                torch.cuda.empty_cache()
+
                                 
-                                
-                                assert self.training_args.eval_metric in results, f"eval_metric {self.training_args.eval_metric} not in evaluation results"
-                                
-                                self.accelerator.log(results, step=global_step)
-                                cur_metric_val = results[self.training_args.eval_metric]
-                                if cur_metric_val > best_metric_val:
-                                    best_metric_val = cur_metric_val
-                                    print("cur_metric_val > best_metric_val, save best checkpoint")
-                                    best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
-                                    self.accelerator.save_state(best_checkpoint_path)
-                                    remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
-                                    train_state.update(
-                                        {
-                                            "best_metric_val": best_metric_val,
-                                            "best_checkpoint_path": best_checkpoint_path,
-                                            "best_checkpoint_global_step": global_step,
-                                            "best_checkpoint_epoch": epoch,
-                                            "best_checkpoint_step": step,
-                                        }
-                                    )
-                                    train_state.save_to_json(best_checkpoint_path)
-                                with self.accelerator.main_process_first():
-                                    import pdb; pdb.set_trace()
-                                    print('check eval results')
+                                if self.accelerator.is_main_process:
+                                    assert self.training_args.eval_metric in results, f"eval_metric {self.training_args.eval_metric} not in evaluation results"
+                                    
+                                    self.accelerator.log(results, step=global_step)
+                                    cur_metric_val = results[self.training_args.eval_metric]
+                                    if cur_metric_val > best_metric_val:
+                                        best_metric_val = cur_metric_val
+                                        print("cur_metric_val > best_metric_val, save best checkpoint")
+                                        best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
+                                        
+                                        self.accelerator.save_state(best_checkpoint_path)
+                                        
+                                        
+                                        remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
+                                        train_state.update(
+                                            {
+                                                "best_metric_val": best_metric_val,
+                                                "best_checkpoint_path": best_checkpoint_path,
+                                                "best_checkpoint_global_step": global_step,
+                                                "best_checkpoint_epoch": epoch,
+                                                "best_checkpoint_step": step,
+                                            }
+                                        )
+                                        train_state.save_to_json(best_checkpoint_path)
+                           
+                                # import pdb; pdb.set_trace()
+                                # print('check eval results')
+
+                                # if self.accelerator.is_main_process:
+                                #     import pdb; pdb.set_trace()
+                                #     print('check eval results')
+                                # else:
+                                #     self.accelerator.wait_for_everyone()
                         # wait for main process to finish evaluation?
-                        self.accelerator.wait_for_everyone()
+                        # self.accelerator.wait_for_everyone()
                         # TODO: suspend signal
                         # wandb.mark_preempting()
                         
@@ -995,6 +1029,8 @@ class PEFTTrainer:
         """
         eval mode: evaluate use loaded current model
         test mode: evaluate best model loaded from output_dir
+        
+        parallel generation, gather results on all processes, compute metrics on main process, return results on main process and None on other processes. 
         """
         assert mode in ["eval", "test"], "must be either eval or test  mode"
         if mode == "eval":
@@ -1009,6 +1045,7 @@ class PEFTTrainer:
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
             self.accelerator.load_state(best_cp_dir) 
         self.model.eval()
+        input_host = []
         output_host = []
         label_host = []
         from tqdm import tqdm
@@ -1024,13 +1061,16 @@ class PEFTTrainer:
         # model = model.to(self.accelerator.device)
         # model = self.model
         # self.accelerator.is_local_main_process
-        with torch.no_grad():
+        # with torch.no_grad():
+
+        with NoOpContextManager():
             for inputs in tqdm(dataloader2eval):
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
 
                 for k in inputs:
+                    print("move to device: ", k, self.device)
                     inputs[k] = inputs[k].to(self.device)
                 
                 print("generating")
@@ -1039,31 +1079,16 @@ class PEFTTrainer:
                 outputs = model.generate(**inputs,
                                         max_new_tokens = self.data_args.max_target_length,
                                         # synced_gpus = True,
-                                        # synced_gpus = False,
+                                        synced_gpus = False,
                                         # pad_token_id=self.tokenizer.pad_token_id,
                 )
 
 
-                # least working code with generation
-                # with self.accelerator.main_process_first():
-                #     outputs = model.generate(**inputs,
-                #                             max_new_tokens = self.data_args.max_target_length,
-                #                             # synced_gpus = True,
-                #                             # synced_gpus = False,
-                #                             # pad_token_id=self.tokenizer.pad_token_id,
-                #                 )
-                #     outputs = self.accelerator.gather(outputs)
-
-                print("pre-pad shape: ", outputs.shape)
-                outputs = self.accelerator.pad_across_processes(outputs)
-                # torch.cuda.set_device(self.accelerator.device)
-                print("post-pad shape: ", outputs.shape)
-                
-                outputs = self.tokenizer.batch_decode(outputs)
-            
-                labels = self.tokenizer.batch_decode(labels)
-                # assert len(outputs) == self.training_args.per_device_eval_batch_size, f"eval bs per process should be consistent with self.training_args.per_device_eval_batch_size but got {( len(outputs), self.training_args.per_device_eval_batch_size)}"
-                # print("gathering:   ", outputs, labels)
+                print("pre-pad shape: ", outputs.device, outputs.shape)
+                inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
+                outputs = self.accelerator.pad_across_processes(outputs, pad_index=self.tokenizer.pad_token_id, dim=1)
+                # # torch.cuda.set_device(self.accelerator.device)
+                print("post-pad shape: ",outputs.shape)
                 
                 # outputs, labels = self.accelerator.gather_for_metrics([outputs, labels])
                 # with self.accelerator.main_process_first():
@@ -1074,35 +1099,36 @@ class PEFTTrainer:
                 # print("gathering")
                 
                 # gather outputs across devices to main process?
-                
+                outputs = self.accelerator.gather(outputs)
+                inputs = self.accelerator.gather(inputs)
                 # if self.accelerator.is_local_main_process:
                 #     outputs = self.accelerator.gather(outputs)
                     
                 # else:
                 #     self.accelerator.wait_for_everyone()
                 #     outputs = self.accelerator.gather(outputs)
-                    
                 
                 
                 
                 # labels = self.accelerator.gather(labels)
-                outputs = self.accelerator.gather(outputs)
+                # outputs = self.accelerator.gather(outputs)
                 
                 # print("output hosting")
-                # output_host += [o.to("cpu") for o in outputs]
-                # label_host += [l.to("cpu") for l in labels]
-                
+                input_host += self.tokenizer.batch_decode(inputs)
+                output_host += self.tokenizer.batch_decode(outputs)
+                label_host += self.tokenizer.batch_decode(labels)
+   
                 # what about compute it end to end? over-engeering
                 
                 
-                    
-                output_host += outputs
+                
+                # output_host += outputs
                     # label_host += labels
                 
-                for o, l in zip(outputs, labels):
-                    print("------------")
-                    print("output: ", o)
-                    print("label: ", l)
+                # for o, l in zip(outputs, labels):
+                #     print("------------")
+                #     print("output: ", o)
+                #     print("label: ", l)
                 # self.accelerator.wait_for_everyone()
 
                 
@@ -1110,20 +1136,30 @@ class PEFTTrainer:
             # 
         # print("Num of labels: ", len(labels))
         # print("num of output: ", len(output_host))
-        # exit()
 
-        for o in output_host:
-            print(o)
+        # validate data from data loader align with dataset
+        # if self.accelerator.is_local_main_process:
+        #     for idx, (inp_dl, inp_ds) in enumerate(zip(input_host, dataset2eval)):
+        #         print("idx: ", idx, "\n", "process id: ", self.accelerator.process_index, "\n", inp_dl, "\n\n", inp_ds["Instance"]['input'], "\n ------------------")
+
+
+        # for o in output_host:
+        #     print(o)
         labels = None
-        results = self.compute_metrics(
-            (output_host, labels),
-            dataset2eval
-        )
+
+        
+        if self.accelerator.is_local_main_process:
+            assert len(input_host) == len(dataset2eval) , f"length of input_host, dataset2eval must be the same, but got {len(input_host)}, {len(dataset2eval)}. Please check distributed settings"
+            results = self.compute_metrics(
+                (output_host, label_host),
+                dataset2eval
+            )
+
         # del model
         # import pdb; pdb.set_trace()
         # print(' check self.model status')
         
-        self.model.train()
+        
         # print("prepare model")
         # self.model = self.accelerator.prepare(self.model)
         # print("after prepare model")
@@ -1131,14 +1167,15 @@ class PEFTTrainer:
         # print('check memory changes')
         
         # print("finished evaluation and try self.accelerator.clear()")
-        # del inputs
-        # del outputs
+        self.accelerator.clear()
+        del inputs
+        del outputs
         
         # import pdb; pdb.set_trace()
         # print('check effect of clear')
-        
-        # self.accelerator.clear()
-        return results
+        self.model.train()
+
+        return results if self.accelerator.is_local_main_process else None
 
     
     def compute_metrics(self, eval_preds, eval_dataset, is_pred_logits = False, model_idx = 0, metrics = {}):
@@ -1160,11 +1197,8 @@ class PEFTTrainer:
             
             
             references = [e["Instance"]["output"] for e in eval_dataset]
-            for pred, ref in zip(decoded_preds[:5], references[:5]):
-                print("pred: ", pred, "ref: ", ref)
-            # import pdb; pdb.set_trace()
-            # print('')
-
+            # references = labels
+            
 
             result = compute_metrics(predictions=decoded_preds, references=references)
             result_per_task = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=eval_dataset["Task"])
@@ -1712,3 +1746,10 @@ class PEFTTrainer:
         
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
+class NoOpContextManager:
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
+
