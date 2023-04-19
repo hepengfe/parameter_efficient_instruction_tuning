@@ -365,7 +365,7 @@ def main():
     
     
     if training_args.dev_run:
-        os.environ["WANDB_MODE"] = "disabled"
+        # os.environ["WANDB_MODE"] = "disabled"
         # model_args.model_name_or_path="google/t5-small-lm-adapt"
         training_args.num_train_epochs = 2
         training_args.eval_steps = 10

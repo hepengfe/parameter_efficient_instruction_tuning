@@ -131,6 +131,7 @@ class PEFTTrainer:
         
         self.accelerator = Accelerator(
                 log_with="wandb",
+                logging_dir=".",
                 project_dir="accelerate",
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
             )
