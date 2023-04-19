@@ -347,6 +347,9 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to run in dev mode." },
     )
     
+    dev_eval: bool = field(
+        default=False,
+    )
     
     use_accelerate: bool = field(
         default=False,
@@ -371,6 +374,7 @@ def main():
     
     
     if training_args.dev_train:
+        # dev issues such as OOM, training loss decreasing
         os.environ["WANDB_MODE"] = "disabled"
         # try to adjust train/eval bs during dev run
         training_args.dev_train_data_size = 100
@@ -379,6 +383,11 @@ def main():
         # # test eval bs
         # training_args.eval_steps = 1
         training_args.save_steps = 1000 # no save needed actually
+
+    if training_args.dev_eval:
+        # dev issues such as empty prediction (although it's mostly likely a generation issue)
+        pass
+        
 
 
     if training_args.dev_offline:

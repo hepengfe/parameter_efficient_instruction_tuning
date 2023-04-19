@@ -1,4 +1,4 @@
 wandb
 datasets
 rouge_score
-accelerator==0.18.0
+accelerator==2023.3.10.dev1

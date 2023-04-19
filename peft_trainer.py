@@ -130,9 +130,7 @@ class PEFTTrainer:
         self.model_trainable_params = None
         self.recover_from = None
         
-        
-        if self.use_accelerator:
-            self.accelerator = Accelerator(
+        self.accelerator = Accelerator(
                 log_with="wandb",
                 project_dir="accelerate",
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
@@ -150,8 +148,6 @@ class PEFTTrainer:
         self.prepare_dataloader()
 
         if self.use_accelerator:
-        
-            
             self.device = self.accelerator.device
             self.model = self.accelerator.prepare(self.model)
             
@@ -798,8 +794,8 @@ class PEFTTrainer:
                                                         "name": self.training_args.run_name,
                                                         "tags": ["tag_a", "tag_b"],
                                                         "dir": self.training_args.output_dir,
-                                                        # "resume": "auto"
-                                                        "resume": "must"
+                                                        "resume": "auto"
+                                                        # "resume": "must"
                                                     }
                                                 }
                                             )
@@ -919,6 +915,7 @@ class PEFTTrainer:
                                 
                             # if global_step % self.training_args.eval_steps == 0:
                                 results = self.evaluate()
+                                torch.cuda.empty_cache()
                                 
                                 
                                 assert self.training_args.eval_metric in results, f"eval_metric {self.training_args.eval_metric} not in evaluation results"
@@ -941,9 +938,9 @@ class PEFTTrainer:
                                         }
                                     )
                                     train_state.save_to_json(best_checkpoint_path)
-
-                                import pdb; pdb.set_trace()
-                                print('check eval results')
+                                with self.accelerator.main_process_first():
+                                    import pdb; pdb.set_trace()
+                                    print('check eval results')
                         # wait for main process to finish evaluation?
                         self.accelerator.wait_for_everyone()
                         # TODO: suspend signal
@@ -965,6 +962,7 @@ class PEFTTrainer:
                         
                     # if global_step % self.training_args.eval_steps == 0:
                         results = self.evaluate()
+                        torch.cuda.empty_cache()
                         cur_metric_val = results[self.training_args.eval_metric]
                         logger.info(f"rougel score: {cur_metric_val}")
                         import pdb; pdb.set_trace()
@@ -1130,7 +1128,7 @@ class PEFTTrainer:
         # print("finished evaluation and try self.accelerator.clear()")
         # del inputs
         # del outputs
-        # torch.cuda.empty_cache()
+        
         # import pdb; pdb.set_trace()
         # print('check effect of clear')
         
