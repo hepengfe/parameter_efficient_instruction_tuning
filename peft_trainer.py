@@ -966,7 +966,7 @@ class PEFTTrainer:
                                 train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
                                 if self.accelerator.is_main_process:
                                     remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-                                self.accelerator.wait_for_everyone()
+                            # self.accelerator.wait_for_everyone()
                                 
                             # eval
                             if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
@@ -1090,7 +1090,7 @@ class PEFTTrainer:
         from copy import deepcopy
         
 
-        with NoOpContextManager():
+        with torch.no_grad()
             for inputs in tqdm(dataloader2eval):
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
