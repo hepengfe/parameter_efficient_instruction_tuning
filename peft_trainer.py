@@ -1136,19 +1136,34 @@ class PEFTTrainer:
                 #     outputs = self.accelerator.gather(outputs)
                 
                 
-                
+                def remove_special_token(t):
+                    t = t.replace(self.tokenizer.pad_token, "").replace(self.tokenizer.eos_token, "")
+                    return t
                 # labels = self.accelerator.gather(labels)
                 # outputs = self.accelerator.gather(outputs)
                 
                 # print("output hosting")
                 # print("gathered shape: ", outputs.shape)
-                input_host += self.tokenizer.batch_decode(inputs)
-                output_host += self.tokenizer.batch_decode(outputs)
+                # since we pad tensors 
+                inputs_text = self.tokenizer.batch_decode(inputs)
+                inputs_text = [remove_special_token(t) for t in inputs_text]
+                input_host += inputs_text
+
+                outputs_text =  self.tokenizer.batch_decode(outputs)
+                outputs_text = [remove_special_token(t) for t in outputs_text]
+                output_host += outputs_text
+
+
+
                 label_host += self.tokenizer.batch_decode(labels)
-   
+
+                # self.tokenizer.pad_token
+                # self.tokenizer.eos_token
                 # what about compute it end to end? over-engeering
-                
-                
+                # if self.accelerator.is_local_main_process:
+                #     import pdb; pdb.set_trace()
+                #     print('')
+                # self.accelerator.wait_for_everyone()
                 
                 # output_host += outputs
                     # label_host += labels

@@ -61,11 +61,13 @@ def rougeL_score(prediction, ground_truth, xlingual=False):
     print("-----------------------------")
     print("prediction: ", prediction)
     print("ground_truth: ", ground_truth)
+    
     if xlingual:
         scorer = rouge_scorer.RougeScorer(['rougeL'], tokenizer=xlingual_tokenizer) 
     else:
         scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
     scores = scorer.score(prediction=prediction, target=ground_truth)
+    print("score: ", scores["rougeL"].fmeasure)
     return scores["rougeL"].fmeasure
 
 
