@@ -1090,7 +1090,7 @@ class PEFTTrainer:
         from copy import deepcopy
         
 
-        with torch.no_grad()
+        with torch.no_grad():
             for inputs in tqdm(dataloader2eval):
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
