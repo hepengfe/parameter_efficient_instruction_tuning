@@ -1,0 +1,2 @@
+hfai pull
+wandb sync 
