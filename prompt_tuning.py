@@ -204,8 +204,8 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     per_device_eval_batch_size: int = field(
         default=1, metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."}
     )
-    per_device_test_batch_size: int = field(
-        default=1, metadata={"help": "Batch size per GPU/TPU core/CPU for testing."}
+    per_device_test_batch_size: Optional[int] = field(
+        default=None, metadata={"help": "Batch size per GPU/TPU core/CPU for testing."}
     )
 
     full_determinism: bool = field(
@@ -366,11 +366,11 @@ def main():
     
     if training_args.dev_run:
         os.environ["WANDB_MODE"] = "disabled"
-        # model_args.model_name_or_path="google/t5-small-lm-adapt"
+        model_args.model_name_or_path="google/t5-small-lm-adapt"
         training_args.num_train_epochs = 5
-        training_args.eval_steps = 10
+        training_args.eval_steps = 1000 # test save instead of eval
         training_args.save_steps = 10 
-        training_args.dev_run_data_size = 60
+        training_args.dev_run_data_size = 200
         training_args.per_device_train_batch_size = 4
         training_args.per_device_eval_batch_size = 2
         training_args.per_device_test_batch_size = 2
@@ -378,6 +378,9 @@ def main():
         training_args.per_device_train_batch_size = 1
         training_args.per_device_eval_batch_size = 20
         training_args.per_device_test_batch_size = 2
+
+
+        model_args.tuning_mode = "fine_tuning"
     
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
@@ -426,6 +429,10 @@ def main():
         training_args.learning_rate = 1e-5
         print("lr is set to 1e-5 due to fine_tuning mode")
 
+    if training_args.per_device_test_batch_size is None:
+
+        training_args.per_device_test_batch_size = training_args.per_device_eval_batch_size
+        # print()
 
     # extract suffix number from data_dir
     if data_args.data_dir is not None:
@@ -480,9 +487,10 @@ def main():
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
     training_args.label_names = [training_args.label_names]
     trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
-    
+   
     if training_args.do_train:
         trainer.train() # train from scratch
+        trainer.evaluate("test")
 
 
 

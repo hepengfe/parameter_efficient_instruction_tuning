@@ -77,6 +77,7 @@ class TrainingState:
         self.best_checkpoint_step = None
         self.file_name = "training_state.json"
         
+        
 
     def update(self, dict):
         for k, v in dict.items():
@@ -133,9 +134,13 @@ class PEFTTrainer:
                 log_with="wandb",
                 project_dir="accelerate",
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
-            )
+        )
+        self.potential_model_path =  os.path.join(
+            self.training_args.saved_pretrained_model_path,
+            self.model_name_or_path
+        )
 
-        self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path).lm_head.weight
+        self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
   
@@ -143,9 +148,7 @@ class PEFTTrainer:
         # TODO: accelerator needs to load model and peft module first anyway
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
         assert self.model is not None, "model should loaded"
-        if self.accelerator.use_distributed:
-            self.model = self.accelerator.prepare(self.model)
-        
+
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
@@ -164,10 +167,10 @@ class PEFTTrainer:
         # else:
         #     self.accelerator.wait_for_everyone()
 
-        if self.accelerator.use_distributed:
+        if True or self.accelerator.use_distributed:
             self.device = self.accelerator.device
             
-            
+            self.model = self.accelerator.prepare(self.model)
             
             # self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader  = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader)
             
@@ -241,14 +244,10 @@ class PEFTTrainer:
 
 
             
-    def load_tokenzier(self, potential_model_path=None):
-        potential_model_path = os.path.join(
-            self.training_args.saved_pretrained_model_path,
-            self.model_name_or_path
-        )  if potential_model_path is None else potential_model_path
+    def load_tokenzier(self):
 
-        if os.path.exists(potential_model_path):
-            self.tokenizer = AutoTokenizer.from_pretrained(potential_model_path)
+        if os.path.exists(self.potential_model_path):
+            self.tokenizer = AutoTokenizer.from_pretrained(self.potential_model_path)
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name_or_path,
@@ -271,7 +270,7 @@ class PEFTTrainer:
             self.padding = "max_length"
 
 
-    def load_pretrained_model_for_peft(self, potential_model_path=None):
+    def load_pretrained_model_for_peft(self):
         """
         1. Load model, tokenizer by model architecture and peft packages.
         2. load model from potential checkpoint/saved_pretrained model
@@ -288,21 +287,22 @@ class PEFTTrainer:
             "Ensure this directory is persistent if you do not want to download model files again!"
         )
 
-        
-        potential_model_path = os.path.join(
-            self.training_args.saved_pretrained_model_path,
-            self.model_name_or_path
-        ) if potential_model_path is None else potential_model_path
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
                 # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-                if os.path.exists(potential_model_path):
-                    self.model = AutoModelForSeq2SeqLM.from_pretrained(potential_model_path)
+                # if self.accelerator.is_main_process:
+                #     import pdb; pdb.set_trace()
+                #     print('')
+                    
+                # self.accelerator.wait_for_everyone()
+                
+                if os.path.exists(self.potential_model_path):
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
                 else:
                     self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
-                if os.path.exists(potential_model_path):
-                    self.model = AutoAdapterModel.from_pretrained(potential_model_path)
+                if os.path.exists(self.potential_model_path):
+                    self.model = AutoAdapterModel.from_pretrained(self.potential_model_path)
                 else:
                     self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
                 
@@ -310,11 +310,11 @@ class PEFTTrainer:
             elif self.model_args.tuning_mode in PEFT_MODULES:
                 # NOTE: this is not compatible if loading for the first time as
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
-                if os.path.exists(potential_model_path):
-                    self.model =AutoModelForSeq2SeqLM.from_pretrained(potential_model_path)
+                if os.path.exists(self.potential_model_path):
+                    self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
                     # self.model = PeftModelForSeq2SeqLM.from_pretrained(potential_model_path)
                 else:
-                    self.model =AutoModelForSeq2SeqLM.from_pretrained(potential_model_path, cache_dir=self.training_args.cache_dir)
+                    self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir)
                     # self.model = PeftModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
@@ -944,7 +944,7 @@ class PEFTTrainer:
             print("------------new epoch: ", epoch, "global_step: ", global_step)
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.model.train()
-                if self.accelerator.use_distributed:
+                if True or self.accelerator.use_distributed:
                     with self.accelerator.accumulate(self.model):
                         
                         train_state.update(
@@ -970,20 +970,29 @@ class PEFTTrainer:
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
-
+                        
                         # eval and save at local process
                         # if self.accelerator.is_local_main_process:
                         if True:
+                            
+          
                             # save first as eval is prone to error
-                            if global_step != 0 and global_step % self.training_args.save_steps == 0:
-
+                            if (global_step != 0 or self.training_args.dev_run) and global_step  % self.training_args.save_steps == 0:
+                  
                                 self.accelerator.save_state(
                                     os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
                                 )
+                                
+                                
+                                # self.model.save_pretrained(self.training_args.output_dir, f"checkpoint-{global_step}")
+                                
                                 train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
                                 if self.accelerator.is_main_process:
                                     remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-                            # self.accelerator.wait_for_everyone()
+                                
+                                self.accelerator.wait_for_everyone() 
+
+  
                                 
                             # eval
                             if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
@@ -993,34 +1002,36 @@ class PEFTTrainer:
                                 # only main process results is valid
                                 results = self.evaluate()
                                 self.accelerator.log(results, step=global_step)
-                                if self.accelerator.is_main_process:
-                                    eval_metric_name = "eval/"+self.training_args.eval_metric
-                                    assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
+                                
+                                eval_metric_name = "eval/"+self.training_args.eval_metric
+                                assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
+                                
+                                
+                                cur_metric_val = results[eval_metric_name]
+                                logger.info(f"cur_metric_val: {cur_metric_val}")
+                                if cur_metric_val > best_metric_val:
                                     
+                                    print("cur_metric_val > best_metric_val, save best checkpoint")
+                                    logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
+                                    best_metric_val = cur_metric_val
+                                    best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
                                     
-                                    cur_metric_val = results[eval_metric_name]
-                                    logger.info(f"cur_metric_val: {cur_metric_val}")
-                                    if cur_metric_val > best_metric_val:
-                                        
-                                        print("cur_metric_val > best_metric_val, save best checkpoint")
-                                        logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
-                                        best_metric_val = cur_metric_val
-                                        best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
-                                        
-                                        self.accelerator.save_state(best_checkpoint_path)
-                                        
-                                        
+                                    self.accelerator.save_state(best_checkpoint_path)
+                                    
+                                    if self.accelerator.is_main_process:
                                         remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
-                                        train_state.update(
-                                            {
-                                                "best_metric_val": best_metric_val,
-                                                "best_checkpoint_path": best_checkpoint_path,
-                                                "best_checkpoint_global_step": global_step,
-                                                "best_checkpoint_epoch": epoch,
-                                                "best_checkpoint_step": step,
-                                            }
-                                        )
-                                        train_state.save_to_json(best_checkpoint_path)
+                                    # self.accelerator.wait_for_everyone()
+                                    train_state.update(
+                                        {
+                                            "best_metric_val": best_metric_val,
+                                            "best_checkpoint_path": best_checkpoint_path,
+                                            "best_checkpoint_global_step": global_step,
+                                            "best_checkpoint_epoch": epoch,
+                                            "best_checkpoint_step": step,
+                                        }
+                                    )
+                                    train_state.save_to_json(best_checkpoint_path)
+                    
                            
                                 # import pdb; pdb.set_trace()
                                 # print('check eval results')
@@ -1067,12 +1078,12 @@ class PEFTTrainer:
                 global_step += 1
                 progress_bar.update(1)
 
-        if self.accelerator.use_distributed:
-            # TODO: will the step be a new step that skipped batches
-            self.accelerator.save_state(
-                self.training_args.output_dir
-            )
-            self.accelerator.end_training()
+        # if self.accelerator.use_distributed:
+        #     # TODO: will the step be a new step that skipped batches
+        self.accelerator.save_state(
+            self.training_args.output_dir
+        )
+        self.accelerator.end_training()
 
 
 
@@ -1279,9 +1290,6 @@ class PEFTTrainer:
         # print('check memory changes')
         
         # print("finished evaluation and try self.accelerator.clear()")
-        self.accelerator.clear()
-        del inputs
-        del outputs
         
         # import pdb; pdb.set_trace()
         # print('check effect of clear')
