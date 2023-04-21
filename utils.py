@@ -2,8 +2,9 @@ import os
 import re
 import shutil
 def build_peft_config_name(model_args, peft_args, training_args):
+    # peft config
     peft_config_name = ""
-    if model_args.tuning_mode == "lora":
+    if model_args.tuning_mode in ["lora", "lora_peft", "lora_adapter"]:
         peft_config_name += "r_" + str(peft_args.lora_r)
         peft_config_name += "_module_" + str(peft_args.lora_modules)
     elif model_args.tuning_mode == "ia3":
@@ -16,7 +17,7 @@ def build_peft_config_name(model_args, peft_args, training_args):
         peft_config_name += "layer_name_" + str(peft_args.layer_name)
     elif model_args.tuning_mode == "bitfit":
         peft_config_name += "bias_name_" + str(peft_args.bias_name)
-    elif model_args.tuning_mode == "adaptor":
+    elif model_args.tuning_mode == "adapter":
         peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
     elif model_args.tuning_mode == "compactor":
         peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
@@ -37,6 +38,14 @@ def build_peft_config_name(model_args, peft_args, training_args):
     peft_config_name += "_lr_" + str(training_args.learning_rate)
     # precision
     peft_config_name += "_bf16_" + str(training_args.bf16)
+    
+    # effective batch size
+    peft_config_name += "_bs_" + str(training_args.per_device_train_batch_size)
+    peft_config_name += "_grad_acc_" + str(training_args.gradient_accumulation_steps)
+    peft_config_name += "_accelerator_" + str(training_args.use_accelerate)
+    
+    
+    
     # trainable_params_percentage is None, use preset config 
     if peft_args.trainable_params_percentage is not None:
         peft_config_name += "_trainable_params_percentage_" + str(peft_args.trainable_params_percentage)

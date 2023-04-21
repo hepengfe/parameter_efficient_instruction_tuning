@@ -370,7 +370,7 @@ def main():
         training_args.num_train_epochs = 5
         training_args.eval_steps = 10
         training_args.save_steps = 10 
-        training_args.dev_run_data_size = 500
+        training_args.dev_run_data_size = 60
         training_args.per_device_train_batch_size = 4
         training_args.per_device_eval_batch_size = 2
         training_args.per_device_test_batch_size = 2
@@ -383,12 +383,13 @@ def main():
         # dev issues such as OOM, training loss decreasing
         os.environ["WANDB_MODE"] = "disabled"
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 100
+        training_args.dev_train_data_size = 20
         training_args.eval_steps = 40
         training_args.num_train_epochs = 10
         # # test eval bs
         # training_args.eval_steps = 1
         training_args.save_steps = 1000 # no save needed actually
+        training_args.per_device_eval_batch_size = 20
 
     if training_args.dev_eval:
         # dev issues such as empty prediction (although it's mostly likely a generation issue)
@@ -478,7 +479,7 @@ def main():
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
     training_args.label_names = [training_args.label_names]
-    trainer = PEFTTrainer(training_args, data_args, model_args, peft_args, training_args.use_accelerate)
+    trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
     
     if training_args.do_train:
         trainer.train() # train from scratch
@@ -486,7 +487,7 @@ def main():
 
 
     if training_args.do_test:
-        trainer.evaluate()
+        trainer.evaluate("test")
     
     # TODO:
     # if training_args.do_search_peft_config_by_trainable_params:

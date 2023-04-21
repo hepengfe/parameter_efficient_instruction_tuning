@@ -45,8 +45,8 @@ import shutil
 from util.compute_metrics import compute_metrics, compute_grouped_metrics
 
 # modules use two pacakges 
-ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3", "lora", "parallel_adapter"]
-PEFT_MODULES=["prompt_tuning"]
+ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
+PEFT_MODULES=["prompt_tuning", "lora_peft"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
@@ -113,13 +113,13 @@ class TrainingState:
         return str(self.to_dict())
 
 class PEFTTrainer:
-    def __init__(self, training_args, data_args, model_args, peft_args, use_accelerator = False):
+    def __init__(self, training_args, data_args, model_args, peft_args):
         
         self.training_args = training_args
         self.data_args = data_args
         self.model_args = model_args
         self.peft_args = peft_args
-        self.use_accelerator = use_accelerator
+        # self.accelerator.use_distributed = use_accelerator replaced
         
         # self.arguments = arguments
         self.model_name_or_path = self.model_args.model_name_or_path
@@ -131,20 +131,25 @@ class PEFTTrainer:
         
         self.accelerator = Accelerator(
                 log_with="wandb",
-                logging_dir=".",
                 project_dir="accelerate",
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
             )
 
+        self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path).lm_head.weight
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
+  
+        
         # TODO: accelerator needs to load model and peft module first anyway
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
         assert self.model is not None, "model should loaded"
+        if self.accelerator.use_distributed:
+            self.model = self.accelerator.prepare(self.model)
+        
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
-
+        
         self.build_dataloader()
         # if self.accelerator.is_main_process:
         # #     # maybe empty weights is an option
@@ -159,9 +164,9 @@ class PEFTTrainer:
         # else:
         #     self.accelerator.wait_for_everyone()
 
-        if self.use_accelerator:
+        if self.accelerator.use_distributed:
             self.device = self.accelerator.device
-            self.model = self.accelerator.prepare(self.model)
+            
             
             
             # self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader  = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader)
@@ -181,7 +186,9 @@ class PEFTTrainer:
         else:
             self.device = "cuda"
             self.model = self.model.to(self.device)
-
+        # import pdb; pdb.set_trace()
+        # print('check optimizer')
+        
 
         """
         Model is loaded, now we need to set up the trainer
@@ -213,7 +220,7 @@ class PEFTTrainer:
 
     def load_optimizer_n_scheduler(self):
         # lr should be scaled linearly with the number of processes
-        if self.use_accelerator:
+        if self.accelerator.use_distributed:
             self.training_args.learning_rate = self.training_args.learning_rate * self.accelerator.num_processes
             # lr  = self.training_args.learning_rate / self.accelerator.num_processes
         self.optimizer = Adafactor(
@@ -304,9 +311,11 @@ class PEFTTrainer:
                 # NOTE: this is not compatible if loading for the first time as
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
                 if os.path.exists(potential_model_path):
-                    self.model = PeftModelForSeq2Seq.from_pretrained(potential_model_path)
+                    self.model =AutoModelForSeq2SeqLM.from_pretrained(potential_model_path)
+                    # self.model = PeftModelForSeq2SeqLM.from_pretrained(potential_model_path)
                 else:
-                    self.model = PeftModelForSeq2Seq.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+                    self.model =AutoModelForSeq2SeqLM.from_pretrained(potential_model_path, cache_dir=self.training_args.cache_dir)
+                    # self.model = PeftModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -450,9 +459,9 @@ class PEFTTrainer:
 
         min_eval_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_eval_batch_size
         min_test_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_test_batch_size
-        if self.use_accelerator:
-            assert len(self.eval_dataset) > min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
-            assert len(self.test_dataset) > min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
+        if self.accelerator.use_distributed:
+            assert len(self.eval_dataset) >= min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
+            assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
 
             if len(self.eval_dataset) % min_eval_data_size_per_process != 0:
                 org_len = len(self.eval_dataset)
@@ -656,16 +665,24 @@ class PEFTTrainer:
                 self.model.add_classification_head(f"lm_head-{adapter_name}", num_labels=2, overwrite_ok=reset_peft)
             elif self.model_args.model_arch == "encoder-decoder":
                 self.model.add_seq2seq_lm_head(f"lm_head-{adapter_name}", overwrite_ok=reset_peft)
+                self.model.heads[f"lm_head-{adapter_name}"][0].weight = self.model_lm_head_weight
                 self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = False
-
+                
+                
+                
+                # self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = True
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.model_args.model_arch}"
                 )
             self.model.set_active_adapters(self.model_args.tuning_mode)
-            
             # self.model.freeze_model(True)
-    
+            if self.model.active_adapters is None:
+                raise ValueError(
+                    "Expected a model with an active adapter setup."
+                    "If you want to fully finetune the model use the Trainer class."
+                )
+            
         elif self.model_args.tuning_mode == "bitfit":
             # if self.model_args.model_arch == "encoder":
             #     # deactivate gradients except for bias terms
@@ -817,7 +834,7 @@ class PEFTTrainer:
 
         
         # NOTE: non-accelerator resume training is not supported
-        # if self.use_accelerator and self.accelerator.is_local_main_process:
+        # if self.accelerator.use_distributed and self.accelerator.is_local_main_process:
         
         # a better way: main process check and rm corrumpted checkpoint
         # if a latest_cp is found, all processes load it
@@ -897,7 +914,7 @@ class PEFTTrainer:
         
         # with gradient accumulation, per gradient update step is actually multiple steps
         end_step = self.training_args.num_train_epochs * len(self.train_dataloader) // self.training_args.gradient_accumulation_steps
-        if self.use_accelerator:
+        if self.accelerator.use_distributed:
             self.accelerator.log(self.training_args.to_dict())
             
             progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process, initial=global_step)
@@ -927,7 +944,7 @@ class PEFTTrainer:
             print("------------new epoch: ", epoch, "global_step: ", global_step)
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.model.train()
-                if self.use_accelerator:
+                if self.accelerator.use_distributed:
                     with self.accelerator.accumulate(self.model):
                         
                         train_state.update(
@@ -984,9 +1001,10 @@ class PEFTTrainer:
                                     cur_metric_val = results[eval_metric_name]
                                     logger.info(f"cur_metric_val: {cur_metric_val}")
                                     if cur_metric_val > best_metric_val:
-                                        best_metric_val = cur_metric_val
+                                        
                                         print("cur_metric_val > best_metric_val, save best checkpoint")
                                         logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
+                                        best_metric_val = cur_metric_val
                                         best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
                                         
                                         self.accelerator.save_state(best_checkpoint_path)
@@ -1033,11 +1051,12 @@ class PEFTTrainer:
                         
                     # if global_step % self.training_args.eval_steps == 0:
                         results = self.evaluate()
-                        cur_metric_val = results[self.training_args.eval_metric]
-                        logger.info(f"rougel score: {cur_metric_val}")
-                        import pdb; pdb.set_trace()
-                        print('')
                         
+                        cur_metric_val = results["eval/"+self.training_args.eval_metric]
+                        logger.info(f"rougel score: {cur_metric_val}")
+                        # import pdb; pdb.set_trace()
+                        # print('check first eval results')
+                    
 
                         
                         
@@ -1048,7 +1067,7 @@ class PEFTTrainer:
                 global_step += 1
                 progress_bar.update(1)
 
-        if self.use_accelerator:
+        if self.accelerator.use_distributed:
             # TODO: will the step be a new step that skipped batches
             self.accelerator.save_state(
                 self.training_args.output_dir
@@ -1083,36 +1102,76 @@ class PEFTTrainer:
         from tqdm import tqdm
         logger.info("***** Running evaluation %s *****", mode)
         # model = accelerate.utils.extract_model_from_parallel(self.model)
-        if hasattr(self.model, "module"):
-            model = self.model.module
-        else:
-            model = self.model
-        from copy import deepcopy
+        # if hasattr(self.model, "module"):
+        #     model = self.model.module
+        # else:
+        #     model = self.model
         
+        # it handles deepspeed and DDP
+        model = accelerate.utils.extract_model_from_parallel(self.model)
+        from copy import deepcopy
+        if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
+            # import pdb; pdb.set_trace()
+            # # model.set_active_adapters
+            # model.active_adapters
+    
+            
+            print('check active adapter')
+            print("lora_B weight (should change): ", model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B)
+            print("query weight(should not change): ", model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight)
+            
+        self.accelerator.wait_for_everyone()
+        # if self.training_args.dev_train:
+        #      all processes should have the same lora_B weight
+        #     print("lora_B weight (should change): ", model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora.lora_B)
 
+            
+            
+        
         with torch.no_grad():
             for inputs in tqdm(dataloader2eval):
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
-
-                # for k in inputs:
-                #     print("move to device: ", k, self.device)
-                #     inputs[k] = inputs[k].to(self.device)
+                if not self.accelerator.use_distributed:
+                    for k in inputs:
+                        inputs[k] = inputs[k].to(self.device)
                 
-                # print("generating")
+                # main process
+                # if self.accelerator.is_main_process:
+                #     import pdb; pdb.set_trace()
+                #     print('')
+                # self.accelerator.wait_for_everyone()
+                # print first attention block
+    
                 
-                
-                outputs = model.generate(**inputs,
+                if self.model_args.tuning_mode == "lora_peft": # temp PEFT lora implementation
+                    generation_inputs = inputs.pop("input_ids")
+                    outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
                                         # synced_gpus = True,
                                         synced_gpus = False,
                                         # pad_token_id=self.tokenizer.pad_token_id,
-                )
+                    )
+                else:
+                    outputs = model.generate(**inputs,
+                                            max_new_tokens = self.data_args.max_target_length,
+                                            # synced_gpus = True,
+                                            synced_gpus = False,
+                                            # pad_token_id=self.tokenizer.pad_token_id,
+                    )
+                    
+                    
+                # outputs = model.generate(**inputs,
+                #                             max_new_tokens = self.data_args.max_target_length,
+                #                             # synced_gpus = True,
+                #                             synced_gpus = False,
+                #                             # pad_token_id=self.tokenizer.pad_token_id,
+                #     )
 
 
                 # print("pre-pad shape: ", outputs.device, outputs.shape)
-                inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
+                # inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
                 outputs = self.accelerator.pad_across_processes(outputs, pad_index=self.tokenizer.pad_token_id, dim=1)
                 # # torch.cuda.set_device(self.accelerator.device)
                 # print("post-pad shape: ",outputs.shape)
@@ -1127,7 +1186,7 @@ class PEFTTrainer:
                 
                 # gather outputs across devices to main process?
                 outputs = self.accelerator.gather(outputs)
-                inputs = self.accelerator.gather(inputs)
+                # inputs = self.accelerator.gather(inputs)
                 # if self.accelerator.is_local_main_process:
                 #     outputs = self.accelerator.gather(outputs)
                     
@@ -1145,15 +1204,18 @@ class PEFTTrainer:
                 # print("output hosting")
                 # print("gathered shape: ", outputs.shape)
                 # since we pad tensors 
-                inputs_text = self.tokenizer.batch_decode(inputs)
-                inputs_text = [remove_special_token(t) for t in inputs_text]
-                input_host += inputs_text
+                
+                
+                # inputs_text = self.tokenizer.batch_decode(inputs)
+                # inputs_text = [remove_special_token(t) for t in inputs_text]
+                # input_host += inputs_text
 
                 outputs_text =  self.tokenizer.batch_decode(outputs)
                 outputs_text = [remove_special_token(t) for t in outputs_text]
                 output_host += outputs_text
 
-
+                
+                
 
                 label_host += self.tokenizer.batch_decode(labels)
 
@@ -1190,6 +1252,7 @@ class PEFTTrainer:
         #     print(o)
         labels = None
 
+      
         
         if self.accelerator.is_local_main_process:
             # len(dataset2eval) might be less than len(input_host) and  len(output_host), because the latter two are flattened dataset
@@ -1206,7 +1269,8 @@ class PEFTTrainer:
         # del model
         # import pdb; pdb.set_trace()
         # print(' check self.model status')
-        
+        # import pdb; pdb.set_trace()
+        # print('dd')
         
         # print("prepare model")
         # self.model = self.accelerator.prepare(self.model)
@@ -1543,20 +1607,29 @@ class PEFTTrainer:
                 
             
         
-        elif self.model_args.tuning_mode == "lora":
-            # peft package
-            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
-
+        elif self.model_args.tuning_mode == "lora_adapter":
+            # from peft import LoraConfig
+            # # peft package
+            # cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
+            # assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            # task_type = TaskType.SEQ_2_SEQ_LM
             # config = LoraConfig(
             #     task_type=task_type,
             #     inference_mode=False,
             #     r=cur_lora_r,
-            #     lora_alpha=32,
+            #     lora_alpha=77,
             #     lora_dropout=0.1,
             #     # lora_modules
             #     target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             # )
+            # self.model = get_peft_model(self.model, config)
+            # print("current trainable params percentage is {}".format(self.check_trainable_parameters()))
+            
+            
+            
+            
+            
+            
             # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             # print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             # while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
@@ -1574,29 +1647,50 @@ class PEFTTrainer:
 
             
             from transformers.adapters import LoRAConfig
+            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
             config = LoRAConfig(r=cur_lora_r,
                                 alpha=16,
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
                                 )
             # self.model.add_adapter("lora_adapter", config=config)
             cur_trainable_params_percentage = self.load_peft_module(config)
-            while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
-                cur_lora_r += 1
-                config = LoRAConfig(
-                                r=cur_lora_r,
-                                alpha=16,
-                                attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
-                                )
-                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-                print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            
+            
+            
+            
+            
+            
+            # while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
+            #     cur_lora_r += 1
+            #     config = LoRAConfig(
+            #                     r=cur_lora_r,
+            #                     alpha=16,
+            #                     attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
+            #                     )
+            #     cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
+            #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
             
             
             
             # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            
-            
-                
-            self.peft_args.lora_r = cur_lora_r
+            # self.peft_args.lora_r = cur_lora_r
+        elif self.model_args.tuning_mode == "lora_peft":
+            from peft import LoraConfig
+            # peft package
+            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
+            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+            task_type = TaskType.SEQ_2_SEQ_LM
+            config = LoraConfig(
+                task_type=task_type,
+                inference_mode=False,
+                r=cur_lora_r,
+                lora_alpha=77,
+                lora_dropout=0.1,
+                # lora_modules
+                target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
+            )
+            self.model = get_peft_model(self.model, config)
+            print("current trainable params percentage is {}".format(self.check_trainable_parameters()))
         elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config
             cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
