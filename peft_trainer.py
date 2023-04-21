@@ -971,25 +971,19 @@ class PEFTTrainer:
                         self.scheduler.step()
                         self.optimizer.zero_grad()
                         
+                        cp_folder_name = f"checkpoint-{global_step}"
                         # save first as eval is prone to error
                         if (global_step != 0 or self.training_args.dev_run) and global_step  % self.training_args.save_steps == 0:
-                
                             self.accelerator.save_state(
-                                os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
+                                os.path.join(self.training_args.output_dir, cp_folder_name)
                             )
                             
                             if self.accelerator.is_main_process:
                                 remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-                                # train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
-                            
-                            
+                    
 
-
-                            
                         # eval
                         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
-                            
-                        # if global_step % self.training_args.eval_steps == 0:
                             # parallel evaluation called by all processes
                             # but only main process results is valid
                             results = self.evaluate()
@@ -997,6 +991,7 @@ class PEFTTrainer:
                             
                             eval_metric_name = "eval/"+self.training_args.eval_metric
                             if self.accelerator.is_main_process:
+                                assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
                                 assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
                                 
                                 
@@ -1008,7 +1003,7 @@ class PEFTTrainer:
                                     print("cur_metric_val > best_metric_val, save best checkpoint")
                                     logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
                                     best_metric_val = cur_metric_val
-                                    best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
+                                    best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
                                     
                                     # single or multi-processes both work
                                     self.accelerator.save_state(best_checkpoint_path)
@@ -1028,7 +1023,7 @@ class PEFTTrainer:
                                     train_state.save_to_json(best_checkpoint_path)
 
                                     # overwrite output dir checkpoint as it's been updated
-                                    train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
+                                    train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
                     
                            
 
@@ -1054,8 +1049,10 @@ class PEFTTrainer:
                     # if global_step % self.training_args.eval_steps == 0:
                         results = self.evaluate()
                         
-                        cur_metric_val = results["eval/"+self.training_args.eval_metric]
-                        logger.info(f"rougel score: {cur_metric_val}")
+                        if self.accelerator.is_main_process:
+                            assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
+                            cur_metric_val = results["eval/"+self.training_args.eval_metric]
+                            logger.info(f"rougel score: {cur_metric_val}")
                         # import pdb; pdb.set_trace()
                         # print('check first eval results')
                     
@@ -1103,24 +1100,14 @@ class PEFTTrainer:
         label_host = []
         from tqdm import tqdm
         logger.info("***** Running evaluation %s *****", mode)
-        # model = accelerate.utils.extract_model_from_parallel(self.model)
-        # if hasattr(self.model, "module"):
-        #     model = self.model.module
-        # else:
-        #     model = self.model
-        
         # it handles deepspeed and DDP
         model = accelerate.utils.extract_model_from_parallel(self.model)
         from copy import deepcopy
         if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
-            # import pdb; pdb.set_trace()
-            # # model.set_active_adapters
-            # model.active_adapters
-    
-            
-            print('check active adapter')
-            print("lora_B weight (should change): ", model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B)
-            print("query weight(should not change): ", model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight)
+
+            logger.debug('check active adapter')
+            logger.debug("lora_B weight (should change): " + model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B)
+            logger.debug("query weight(should not change): " + model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight)
             
         self.accelerator.wait_for_everyone()
         # if self.training_args.dev_train:
@@ -1268,6 +1255,12 @@ class PEFTTrainer:
             for k in results:
                 results_with_mode[f"{mode}/{k}"] = results[k]
 
+            
+            # self.accelerator.log(results_with_mode, step=global_step)
+            # eval_metric_name = "eval/"+self.training_args.eval_metric
+            # assert eval_metric_name in results_with_mode, f"eval_metric {eval_metric_name} not in evaluation results"
+            # cur_metric_val = results_with_mode[eval_metric_name]
+            # logger.info(f"cur_metric_val: {cur_metric_val}")
 
         self.model.train()
 
@@ -1295,7 +1288,6 @@ class PEFTTrainer:
             references = [e["Instance"]["output"] for e in eval_dataset]
             # references = labels
             
-
             result = compute_metrics(predictions=decoded_preds, references=references)
             result_per_task = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=eval_dataset["Task"])
             result.update(result_per_task)

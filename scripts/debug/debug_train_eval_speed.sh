@@ -138,15 +138,5 @@ WANDB_MODE=disabled accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='
 
 
 
-accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' --config_file /home/murphy/.cache/huggingface/accelerate/default_deepspeed_config.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 2000 --save_steps 2000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train 
-
-
-
-
-
-accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu_all.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 2000 --save_steps 2000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train 
-
-
-
-accelerate launch  --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu45.yaml  prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 2000 --save_steps 2000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train 
+accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' --config_file /home/murphy/.cache/huggingface/accelerate/default_deepspeed_config.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train --dev_run
 
