@@ -380,7 +380,7 @@ def main():
         training_args.per_device_test_batch_size = 2
 
 
-        model_args.tuning_mode = "fine_tuning"
+        # model_args.tuning_mode = "fine_tuning"
     
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing

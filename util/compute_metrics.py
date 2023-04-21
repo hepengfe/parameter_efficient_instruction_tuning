@@ -10,6 +10,12 @@ from collections import Counter
 from rouge_score import rouge_scorer
 from transformers import AutoTokenizer
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +30,8 @@ class GPTTokenizer:
         tokens = [t.lstrip("Ġ") for t in tokens]
         return tokens
 
+# supress INFO:absl:Using default tokenizer.
+logging.getLogger("absl").setLevel(logging.WARNING) 
 xlingual_tokenizer = GPTTokenizer()
 
 
@@ -58,16 +66,15 @@ def rouge1_score(prediction, ground_truth, xlingual=False):
 
 
 def rougeL_score(prediction, ground_truth, xlingual=False):
-    print("-----------------------------")
-    print("prediction: ", prediction)
-    print("ground_truth: ", ground_truth)
-    
     if xlingual:
         scorer = rouge_scorer.RougeScorer(['rougeL'], tokenizer=xlingual_tokenizer) 
     else:
         scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
     scores = scorer.score(prediction=prediction, target=ground_truth)
-    print("score: ", scores["rougeL"].fmeasure)
+    logger.debug("-----------------------------")
+    logger.debug("prediction: " + prediction)
+    logger.debug("ground_truth: " + ground_truth)
+    logger.debug("score: " + str(scores["rougeL"].fmeasure))
     return scores["rougeL"].fmeasure
 
 

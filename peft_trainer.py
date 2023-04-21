@@ -54,8 +54,8 @@ LATEST_CP_FOLDER_NAME="latest_checkpoint"
 import logging
 from accelerate.logging import get_logger
 import accelerate
-# logging.basicConfig(level=logging.DEBUG)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
 
 
@@ -943,7 +943,7 @@ class PEFTTrainer:
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
             print("------------new epoch: ", epoch, "global_step: ", global_step)
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
-                self.model.train()
+                self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
                 if True or self.accelerator.use_distributed:
                     with self.accelerator.accumulate(self.model):
                         
@@ -971,44 +971,38 @@ class PEFTTrainer:
                         self.scheduler.step()
                         self.optimizer.zero_grad()
                         
-                        # eval and save at local process
-                        # if self.accelerator.is_local_main_process:
-                        if True:
+                        # save first as eval is prone to error
+                        if (global_step != 0 or self.training_args.dev_run) and global_step  % self.training_args.save_steps == 0:
+                
+                            self.accelerator.save_state(
+                                os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
+                            )
                             
-          
-                            # save first as eval is prone to error
-                            if (global_step != 0 or self.training_args.dev_run) and global_step  % self.training_args.save_steps == 0:
-                  
-                                self.accelerator.save_state(
-                                    os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}")
-                                )
-                                
-                                
-                                # self.model.save_pretrained(self.training_args.output_dir, f"checkpoint-{global_step}")
-                                
-                                train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
-                                if self.accelerator.is_main_process:
-                                    remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-                                
-                                self.accelerator.wait_for_everyone() 
+                            if self.accelerator.is_main_process:
+                                remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
+                                # train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
+                            
+                            
 
-  
-                                
-                            # eval
-                            if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
-                                
-                            # if global_step % self.training_args.eval_steps == 0:
-                                # parallel evaluation
-                                # only main process results is valid
-                                results = self.evaluate()
-                                self.accelerator.log(results, step=global_step)
-                                
-                                eval_metric_name = "eval/"+self.training_args.eval_metric
+
+                            
+                        # eval
+                        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+                            
+                        # if global_step % self.training_args.eval_steps == 0:
+                            # parallel evaluation called by all processes
+                            # but only main process results is valid
+                            results = self.evaluate()
+                            self.accelerator.log(results, step=global_step)
+                            
+                            eval_metric_name = "eval/"+self.training_args.eval_metric
+                            if self.accelerator.is_main_process:
                                 assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
                                 
                                 
                                 cur_metric_val = results[eval_metric_name]
                                 logger.info(f"cur_metric_val: {cur_metric_val}")
+                                
                                 if cur_metric_val > best_metric_val:
                                     
                                     print("cur_metric_val > best_metric_val, save best checkpoint")
@@ -1016,11 +1010,12 @@ class PEFTTrainer:
                                     best_metric_val = cur_metric_val
                                     best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint", f"checkpoint-{global_step}")
                                     
+                                    # single or multi-processes both work
                                     self.accelerator.save_state(best_checkpoint_path)
                                     
-                                    if self.accelerator.is_main_process:
-                                        remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
-                                    # self.accelerator.wait_for_everyone()
+                                    remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
+
+                                
                                     train_state.update(
                                         {
                                             "best_metric_val": best_metric_val,
@@ -1031,16 +1026,12 @@ class PEFTTrainer:
                                         }
                                     )
                                     train_state.save_to_json(best_checkpoint_path)
+
+                                    # overwrite output dir checkpoint as it's been updated
+                                    train_state.save_to_json(os.path.join(self.training_args.output_dir, f"checkpoint-{global_step}"))
                     
                            
-                                # import pdb; pdb.set_trace()
-                                # print('check eval results')
 
-                                # if self.accelerator.is_main_process:
-                                #     import pdb; pdb.set_trace()
-                                #     print('check eval results')
-                                # else:
-                                #     self.accelerator.wait_for_everyone()
                         # wait for main process to finish evaluation?
                         # self.accelerator.wait_for_everyone()
                         # TODO: suspend signal
@@ -1068,7 +1059,7 @@ class PEFTTrainer:
                         # import pdb; pdb.set_trace()
                         # print('check first eval results')
                     
-
+               
                         
                         
                 logging_loss += loss.item()
@@ -1277,22 +1268,7 @@ class PEFTTrainer:
             for k in results:
                 results_with_mode[f"{mode}/{k}"] = results[k]
 
-        # del model
-        # import pdb; pdb.set_trace()
-        # print(' check self.model status')
-        # import pdb; pdb.set_trace()
-        # print('dd')
-        
-        # print("prepare model")
-        # self.model = self.accelerator.prepare(self.model)
-        # print("after prepare model")
-        # import pdb; pdb.set_trace()
-        # print('check memory changes')
-        
-        # print("finished evaluation and try self.accelerator.clear()")
-        
-        # import pdb; pdb.set_trace()
-        # print('check effect of clear')
+
         self.model.train()
 
         return results_with_mode if self.accelerator.is_local_main_process else None
