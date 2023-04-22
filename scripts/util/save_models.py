@@ -15,6 +15,12 @@ cache_dir="cache"
 saved_pretrained_dir = os.path.join(cache_dir, "saved_pretrained")
 
 
+
+tokenizer = AutoTokenizer.from_pretrained("gpt2", max_length=1e5)
+tokenizer.save_pretrained(os.path.join(saved_pretrained_dir,"gpt2"))
+
+exit()
+
 for m in model_names:
     # check if the model exists in the path
     # priority: 1. potential_model_path 2. cache_dir 3. download from huggingface
@@ -23,6 +29,9 @@ for m in model_names:
     # model = AutoModelForSeq2SeqLM.from_pretrained(m, cache_dir=cache_dir)
     tokenizer =  AutoTokenizer.from_pretrained(m,use_fast=True,
                 return_tensors="pt")
+
+
+    # AutoTokenizer.from_pretrained(os.path.join("cache/saved_pretrained", "gpt2"), max_length=1e5)
 
     # model.save_pretrained(f"model/{m}")
     tokenizer.save_pretrained(os.path.join(saved_pretrained_dir,m))

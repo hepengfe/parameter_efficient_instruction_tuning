@@ -1,3 +1,5 @@
+import haienv
+haienv.set_env('peit3')
 from transformers import HfArgumentParser
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
@@ -8,7 +10,7 @@ import os
 import torch
 import transformers
 from dataclasses import dataclass, field
-
+import shutil
 # import Optional
 from typing import Optional, List
 from utils import flatten, build_peft_config_name
@@ -239,10 +241,14 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Number of eval steps to accumulate before performing a backward/update pass." },
     )
     cache_dir: Optional[str] = field(
-        default=None, metadata={"help": "Where do you want to store the pretrained models."}
+        default="cache", metadata={"help": "Where do you want to store the pretrained models."}
     )
     output_dir: str = field(
         default=None, metadata={"help": "Where do you want to store the checkpoints."}
+    )
+
+    overwrite_output_dir: bool = field(
+        default=False, metadata={"help": "Overwrite the content of the output directory."}
     )
     
     default_optimizer_n_scheduler: bool = field(
@@ -355,13 +361,23 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=False,
         metadata={ "help": "Whether to use accelerate." },
     )
+
+
+    is_cluster: bool = field(
+        default = False,
+        metadata={ "help": "Whether to run on the cluster." },
+    )
     
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
     
-
+    
+    if training_args.is_cluster:
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ['HF_DATASETS_OFFLINE']= "1"
+        os.environ['HF_DATASETS_CACHE'] = "cache"
     
     
     if training_args.dev_run:
@@ -382,6 +398,9 @@ def main():
 
         # model_args.tuning_mode = "fine_tuning"
     
+    
+
+
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
         os.environ["WANDB_MODE"] = "disabled"
@@ -393,6 +412,8 @@ def main():
         # training_args.eval_steps = 1
         training_args.save_steps = 1000 # no save needed actually
         training_args.per_device_eval_batch_size = 20
+
+
 
     if training_args.dev_eval:
         # dev issues such as empty prediction (although it's mostly likely a generation issue)
@@ -482,6 +503,10 @@ def main():
     if not training_args.output_dir:
         training_args.output_dir = output_dir
     
+    if training_args.overwrite_output_dir and os.path.exists(training_args.output_dir):
+        shutil.rmtree(training_args.output_dir, ignore_errors=True)
+
+
     # run_name: xx-xx-xx
     training_args.run_name = flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
     

@@ -20,7 +20,8 @@ logger.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 class GPTTokenizer:
-    gpt_tokenizer = AutoTokenizer.from_pretrained("gpt2", max_length=1e5)
+
+    gpt_tokenizer = AutoTokenizer.from_pretrained(os.path.join("cache/saved_pretrained", "gpt2"), max_length=1e5)
 
     def tokenize(self, s):
         tokens = self.gpt_tokenizer.tokenize(s)
