@@ -257,9 +257,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     logging_steps: int = field(
         default=30, metadata={"help": "Log every X updates steps."}
     )
-    model_parallel_gpus: int = field(
-        default=6, metadata={"help": "Number of GPUs to use for model parallel training."}
-    )
+
     learning_rate: float = field(
         default=5e-4, metadata={"help": "The initial learning rate."}
     )

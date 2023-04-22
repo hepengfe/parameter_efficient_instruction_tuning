@@ -130,6 +130,9 @@ class PEFTTrainer:
         self.model_trainable_params = None
         self.recover_from = None
         
+        # plugin = DeepSpeedPlugin(
+
+        # )
         self.accelerator = Accelerator(
                 log_with="wandb",
                 project_dir="accelerate",
@@ -170,12 +173,29 @@ class PEFTTrainer:
         if True or self.accelerator.use_distributed:
             self.device = self.accelerator.device
             
-            self.model = self.accelerator.prepare(self.model)
-            
-            # self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader  = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader, self.eval_dataloader, self.test_dataloader)
-            
-            self.optimizer, self.scheduler, self.train_dataloader = self.accelerator.prepare(self.optimizer, self.scheduler, self.train_dataloader)
-            
+            is_deepspeed = True
+            if not is_deepspeed:
+                self.model, self.train_dataloader = self.accelerator.prepare(self.model, self.train_dataloader)
+                self.optimizer, self.scheduler= self.accelerator.prepare(self.optimizer, self.scheduler)
+            else:
+
+                # two notes:
+                # 1. model prepare should be called before optimizer prepare
+                # 2. model prepare should be called with dataloader prepare in deepspeed mode
+                # self.model, self.train_dataloader = self.accelerator.prepare(self.model, self.train_dataloader)
+                
+                self.model, self.optimizer, self.scheduler, self.train_dataloader= self.accelerator.prepare(self.model, self.optimizer, self.scheduler, self.train_dataloader)
+                # import pdb; pdb.set_trace()
+                # print('step in ')
+                # is_deepspeed = True
+                # if not is_deepspeed:
+                #     self.optimizer, self.scheduler= self.accelerator.prepare(self.optimizer, self.scheduler)
+                # else:
+                #     self.optimizer = self.accelerator._optimizers[0]
+                #     self.scheduler= self.accelerator._schedulers[0]
+                # import pdb; pdb.set_trace()
+                print('check type(self.optimizer), self.scheduler')
+                
 
             # self.eval_dataloader = accelerate.data_loader.prepare_data_loader(
             #     self.eval_dataloader, split_batches=True
@@ -226,21 +246,72 @@ class PEFTTrainer:
         if self.accelerator.use_distributed:
             self.training_args.learning_rate = self.training_args.learning_rate * self.accelerator.num_processes
             # lr  = self.training_args.learning_rate / self.accelerator.num_processes
-        self.optimizer = Adafactor(
-            self.model.parameters(),
-            # filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr= self.training_args.learning_rate,
-            eps=(1e-30, 1e-3),
-            clip_threshold=1.0,
-            decay_rate=-0.8,
-            beta1=None,
-            weight_decay=1e-5,
-            # fixed learning rate
-            scale_parameter=False,
-            relative_step=False,
-            warmup_init=False,
-        )
-        self.scheduler = get_constant_schedule(self.optimizer)
+
+        is_deepspeed = True
+        if not is_deepspeed:
+
+            # create AdamW optimizer
+            self.optimizer = AdamW(
+                self.model.parameters(),
+                lr=self.training_args.learning_rate,
+                eps=self.training_args.adam_epsilon,
+                weight_decay=self.training_args.weight_decay,
+            )
+            self.scheduler = get_constant_schedule(self.optimizer)
+        else:
+
+
+            # self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
+            # self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
+
+            # import get_scheduler
+            from transformers import get_scheduler
+
+
+            # Creates Dummy Optimizer if `optimizer` was spcified in the config file else creates Adam Optimizer
+            optimizer_cls = (
+                torch.optim.AdamW
+                if self.accelerator.state.deepspeed_plugin is None
+                or "optimizer" not in self.accelerator.state.deepspeed_plugin.deepspeed_config
+                else accelerate.utils.DummyOptim
+            )
+            # self.optimizer = optimizer_cls(optimizer_grouped_parameters, lr=self.training_args.learning_rate)
+            self.optimizer = optimizer_cls(self.model.parameters(), lr=self.training_args.learning_rate)
+
+            # Creates Dummy Scheduler if `scheduler` was spcified in the config file else creates `args.lr_scheduler_type` Scheduler
+            if (
+                self.accelerator.state.deepspeed_plugin is None
+                or "scheduler" not in self.accelerator.state.deepspeed_plugin.deepspeed_config
+            ):
+                # self.scheduler = get_scheduler(
+                #     name=args.lr_scheduler_type,
+                #     optimizer=optimizer,
+                #     num_warmup_steps=args.num_warmup_steps,
+                #     num_training_steps=args.max_train_steps,
+                # )
+                self.scheduler = get_constant_schedule(self.optimizer)
+            else:
+                self.scheduler = accelerate.utils.DummyScheduler(
+                    self.optimizer, total_num_steps=100, warmup_num_steps=10
+                )
+
+
+        
+        # # self.optimizer = Adafactor(
+        # #     self.model.parameters(),
+        # #     # filter(lambda p: p.requires_grad, self.model.parameters()),
+        # #     lr= self.training_args.learning_rate,
+        # #     eps=(1e-30, 1e-3),
+        # #     clip_threshold=1.0,
+        # #     decay_rate=-0.8,
+        # #     beta1=None,
+        # #     weight_decay=1e-5,
+        # #     # fixed learning rate
+        # #     scale_parameter=False,
+        # #     relative_step=False,
+        # #     warmup_init=False,
+        # # )
+        
 
 
             
@@ -335,22 +406,15 @@ class PEFTTrainer:
         else:
             raise NotImplementedError("Model not supported: " + self.model_name_or_path)
 
-        # if self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES: # "prefix_tuning"
-        #     self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
-
-
-            
-        # if self.training_args.model_parallel_gpus > 1 and torch.cuda.device_count() > 1:
-        #     if torch.cuda.device_count() != self.training_args.model_parallel_gpus:
-        #         print(f"WARNING: model parallel is enabled but the number of GPUs does not match the number of GPUs specified in the model_parallel_gpus argument. Using all available GPUs. ({torch.cuda.device_count()} GPUs found)")
-        #     if hasattr(self.model, "parallelize"):
-        #         self.model.parallelize()
-        #     else:
-        #         print(f"Model {self.model_name_or_path} cannot be parallelized")
 
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                print("Trainable param: ", param.numel(), name)
+            else:
+                print("Non-trainable param: ", name)
 
-
+        
         
 
 
@@ -787,8 +851,11 @@ class PEFTTrainer:
 
 
     def check_trainable_parameters(self, print_params_required_grad = False):
+        
+        
         # total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+
         # print_params_required_grad = True
         if print_params_required_grad:
             for n, p in self.model.named_parameters():
@@ -938,12 +1005,13 @@ class PEFTTrainer:
         # else:
         #     self.accelerator.wait_for_everyone()
             
-        
+        self.model.train()
         logging_loss = 0
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
             print("------------new epoch: ", epoch, "global_step: ", global_step)
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
+                
                 if True or self.accelerator.use_distributed:
                     with self.accelerator.accumulate(self.model):
                         
@@ -1006,24 +1074,24 @@ class PEFTTrainer:
                                     best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
                                     
                                     # single or multi-processes both work
-                                    self.accelerator.save_state(best_checkpoint_path)
+                                    # self.accelerator.save_state(best_checkpoint_path)
                                     
-                                    remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
+                                    # remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
 
                                 
-                                    train_state.update(
-                                        {
-                                            "best_metric_val": best_metric_val,
-                                            "best_checkpoint_path": best_checkpoint_path,
-                                            "best_checkpoint_global_step": global_step,
-                                            "best_checkpoint_epoch": epoch,
-                                            "best_checkpoint_step": step,
-                                        }
-                                    )
-                                    train_state.save_to_json(best_checkpoint_path)
+                                    # train_state.update(
+                                    #     {
+                                    #         "best_metric_val": best_metric_val,
+                                    #         "best_checkpoint_path": best_checkpoint_path,
+                                    #         "best_checkpoint_global_step": global_step,
+                                    #         "best_checkpoint_epoch": epoch,
+                                    #         "best_checkpoint_step": step,
+                                    #     }
+                                    # )
+                                    # train_state.save_to_json(best_checkpoint_path)
 
-                                    # overwrite output dir checkpoint as it's been updated
-                                    train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
+                                    # # overwrite output dir checkpoint as it's been updated
+                                    # train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
                     
                            
 
@@ -1080,7 +1148,9 @@ class PEFTTrainer:
         eval mode: evaluate use loaded current model
         test mode: evaluate best model loaded from output_dir
         
-        parallel generation, gather results on all processes, compute metrics on main process, return results on main process and None on other processes. 
+        parallel generation, gather results on all processes, compute metrics on main process, return results on main process and None on other processes.
+
+        log automatically on main process, return True if it outperform previous best checkpoint, False otherwise.
         """
         assert mode in ["eval", "test"], "must be either eval or test  mode"
         if mode == "eval":
@@ -1242,6 +1312,12 @@ class PEFTTrainer:
         labels = None
 
       
+        # a cleaner code 
+        # 1. update train state and logging eval results (on all processes)
+        # 2. compare with past best eval results and save model on all processes
+        # 3. save train state on main process
+
+
         
         if self.accelerator.is_local_main_process:
             # len(dataset2eval) might be less than len(input_host) and  len(output_host), because the latter two are flattened dataset
