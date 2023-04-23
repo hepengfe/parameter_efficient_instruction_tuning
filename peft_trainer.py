@@ -1135,6 +1135,7 @@ class PEFTTrainer:
                     
 
 
+
                 # print("pre-pad shape: ", outputs.device, outputs.shape)
                 # inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
                 # print("pad output: ", outputs.shape)
