@@ -378,17 +378,17 @@ def main():
     
     if training_args.dev_run:
         os.environ["WANDB_MODE"] = "disabled"
-        model_args.model_name_or_path="google/t5-small-lm-adapt"
+        # model_args.model_name_or_path="google/t5-small-lm-adapt"
         training_args.num_train_epochs = 5
-        training_args.eval_steps = 1000 # test save instead of eval
+        training_args.eval_steps = 10 # test save instead of eval
         training_args.save_steps = 10 
-        training_args.dev_run_data_size = 200
+        training_args.dev_run_data_size = 600
         training_args.per_device_train_batch_size = 4
         training_args.per_device_eval_batch_size = 2
         training_args.per_device_test_batch_size = 2
         # RTX 3090
-        training_args.per_device_train_batch_size = 1
-        training_args.per_device_eval_batch_size = 20
+        training_args.per_device_train_batch_size = 2
+        training_args.per_device_eval_batch_size = 35
         training_args.per_device_test_batch_size = 2
 
 

@@ -1,0 +1,5 @@
+hfai workspace push  --force --no_zip; 
+
+hfai bash scripts/debug/hfai_accelerate.sh -- --nodes 1 --no_inherit 
+
+hfai logs -f hfai_accelerate.sh 

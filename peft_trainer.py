@@ -43,6 +43,7 @@ from tqdm.auto import tqdm
 import wandb
 import shutil
 from util.compute_metrics import compute_metrics, compute_grouped_metrics
+from accelerate.utils import DistributedType
 
 # modules use two pacakges 
 ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
@@ -136,6 +137,7 @@ class PEFTTrainer:
                 project_dir="accelerate",
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
+        self.distributed_type = self
         self.potential_model_path =  os.path.join(
             self.training_args.saved_pretrained_model_path,
             self.model_name_or_path
@@ -154,6 +156,8 @@ class PEFTTrainer:
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
         self.build_dataloader()
+        
+
 
         if True or self.accelerator.use_distributed:
             self.device = self.accelerator.device
@@ -170,33 +174,14 @@ class PEFTTrainer:
                 # self.model, self.train_dataloader = self.accelerator.prepare(self.model, self.train_dataloader)
                 
                 self.model, self.optimizer, self.scheduler, self.train_dataloader= self.accelerator.prepare(self.model, self.optimizer, self.scheduler, self.train_dataloader)
-                # import pdb; pdb.set_trace()
-                # print('step in ')
-                # is_deepspeed = True
-                # if not is_deepspeed:
-                #     self.optimizer, self.scheduler= self.accelerator.prepare(self.optimizer, self.scheduler)
-                # else:
-                #     self.optimizer = self.accelerator._optimizers[0]
-                #     self.scheduler= self.accelerator._schedulers[0]
-                # import pdb; pdb.set_trace()
-                print('check type(self.optimizer), self.scheduler')
-                
 
-            # self.eval_dataloader = accelerate.data_loader.prepare_data_loader(
-            #     self.eval_dataloader, split_batches=True
-            # )
-            # self.test_dataloader = accelerate.data_loader.prepare_data_loader(
-            #     self.test_dataloader, split_batches=True
-            # )
+                
             
             self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
             # print("accelerator is used for device: ", self.device)
         else:
             self.device = "cuda"
             self.model = self.model.to(self.device)
-        # import pdb; pdb.set_trace()
-        # print('check optimizer')
-        
 
         """
         Model is loaded, now we need to set up the trainer
@@ -248,38 +233,6 @@ class PEFTTrainer:
 
             self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
             self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
-
-            # import get_scheduler
-            from transformers import get_scheduler
-
-
-            # Creates Dummy Optimizer if `optimizer` was spcified in the config file else creates Adam Optimizer
-            optimizer_cls = (
-                torch.optim.AdamW
-                if self.accelerator.state.deepspeed_plugin is None
-                or "optimizer" not in self.accelerator.state.deepspeed_plugin.deepspeed_config
-                else accelerate.utils.DummyOptim
-            )
-            # self.optimizer = optimizer_cls(optimizer_grouped_parameters, lr=self.training_args.learning_rate)
-            self.optimizer = optimizer_cls(self.model.parameters(), lr=self.training_args.learning_rate)
-
-            # Creates Dummy Scheduler if `scheduler` was spcified in the config file else creates `args.lr_scheduler_type` Scheduler
-            if (
-                self.accelerator.state.deepspeed_plugin is None
-                or "scheduler" not in self.accelerator.state.deepspeed_plugin.deepspeed_config
-            ):
-                # self.scheduler = get_scheduler(
-                #     name=args.lr_scheduler_type,
-                #     optimizer=optimizer,
-                #     num_warmup_steps=args.num_warmup_steps,
-                #     num_training_steps=args.max_train_steps,
-                # )
-                self.scheduler = get_constant_schedule(self.optimizer)
-            else:
-                self.scheduler = accelerate.utils.DummyScheduler(
-                    self.optimizer, total_num_steps=100, warmup_num_steps=10
-                )
-
 
         
         # # self.optimizer = Adafactor(
@@ -523,8 +476,8 @@ class PEFTTrainer:
 
             if len(self.test_dataset) % min_test_data_size_per_process != 0:
                 org_len = len(self.test_dataset)
-                new_size = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
-                self.test_dataset = self.test_dataset.select(range(new_size))
+                new_len = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
+                self.test_dataset = self.test_dataset.select(range(new_len))
                 logger.info(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
             
             assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
@@ -1029,6 +982,7 @@ class PEFTTrainer:
                             # parallel evaluation called by all processes
                             # but only main process results is valid
                             results = self.evaluate()
+                            assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
                             self.accelerator.log(results, step=global_step)
                             
                             eval_metric_name = "eval/"+self.training_args.eval_metric
@@ -1094,10 +1048,7 @@ class PEFTTrainer:
                             assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
                             cur_metric_val = results["eval/"+self.training_args.eval_metric]
                             logger.info(f"rougel score: {cur_metric_val}")
-                        # import pdb; pdb.set_trace()
-                        # print('check first eval results')
-                    
-               
+
                         
                         
                 logging_loss += loss.item()
@@ -1145,18 +1096,13 @@ class PEFTTrainer:
         logger.info("***** Running evaluation %s *****", mode)
         # it handles deepspeed and DDP
         model = accelerate.utils.extract_model_from_parallel(self.model)
+        # print("extract model")
         from copy import deepcopy
         if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
 
             logger.debug('check active adapter')
-            logger.debug("lora_B weight (should change): " + model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B)
-            logger.debug("query weight(should not change): " + model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight)
-            
-        self.accelerator.wait_for_everyone()
-        # if self.training_args.dev_train:
-        #      all processes should have the same lora_B weight
-        #     print("lora_B weight (should change): ", model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora.lora_B)
-
+            logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
+            logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
             
             
         
@@ -1165,18 +1111,12 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
+                print("move tensor")
                 if not self.accelerator.use_distributed:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
                 
-                # main process
-                # if self.accelerator.is_main_process:
-                #     import pdb; pdb.set_trace()
-                #     print('')
-                # self.accelerator.wait_for_everyone()
-                # print first attention block
-    
-                
+                print('generating')
                 if self.model_args.tuning_mode == "lora_peft": # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
@@ -1194,8 +1134,10 @@ class PEFTTrainer:
                     )
                     
 
+
                 # print("pre-pad shape: ", outputs.device, outputs.shape)
                 # inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
+                # print("pad output: ", outputs.shape)
                 outputs = self.accelerator.pad_across_processes(outputs, pad_index=self.tokenizer.pad_token_id, dim=1)
                 # # torch.cuda.set_device(self.accelerator.device)
                 # print("post-pad shape: ",outputs.shape)
@@ -1207,7 +1149,7 @@ class PEFTTrainer:
                 # print(outputs)
                 # print(padded_outputs)
                 # print("gathering")
-                
+                # print("gather")
                 # gather outputs across devices to main process?
                 outputs = self.accelerator.gather(outputs)
                 # inputs = self.accelerator.gather(inputs)
@@ -1234,6 +1176,7 @@ class PEFTTrainer:
                 # inputs_text = [remove_special_token(t) for t in inputs_text]
                 # input_host += inputs_text
 
+                # print("decode and remove special token")
                 outputs_text =  self.tokenizer.batch_decode(outputs)
                 outputs_text = [remove_special_token(t) for t in outputs_text]
                 output_host += outputs_text
@@ -1242,39 +1185,7 @@ class PEFTTrainer:
                 
 
                 label_host += self.tokenizer.batch_decode(labels)
-
-                # self.tokenizer.pad_token
-                # self.tokenizer.eos_token
-                # what about compute it end to end? over-engeering
-                # if self.accelerator.is_local_main_process:
-                #     import pdb; pdb.set_trace()
-                #     print('')
-                # self.accelerator.wait_for_everyone()
                 
-                # output_host += outputs
-                    # label_host += labels
-                
-                # for o, l in zip(outputs, labels):
-                #     print("------------")
-                #     print("output: ", o)
-                #     print("label: ", l)
-                # self.accelerator.wait_for_everyone()
-
-                
-            # Can we gather in the end? No, it requires tensors. If we concatenate the tensor on gpu, it will be too large
-            # 
-        # print("Num of labels: ", len(labels))
-        # print("num of output: ", len(output_host))
-
-        # validate data from data loader align with dataset
-        # if self.accelerator.is_local_main_process:
-        #     for idx, (inp_dl, inp_ds) in enumerate(zip(input_host, dataset2eval)):
-        #         print("idx: ", idx, "\n", "process id: ", self.accelerator.process_index, "\n", inp_dl, "\n\n", inp_ds["Instance"]['input'], "\n ------------------")
-
-
-        # for o in output_host:
-        #     print(o)
-        labels = None
 
         results = self.compute_metrics(
                 (output_host, label_host),
@@ -1283,7 +1194,6 @@ class PEFTTrainer:
         results_with_mode = {}
         for k in results:
             results_with_mode[f"{mode}/{k}"] = results[k]
-
         self.model.train()
 
         return results_with_mode

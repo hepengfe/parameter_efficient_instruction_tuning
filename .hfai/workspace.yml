@@ -1,0 +1,4 @@
+local: /home/murphy/pengfei_2022/workspaces/peft
+provider: oss
+remote: group_wangyizhong/wangyizhong/workspaces/peit
+workspace: peit
