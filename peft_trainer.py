@@ -321,10 +321,9 @@ class PEFTTrainer:
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
                 if os.path.exists(self.potential_model_path):
                     self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
-                    # self.model = PeftModelForSeq2SeqLM.from_pretrained(potential_model_path)
                 else:
                     self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir)
-                    # self.model = PeftModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -1111,12 +1110,11 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
-                print("move tensor")
                 if not self.accelerator.use_distributed:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
                 
-                print('generating')
+
                 if self.model_args.tuning_mode == "lora_peft": # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
@@ -1135,49 +1133,12 @@ class PEFTTrainer:
                     
 
 
-
-                # print("pre-pad shape: ", outputs.device, outputs.shape)
-                # inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
-                # print("pad output: ", outputs.shape)
-                outputs = self.accelerator.pad_across_processes(outputs, pad_index=self.tokenizer.pad_token_id, dim=1)
-                # # torch.cuda.set_device(self.accelerator.device)
-                # print("post-pad shape: ",outputs.shape)
-                
-                # outputs, labels = self.accelerator.gather_for_metrics([outputs, labels])
-                # with self.accelerator.main_process_first():
-                # print(type(outputs))
-                # self.accelerator.wait_for_everyone()
-                # print(outputs)
-                # print(padded_outputs)
-                # print("gathering")
-                # print("gather")
-                # gather outputs across devices to main process?
                 outputs = self.accelerator.gather(outputs)
-                # inputs = self.accelerator.gather(inputs)
-                # if self.accelerator.is_local_main_process:
-                #     outputs = self.accelerator.gather(outputs)
-                    
-                # else:
-                #     self.accelerator.wait_for_everyone()
-                #     outputs = self.accelerator.gather(outputs)
-                
-                
+
                 def remove_special_token(t):
                     t = t.replace(self.tokenizer.pad_token, "").replace(self.tokenizer.eos_token, "")
                     return t
-                # labels = self.accelerator.gather(labels)
-                # outputs = self.accelerator.gather(outputs)
-                
-                # print("output hosting")
-                # print("gathered shape: ", outputs.shape)
-                # since we pad tensors 
-                
-                
-                # inputs_text = self.tokenizer.batch_decode(inputs)
-                # inputs_text = [remove_special_token(t) for t in inputs_text]
-                # input_host += inputs_text
 
-                # print("decode and remove special token")
                 outputs_text =  self.tokenizer.batch_decode(outputs)
                 outputs_text = [remove_special_token(t) for t in outputs_text]
                 output_host += outputs_text

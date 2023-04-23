@@ -388,7 +388,7 @@ def main():
         training_args.per_device_test_batch_size = 2
         # RTX 3090
         training_args.per_device_train_batch_size = 2
-        training_args.per_device_eval_batch_size = 35
+        training_args.per_device_eval_batch_size = 70
         training_args.per_device_test_batch_size = 2
 
 
