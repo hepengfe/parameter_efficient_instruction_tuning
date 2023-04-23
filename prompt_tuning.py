@@ -1,5 +1,3 @@
-import haienv
-haienv.set_env('peit3')
 from transformers import HfArgumentParser
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset

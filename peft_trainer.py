@@ -76,8 +76,6 @@ class TrainingState:
         self.best_checkpoint_epoch = None
         self.best_checkpoint_step = None
         self.file_name = "training_state.json"
-        
-        
 
     def update(self, dict):
         for k, v in dict.items():
@@ -155,20 +153,7 @@ class PEFTTrainer:
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
-        
         self.build_dataloader()
-        # if self.accelerator.is_main_process:
-        # #     # maybe empty weights is an option
-            
-            
-        # #     # assert self.model_trainable_params is not None, "model_trainable_params should be counted"
-        # #     self.load_tokenzier()
-        # #     assert self.tokenizer is not None, "tokenizer should loaded"
-        #     # self.load_optimizer_n_scheduler()
-        # #     self.build_dataloader()
-        #     pass
-        # else:
-        #     self.accelerator.wait_for_everyone()
 
         if True or self.accelerator.use_distributed:
             self.device = self.accelerator.device
@@ -261,8 +246,8 @@ class PEFTTrainer:
         else:
 
 
-            # self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
-            # self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
+            self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
+            self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
 
             # import get_scheduler
             from transformers import get_scheduler
@@ -993,17 +978,6 @@ class PEFTTrainer:
         else:
             progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), initial=global_step)
         
-        
-        
-        
-        
-        # if self.accelerator.is_main_process:
-        #     self.accelerator.save_state(
-        #         os.path.join(self.training_args.output_dir,f"checkpoint-{global_step}")
-        #     )
-        #     train_state.save_to_json(os.path.join(self.training_args.output_dir,f"checkpoint-{global_step}"))
-        # else:
-        #     self.accelerator.wait_for_everyone()
             
         self.model.train()
         logging_loss = 0
@@ -1058,40 +1032,39 @@ class PEFTTrainer:
                             self.accelerator.log(results, step=global_step)
                             
                             eval_metric_name = "eval/"+self.training_args.eval_metric
-                            if self.accelerator.is_main_process:
-                                assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
-                                assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
+                            
+                            assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
+                            assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
+                            
+                            
+                            cur_metric_val = results[eval_metric_name]
+                            logger.info(f"cur_metric_val: {cur_metric_val}")
+                            
+                            if cur_metric_val > best_metric_val:
                                 
+                                print("cur_metric_val > best_metric_val, save best checkpoint")
+                                logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
+                                best_metric_val = cur_metric_val
+                                best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
                                 
-                                cur_metric_val = results[eval_metric_name]
-                                logger.info(f"cur_metric_val: {cur_metric_val}")
+                                # single or multi-processes both work
+                                self.accelerator.save_state(best_checkpoint_path)
                                 
-                                if cur_metric_val > best_metric_val:
-                                    
-                                    print("cur_metric_val > best_metric_val, save best checkpoint")
-                                    logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
-                                    best_metric_val = cur_metric_val
-                                    best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
-                                    
-                                    # single or multi-processes both work
-                                    # self.accelerator.save_state(best_checkpoint_path)
-                                    
-                                    # remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
+                                if self.accelerator.is_main_process:
+                                    remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
+                                    train_state.update(
+                                        {
+                                            "best_metric_val": best_metric_val,
+                                            "best_checkpoint_path": best_checkpoint_path,
+                                            "best_checkpoint_global_step": global_step,
+                                            "best_checkpoint_epoch": epoch,
+                                            "best_checkpoint_step": step,
+                                        }
+                                    )
+                                    train_state.save_to_json(best_checkpoint_path)
 
-                                
-                                    # train_state.update(
-                                    #     {
-                                    #         "best_metric_val": best_metric_val,
-                                    #         "best_checkpoint_path": best_checkpoint_path,
-                                    #         "best_checkpoint_global_step": global_step,
-                                    #         "best_checkpoint_epoch": epoch,
-                                    #         "best_checkpoint_step": step,
-                                    #     }
-                                    # )
-                                    # train_state.save_to_json(best_checkpoint_path)
-
-                                    # # overwrite output dir checkpoint as it's been updated
-                                    # train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
+                                    # overwrite output dir checkpoint as it's been updated
+                                    train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
                     
                            
 
@@ -1220,14 +1193,6 @@ class PEFTTrainer:
                                             # pad_token_id=self.tokenizer.pad_token_id,
                     )
                     
-                    
-                # outputs = model.generate(**inputs,
-                #                             max_new_tokens = self.data_args.max_target_length,
-                #                             # synced_gpus = True,
-                #                             synced_gpus = False,
-                #                             # pad_token_id=self.tokenizer.pad_token_id,
-                #     )
-
 
                 # print("pre-pad shape: ", outputs.device, outputs.shape)
                 # inputs = self.accelerator.pad_across_processes(inputs["input_ids"], pad_index=self.tokenizer.pad_token_id, dim=1)
@@ -1311,36 +1276,17 @@ class PEFTTrainer:
         #     print(o)
         labels = None
 
-      
-        # a cleaner code 
-        # 1. update train state and logging eval results (on all processes)
-        # 2. compare with past best eval results and save model on all processes
-        # 3. save train state on main process
-
-
-        
-        if self.accelerator.is_local_main_process:
-            # len(dataset2eval) might be less than len(input_host) and  len(output_host), because the latter two are flattened dataset
-            # assert len(input_host) == len(dataset2eval) == len(output_host), "length of input_host, dataset2eval, output_host must be the same but got {} {} {}".format(len(input_host), len(dataset2eval), len(output_host))
-            # 108, 96, 108
-            results = self.compute_metrics(
+        results = self.compute_metrics(
                 (output_host, label_host),
                 dataset2eval
             )
-            results_with_mode = {}
-            for k in results:
-                results_with_mode[f"{mode}/{k}"] = results[k]
-
-            
-            # self.accelerator.log(results_with_mode, step=global_step)
-            # eval_metric_name = "eval/"+self.training_args.eval_metric
-            # assert eval_metric_name in results_with_mode, f"eval_metric {eval_metric_name} not in evaluation results"
-            # cur_metric_val = results_with_mode[eval_metric_name]
-            # logger.info(f"cur_metric_val: {cur_metric_val}")
+        results_with_mode = {}
+        for k in results:
+            results_with_mode[f"{mode}/{k}"] = results[k]
 
         self.model.train()
 
-        return results_with_mode if self.accelerator.is_local_main_process else None
+        return results_with_mode
 
     
     def compute_metrics(self, eval_preds, eval_dataset, is_pred_logits = False, model_idx = 0, metrics = {}):
