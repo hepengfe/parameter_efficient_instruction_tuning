@@ -219,15 +219,15 @@ class PEFTTrainer:
             self.scheduler = get_constant_schedule(self.optimizer)
         else:
             # peft 
-            if self.training_args.tuning_mode != "fine_tuning":
+            if self.model_args.tuning_mode != "fine_tuning":
                 optimizer_grouped_parameters = [
                     {
                         "params": [p for p in self.model.parameters() if p.requires_grad],
-                        "lr": lr
+                        "lr": self.training_args.learning_rate
                     },
                     {
                         "params": [p for p in self.model.parameters() if not p.requires_grad],
-                        "lr": 0
+                        "lr": self.training_args.learning_rate
                     },
                 ]
                 for param in self.model.parameters():
