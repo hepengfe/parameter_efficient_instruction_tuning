@@ -14,7 +14,6 @@ cache/tmp
 build
 adapter-transformers
 model
-accelerate
 peft_trainer_callback.py
 # the following is optional for faster iterateion, comment them when we need to push model/dataset
 cache

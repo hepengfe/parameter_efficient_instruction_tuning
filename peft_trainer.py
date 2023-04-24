@@ -135,6 +135,7 @@ class PEFTTrainer:
         self.accelerator = Accelerator(
                 log_with="wandb",
                 project_dir="accelerate",
+                
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
         self.distributed_type = self
@@ -157,28 +158,17 @@ class PEFTTrainer:
         self.load_optimizer_n_scheduler()
         self.build_dataloader()
         
-
-
-        if True or self.accelerator.use_distributed:
-            self.device = self.accelerator.device
-            
-            is_deepspeed = True
-            if not is_deepspeed:
+        if self.accelerator.use_distributed:
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                # model prepare should be called with dataloader prepare in deepspeed mode
+                self.model, self.optimizer, self.scheduler, self.train_dataloader= self.accelerator.prepare(self.model, self.optimizer, self.scheduler, self.train_dataloader)
+            elif self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+                # model prepare should be called before optimizer prepare
                 self.model, self.train_dataloader = self.accelerator.prepare(self.model, self.train_dataloader)
                 self.optimizer, self.scheduler= self.accelerator.prepare(self.optimizer, self.scheduler)
             else:
-
-                # two notes:
-                # 1. model prepare should be called before optimizer prepare
-                # 2. model prepare should be called with dataloader prepare in deepspeed mode
-                # self.model, self.train_dataloader = self.accelerator.prepare(self.model, self.train_dataloader)
-                
-                self.model, self.optimizer, self.scheduler, self.train_dataloader= self.accelerator.prepare(self.model, self.optimizer, self.scheduler, self.train_dataloader)
-
-                
-            
+                raise NotImplementedError(f"self.accelerator.distributed_type {self.accelerator.distributed_type} is not implemented")
             self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
-            # print("accelerator is used for device: ", self.device)
         else:
             self.device = "cuda"
             self.model = self.model.to(self.device)
@@ -217,9 +207,7 @@ class PEFTTrainer:
             self.training_args.learning_rate = self.training_args.learning_rate * self.accelerator.num_processes
             # lr  = self.training_args.learning_rate / self.accelerator.num_processes
 
-        is_deepspeed = True
-        if not is_deepspeed:
-
+        if not self.accelerator.distributed_type == DistributedType.DEEPSPEED:
             # create AdamW optimizer
             self.optimizer = AdamW(
                 self.model.parameters(),
@@ -229,12 +217,28 @@ class PEFTTrainer:
             )
             self.scheduler = get_constant_schedule(self.optimizer)
         else:
-
-
-            self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
+            # peft 
+            if self.training_args.tuning_mode != "fine_tuning":
+                optimizer_grouped_parameters = [
+                    {
+                        "params": [p for p in self.model.parameters() if p.requires_grad],
+                        "lr": lr
+                    },
+                    {
+                        "params": [p for p in self.model.parameters() if not p.requires_grad],
+                        "lr": 0
+                    },
+                ]
+                for param in self.model.parameters():
+                    param.requires_grad = True
+                import pdb; pdb.set_trace()
+                print('check grouped parameter')
+                
+                self.optimizer = accelerate.utils.DummyOptim(optimizer_grouped_parameters)
+            else:
+                self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
             self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
 
-        
         # # self.optimizer = Adafactor(
         # #     self.model.parameters(),
         # #     # filter(lambda p: p.requires_grad, self.model.parameters()),
@@ -323,7 +327,6 @@ class PEFTTrainer:
                     self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
                 else:
                     self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir)
-
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -345,14 +348,8 @@ class PEFTTrainer:
 
 
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                print("Trainable param: ", param.numel(), name)
-            else:
-                print("Non-trainable param: ", name)
 
-        
-        
+        assert self.model_trainable_params > 0, "Model has no trainable parameters"
 
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
@@ -1119,15 +1116,15 @@ class PEFTTrainer:
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
-                                        # synced_gpus = True,
-                                        synced_gpus = False,
+                                        synced_gpus = True,
+                                        # synced_gpus = False,
                                         # pad_token_id=self.tokenizer.pad_token_id,
                     )
                 else:
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
-                                            # synced_gpus = True,
-                                            synced_gpus = False,
+                                            synced_gpus = True,
+                                            # synced_gpus = False,
                                             # pad_token_id=self.tokenizer.pad_token_id,
                     )
                     

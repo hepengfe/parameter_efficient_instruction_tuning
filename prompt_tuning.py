@@ -1,3 +1,5 @@
+import haienv
+haienv.set_env('peit3')
 from transformers import HfArgumentParser
 from transformers import T5Tokenizer, T5ForConditionalGeneration, Seq2SeqTrainer
 from datasets import load_dataset
@@ -374,22 +376,29 @@ def main():
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ['HF_DATASETS_OFFLINE']= "1"
         os.environ['HF_DATASETS_CACHE'] = "cache"
-    
+        os.environ["WANDB_MODE"] = "offline"
+        import wandb
+        wandb.login(key='X'*40)
     
     if training_args.dev_run:
+        # no adjustable variables
         os.environ["WANDB_MODE"] = "disabled"
-        # model_args.model_name_or_path="google/t5-small-lm-adapt"
-        training_args.num_train_epochs = 5
-        training_args.eval_steps = 10 # test save instead of eval
-        training_args.save_steps = 10 
         training_args.dev_run_data_size = 600
-        training_args.per_device_train_batch_size = 4
-        training_args.per_device_eval_batch_size = 2
-        training_args.per_device_test_batch_size = 2
-        # RTX 3090
-        training_args.per_device_train_batch_size = 2
-        training_args.per_device_eval_batch_size = 70
-        training_args.per_device_test_batch_size = 2
+
+        # adjustable variables
+
+        # model_args.model_name_or_path="google/t5-small-lm-adapt"
+        # training_args.num_train_epochs = 5
+        # training_args.eval_steps = 10 # test save instead of eval
+        # training_args.save_steps = 10 
+        
+        # training_args.per_device_train_batch_size = 4
+        # training_args.per_device_eval_batch_size = 2
+        # training_args.per_device_test_batch_size = 2
+        # # RTX 3090
+        # training_args.per_device_train_batch_size = 2
+        # training_args.per_device_eval_batch_size = 70
+        # training_args.per_device_test_batch_size = 2
 
 
         # model_args.tuning_mode = "fine_tuning"
@@ -416,11 +425,6 @@ def main():
         pass
         
 
-
-    if training_args.dev_offline:
-        os.environ["WANDB_MODE"] = "offline"
-        os.environ["TRANSFORMERS_OFFLINE"] = 1
-    
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
     assert training_args.logging_steps > 0, "logging_steps should be larger than 0"
