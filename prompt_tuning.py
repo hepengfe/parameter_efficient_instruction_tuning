@@ -375,8 +375,7 @@ def main():
         os.environ['HF_DATASETS_OFFLINE']= "1"
         os.environ['HF_DATASETS_CACHE'] = "cache"
         os.environ["WANDB_MODE"] = "offline"
-        import wandb
-        wandb.login(key='X'*40)
+        
     
     if training_args.dev_run:
         # no adjustable variables

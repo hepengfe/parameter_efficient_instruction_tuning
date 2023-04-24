@@ -34,6 +34,9 @@ def main():
     # subprocess.run(['alias',
     #     'ninja=/opt/hf_venvs/python3.8/202111/bin/ninja'], shell=True)
     
+    import wandb
+    wandb.login(key='X'*40)
+
     sys.path.append('/opt/hf_venvs/python3.8/202111/bin/ninja')
     sys.path.append('/opt/hf_venvs/python3.8/202111/bin')
 

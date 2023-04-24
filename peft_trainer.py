@@ -140,6 +140,9 @@ class PEFTTrainer:
         )
         self.use_distributed = self.accelerator.use_distributed
         self.distributed_type = self.accelerator.distributed_type
+        self.num_processes = self.accelerator.num_processes
+
+
         self.potential_model_path =  os.path.join(
             self.training_args.saved_pretrained_model_path,
             self.model_name_or_path
@@ -205,8 +208,8 @@ class PEFTTrainer:
     def load_optimizer_n_scheduler(self):
         # lr should be scaled linearly with the number of processes
         if self.use_distributed:
-            self.training_args.learning_rate = self.training_args.learning_rate * self.accelerator.num_processes
-            # lr  = self.training_args.learning_rate / self.accelerator.num_processes
+            self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
+            # lr  = self.training_args.learning_rate / self.num_processes
 
         if not self.distributed_type == DistributedType.DEEPSPEED:
             # create AdamW optimizer
@@ -450,8 +453,8 @@ class PEFTTrainer:
         self.load_data_collator()
         self.load_dataset()
 
-        min_eval_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_eval_batch_size
-        min_test_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_test_batch_size
+        min_eval_data_size_per_process = self.num_processes * self.training_args.per_device_eval_batch_size
+        min_test_data_size_per_process = self.num_processes * self.training_args.per_device_test_batch_size
         if self.use_distributed:
             assert len(self.eval_dataset) >= min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
             assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
@@ -462,7 +465,7 @@ class PEFTTrainer:
 
                 self.eval_dataset = self.eval_dataset.select(range(new_size))
                 new_len = len(self.eval_dataset)
-                logger.info(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.accelerator.num_processes}, truncating from {org_len} to {new_len} examples")
+                logger.info(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.num_processes}, truncating from {org_len} to {new_len} examples")
                 
 
             if len(self.test_dataset) % min_test_data_size_per_process != 0:
@@ -907,12 +910,21 @@ class PEFTTrainer:
             logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             logger.info("Ending training...")
             return
-
-        actual_train_bs_per_step = self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes
-        logger.info(f"actual_train_bs: {actual_train_bs_per_step}")
+        
+        # NOTE: gradient accumulation step is not unrelated to the computation below
+        
+        train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
+        
 
         # with gradient accumulation, per gradient update step is actually multiple steps
-        end_step = self.training_args.num_train_epochs * len(self.train_dataset) // actual_train_bs_per_step
+        end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
+        assert expected_num_train_step_per_epoch == len(self.train_dataloader) , "train_dataloader is not correctly set"
+
+        # NOTE: only loss computation will be affected by gradient accumulation
+        logger.info(f"loss training bs: {self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes}")
+
+
         if self.use_distributed:
             self.accelerator.log(self.training_args.to_dict())
 
@@ -939,6 +951,7 @@ class PEFTTrainer:
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
                 
                 if self.use_distributed:
+                    # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
                         
                         train_state.update(
@@ -952,18 +965,17 @@ class PEFTTrainer:
                         outputs = self.model(**inputs)
                         loss = outputs["loss"]
                         # log before backward
-                        # self.accelerator.log(
-                        #     {
-                        #     "training_loss": loss.item(),
-                        #     },
-                        #     step=global_step
-                        # )
+                        
                         self.accelerator.backward(loss) # it does gradient acc internally
                         
 
+                        # under accelerator.accumulate context
+                        # it steps until gradient_accumulation_steps
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
+
+                        
                         
                         cp_folder_name = f"checkpoint-{global_step}"
                         # save first as eval is prone to error
@@ -1047,15 +1059,22 @@ class PEFTTrainer:
                             cur_metric_val = results["eval/"+self.training_args.eval_metric]
                             logger.info(f"rougel score: {cur_metric_val}")
 
-                        
-                        
+
+                # log each backward step (not grad acc step)
+                global_step += 1
+                progress_bar.update(1)
 
                 logging_loss += loss.item()
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     logger.info(f"loss: {logging_loss/self.training_args.logging_steps}  global_step: {global_step}")
                     logging_loss = 0
-                global_step += 1
-                progress_bar.update(1)
+                    self.accelerator.log(
+                            {
+                            "train/loss": logging_loss/self.training_args.logging_steps,
+                            },
+                            step=global_step
+                    )
+                
 
         
         # save per epoch / at the end of training
