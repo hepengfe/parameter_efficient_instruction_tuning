@@ -399,6 +399,25 @@ def main():
         # training_args.per_device_train_batch_size = 2
         # training_args.per_device_eval_batch_size = 70
         # training_args.per_device_test_batch_size = 2
+        # model_args.model_name_or_path="google/t5-small-lm-adapt"
+        training_args.num_train_epochs = 5
+        training_args.eval_steps = 100 # test save instead of eval
+        training_args.save_steps = 100
+        training_args.dev_run_data_size = 210
+        training_args.per_device_train_batch_size = 4
+        training_args.per_device_eval_batch_size = 2
+        training_args.per_device_test_batch_size = 2
+        # RTX 3090
+
+        # adapter
+        training_args.per_device_train_batch_size = 2
+        training_args.per_device_eval_batch_size = 35
+        training_args.per_device_test_batch_size = 2
+
+        # fine_tuning
+        training_args.per_device_train_batch_size = 2
+        training_args.per_device_eval_batch_size = 35 # can be increased for offload
+        training_args.per_device_test_batch_size = 2
 
 
         # model_args.tuning_mode = "fine_tuning"

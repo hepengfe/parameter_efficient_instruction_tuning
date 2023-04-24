@@ -168,3 +168,14 @@ hfai workspace push  --force --no_zip;  HF_ENV_NAME=peit3 hfai python prompt_tun
 
 
 
+OMP_NUM_THREADS=5 python accelerate_cli.py  launch --config_file configs/accelerate/default_config_deepspeed.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train --dev_run
+
+OMP_NUM_THREADS=5 python accelerate_cli.py  launch --config_file configs/accelerate/default_config_deepspeed.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode fine_tuning  --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 3 --do_train --dev_run
+
+
+# python accelerate/src/accelerate/commands/accelerate_cli.py 
+
+
+# ddp, 1s/iteration, bs=1, 300W
+# deepspeed training, 40G RAM, 3s/iteration   bs=1, 160-210W
+# deepspeed + offload, 65G RAM, 

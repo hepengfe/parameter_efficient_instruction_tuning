@@ -253,9 +253,6 @@ class PEFTTrainer:
         # #     relative_step=False,
         # #     warmup_init=False,
         # # )
-        
-
-
             
     def load_tokenzier(self):
 
@@ -281,7 +278,6 @@ class PEFTTrainer:
         print('gpt2 requires padding to max length')
         if "gpt2" in self.model_name_or_path:
             self.padding = "max_length"
-
 
     def load_pretrained_model_for_peft(self):
         """
@@ -971,7 +967,6 @@ class PEFTTrainer:
                             
                             if self.accelerator.is_main_process:
                                 remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-                    
 
                         # eval
                         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
@@ -997,7 +992,7 @@ class PEFTTrainer:
                                 best_metric_val = cur_metric_val
                                 best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
                                 
-                                # single or multi-processes both work
+                                # only multi-processes save_state work for deepspeed
                                 self.accelerator.save_state(best_checkpoint_path)
                                 
                                 if self.accelerator.is_main_process:
@@ -1047,6 +1042,7 @@ class PEFTTrainer:
 
                         
                         
+
                 logging_loss += loss.item()
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     logger.info(f"loss: {logging_loss/self.training_args.logging_steps}  global_step: {global_step}")
@@ -1127,8 +1123,8 @@ class PEFTTrainer:
                                             # synced_gpus = False,
                                             # pad_token_id=self.tokenizer.pad_token_id,
                     )
-                    
 
+                outputs = self.accelerator.pad_across_processes(outputs, pad_index=self.tokenizer.pad_token_id, dim=1)
 
                 outputs = self.accelerator.gather(outputs)
 
@@ -1139,10 +1135,6 @@ class PEFTTrainer:
                 outputs_text =  self.tokenizer.batch_decode(outputs)
                 outputs_text = [remove_special_token(t) for t in outputs_text]
                 output_host += outputs_text
-
-                
-                
-
                 label_host += self.tokenizer.batch_decode(labels)
                 
 
