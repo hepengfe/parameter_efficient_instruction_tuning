@@ -903,24 +903,32 @@ class PEFTTrainer:
         time.sleep(self.accelerator.process_index * 3)
         print("global_step", global_step)
         print("self.training_args.num_train_epochs * len(self.train_dataloader): " , self.training_args.num_train_epochs * len(self.train_dataloader))
-        if global_step >= self.training_args.num_train_epochs * len(self.train_dataloader):
+        if global_step >= self.training_args.num_train_epochs * len(self.train_dataset):
             logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             logger.info("Ending training...")
             return
-        
+
+        actual_train_bs_per_step = self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes
+        logger.info(f"actual_train_bs: {actual_train_bs_per_step}")
+
         # with gradient accumulation, per gradient update step is actually multiple steps
-        end_step = self.training_args.num_train_epochs * len(self.train_dataloader) // self.training_args.gradient_accumulation_steps
+        end_step = self.training_args.num_train_epochs * len(self.train_dataset) // actual_train_bs_per_step
         if self.use_distributed:
             self.accelerator.log(self.training_args.to_dict())
-            
-            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process, initial=global_step)
-            logger.info("Resume training from epoch %s, step %s, global_step %s", start_epoch, start_step, global_step)
 
+            progress_bar = tqdm(
+                range(global_step, end_step),
+                disable=not self.accelerator.is_local_main_process,
+                initial=global_step
+            )
+            logger.info("Resume training from epoch %s, step %s, global_step %s", start_epoch, start_step, global_step)
 
             self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
             logger.info("skip first %s steps in train_dataloader",  start_step)
         else:
-            progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), initial=global_step)
+            progress_bar = tqdm(
+                range(global_step, end_step), initial=global_step
+            )
         
             
         self.model.train()
@@ -930,7 +938,7 @@ class PEFTTrainer:
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
                 
-                if True or self.use_distributed:
+                if self.use_distributed:
                     with self.accelerator.accumulate(self.model):
                         
                         train_state.update(
@@ -1049,8 +1057,8 @@ class PEFTTrainer:
                 global_step += 1
                 progress_bar.update(1)
 
-        # if self.use_distributed:
-        #     # TODO: will the step be a new step that skipped batches
+        
+        # save per epoch / at the end of training
         self.accelerator.save_state(
             self.training_args.output_dir
         )
