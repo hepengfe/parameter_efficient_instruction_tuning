@@ -119,7 +119,7 @@ class PEFTTrainer:
         self.data_args = data_args
         self.model_args = model_args
         self.peft_args = peft_args
-        # self.accelerator.use_distributed = use_accelerator replaced
+        # self.use_distributed = use_accelerator replaced
         
         # self.arguments = arguments
         self.model_name_or_path = self.model_args.model_name_or_path
@@ -138,7 +138,8 @@ class PEFTTrainer:
                 
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
-        self.distributed_type = self
+        self.use_distributed = self.accelerator.use_distributed
+        self.distributed_type = self.accelerator.distributed_type
         self.potential_model_path =  os.path.join(
             self.training_args.saved_pretrained_model_path,
             self.model_name_or_path
@@ -158,16 +159,16 @@ class PEFTTrainer:
         self.load_optimizer_n_scheduler()
         self.build_dataloader()
         
-        if self.accelerator.use_distributed:
-            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+        if self.use_distributed:
+            if self.distributed_type == DistributedType.DEEPSPEED:
                 # model prepare should be called with dataloader prepare in deepspeed mode
                 self.model, self.optimizer, self.scheduler, self.train_dataloader= self.accelerator.prepare(self.model, self.optimizer, self.scheduler, self.train_dataloader)
-            elif self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+            elif self.distributed_type == DistributedType.MULTI_GPU:
                 # model prepare should be called before optimizer prepare
                 self.model, self.train_dataloader = self.accelerator.prepare(self.model, self.train_dataloader)
                 self.optimizer, self.scheduler= self.accelerator.prepare(self.optimizer, self.scheduler)
             else:
-                raise NotImplementedError(f"self.accelerator.distributed_type {self.accelerator.distributed_type} is not implemented")
+                raise NotImplementedError(f"self.distributed_type {self.distributed_type} is not implemented")
             self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
         else:
             self.device = "cuda"
@@ -203,11 +204,11 @@ class PEFTTrainer:
 
     def load_optimizer_n_scheduler(self):
         # lr should be scaled linearly with the number of processes
-        if self.accelerator.use_distributed:
+        if self.use_distributed:
             self.training_args.learning_rate = self.training_args.learning_rate * self.accelerator.num_processes
             # lr  = self.training_args.learning_rate / self.accelerator.num_processes
 
-        if not self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+        if not self.distributed_type == DistributedType.DEEPSPEED:
             # create AdamW optimizer
             self.optimizer = AdamW(
                 self.model.parameters(),
@@ -453,7 +454,7 @@ class PEFTTrainer:
 
         min_eval_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_eval_batch_size
         min_test_data_size_per_process = self.accelerator.num_processes * self.training_args.per_device_test_batch_size
-        if self.accelerator.use_distributed:
+        if self.use_distributed:
             assert len(self.eval_dataset) >= min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
             assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
 
@@ -831,7 +832,7 @@ class PEFTTrainer:
 
         
         # NOTE: non-accelerator resume training is not supported
-        # if self.accelerator.use_distributed and self.accelerator.is_local_main_process:
+        # if self.use_distributed and self.accelerator.is_local_main_process:
         
         # a better way: main process check and rm corrumpted checkpoint
         # if a latest_cp is found, all processes load it
@@ -911,7 +912,7 @@ class PEFTTrainer:
         
         # with gradient accumulation, per gradient update step is actually multiple steps
         end_step = self.training_args.num_train_epochs * len(self.train_dataloader) // self.training_args.gradient_accumulation_steps
-        if self.accelerator.use_distributed:
+        if self.use_distributed:
             self.accelerator.log(self.training_args.to_dict())
             
             progress_bar = tqdm(range(global_step, self.training_args.num_train_epochs * len(self.train_dataloader)), disable=not self.accelerator.is_local_main_process, initial=global_step)
@@ -931,7 +932,7 @@ class PEFTTrainer:
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
                 
-                if True or self.accelerator.use_distributed:
+                if True or self.use_distributed:
                     with self.accelerator.accumulate(self.model):
                         
                         train_state.update(
@@ -1050,7 +1051,7 @@ class PEFTTrainer:
                 global_step += 1
                 progress_bar.update(1)
 
-        # if self.accelerator.use_distributed:
+        # if self.use_distributed:
         #     # TODO: will the step be a new step that skipped batches
         self.accelerator.save_state(
             self.training_args.output_dir
@@ -1103,7 +1104,7 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
-                if not self.accelerator.use_distributed:
+                if not self.use_distributed:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
                 
