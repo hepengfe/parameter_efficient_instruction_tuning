@@ -110,8 +110,6 @@ accelerate launch  --config_file /home/murphy/.cache/huggingface/accelerate/dist
 WANDB_MODE=disabled accelerate launch  --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu45.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train --use_accelerate
 
 
-
-
 # /home/murphy/.cache/huggingface/accelerate/dist_config_gpu23.yaml
 # gradient acc = 1 + dist
 # 3k 16.1147    it has reasonable output (might be inaccurate but answer format is correct)

@@ -232,9 +232,7 @@ class PEFTTrainer:
                 ]
                 for param in self.model.parameters():
                     param.requires_grad = True
-                import pdb; pdb.set_trace()
-                print('check grouped parameter')
-                
+
                 self.optimizer = accelerate.utils.DummyOptim(optimizer_grouped_parameters)
             else:
                 self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
