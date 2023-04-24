@@ -138,7 +138,8 @@ class PEFTTrainer:
                 
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
-        self.use_distributed = self.accelerator.use_distributed
+        # deepspeed setting can be considered as distributed
+        self.use_distributed = self.accelerator.use_distributed or self.accelerator.distributed_type == DistributedType.DEEPSPEED
         self.distributed_type = self.accelerator.distributed_type
         self.num_processes = self.accelerator.num_processes
 
@@ -206,8 +207,12 @@ class PEFTTrainer:
 
 
     def load_optimizer_n_scheduler(self):
+        trainable_params_percent = self.check_trainable_parameters()
+        logger.info(f"trainable_params: {trainable_params_percent}")
+
+
         # lr should be scaled linearly with the number of processes
-        if self.use_distributed:
+        if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
             self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
             # lr  = self.training_args.learning_rate / self.num_processes
 
@@ -235,7 +240,7 @@ class PEFTTrainer:
                 ]
                 for param in self.model.parameters():
                     param.requires_grad = True
-
+                logger.info(f"optimizer_grouped_parameters: {str(optimizer_grouped_parameters)}")
                 self.optimizer = accelerate.utils.DummyOptim(optimizer_grouped_parameters)
             else:
                 self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
@@ -914,16 +919,20 @@ class PEFTTrainer:
         # NOTE: gradient accumulation step is not unrelated to the computation below
         
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
-        
 
         # with gradient accumulation, per gradient update step is actually multiple steps
         end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
         expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
-        assert expected_num_train_step_per_epoch == len(self.train_dataloader) , "train_dataloader is not correctly set"
+        assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
 
+
+        logger.info(f"Per step batch size (no grad acc): {train_bs_per_step}")
         # NOTE: only loss computation will be affected by gradient accumulation
-        logger.info(f"loss training bs: {self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes}")
 
+        train_bs = self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes
+        logger.info(f"Training batch size (considering grad acc): {train_bs}")
+
+        # TODO: add expected train bs assertion or automatic adjusting
 
         if self.use_distributed:
             self.accelerator.log(self.training_args.to_dict())
@@ -1105,7 +1114,7 @@ class PEFTTrainer:
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
             print("load from existing state: ", best_cp_dir)
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-            self.accelerator.load_state(best_cp_dir) 
+            self.accelerator.load_state(best_cp_dir)
         self.model.eval()
         input_host = []
         output_host = []
@@ -1117,7 +1126,6 @@ class PEFTTrainer:
         # print("extract model")
         from copy import deepcopy
         if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
-
             logger.debug('check active adapter')
             logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
             logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
@@ -1540,7 +1548,7 @@ class PEFTTrainer:
             # self.model.add_adapter("lora_adapter", config=config)
             cur_trainable_params_percentage = self.load_peft_module(config)
             
-            
+            logger.info("current trainable params percentage is {}".format(cur_trainable_params_percentage))
             
             
             
