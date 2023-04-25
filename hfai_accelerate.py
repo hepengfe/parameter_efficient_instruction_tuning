@@ -1,7 +1,7 @@
 # this file is adapted for hfai run
 # do not use this file to run training tasks locally
 import haienv
-haienv.set_env('peit3')
+haienv.set_env('peit4')
 from argparse import ArgumentParser
 import os
 import sys
@@ -31,12 +31,6 @@ def main():
         parser.print_help()
         exit(1)
     
-    # subprocess.run(['alias',
-    #     'ninja=/opt/hf_venvs/python3.8/202111/bin/ninja'], shell=True)
-    
-    import wandb
-    wandb.login(key='X'*40)
-
     # pre-check deepspeed packages
     subprocess.check_output('ninja --version'.split())
 

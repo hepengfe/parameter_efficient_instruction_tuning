@@ -1,4 +1,3 @@
-wandb
 datasets
 rouge_score
 accelerator==2023.3.10.dev1

@@ -40,8 +40,6 @@ setup(
         "packaging>=20.0",
         "psutil",
         "pyyaml",
-        "torch>=1.13.0",
-        "accelerate",
     ],
     extras_require=extras,
     classifiers=[
