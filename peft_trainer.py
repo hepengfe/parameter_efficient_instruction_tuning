@@ -850,74 +850,6 @@ class PEFTTrainer:
 
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
-        # loaded = False
-
-        
-        # NOTE: non-accelerator resume training is not supported
-        # if self.use_distributed and self.accelerator.is_local_main_process:
-        
-        # a better way: main process check and rm corrumpted checkpoint
-        # if a latest_cp is found, all processes load it
-        
-        # while not loaded:
-        #     self.accelerator.wait_for_everyone()
-        #     if os.path.exists(self.training_args.output_dir):
-        #         logger.info("load from existing state")
-        #         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-                
-
-        #         # if no checkpoint, then remove the folder and re-init the tracker
-        #         if latest_cp is None and self.accelerator.is_local_main_process:
-        #             # if os.path.exists(self.training_args.output_dir):
-        #             shutil.rmtree(self.training_args.output_dir)
-        #             logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
-        #             time.sleep(3)
-
-        #         # try to load the latest checkpoint
-        #         try:
-        #             self.accelerator.load_state(latest_cp)
-        #             # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
-        #             self.accelerator.init_trackers("huggingface",
-        #                                 # config=config,
-        #                                 init_kwargs={
-        #                                     "wandb":{
-        #                                             "name": self.training_args.run_name,
-        #                                             "tags": ["tag_a", "tag_b"],
-        #                                             "dir": self.training_args.output_dir,
-        #                                             "resume": "auto"
-        #                                             # "resume": "must"
-        #                                         }
-        #                                     }
-        #                                 )
-        #             self.train_state.load_from_json(latest_cp)
-        #             loaded = True
-        #         except Exception as e:
-        #             # it can be state dict file corrupted or model checkpoint corrupted
-        #             # in any case, remove the checkpoint folder and reload the previous one
-        #             # remove the latest checkpoint
-        #             # output_dir might already has been removed
-        #             if latest_cp is not None and self.accelerator.is_local_main_process:
-        #                 logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
-        #                 shutil.rmtree(latest_cp)
-        #             # still not loaded
-        #             continue
-        #     else:
-        #         logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
-        #         os.makedirs(self.training_args.output_dir, exist_ok = True)
-        #         self.accelerator.init_trackers("huggingface",
-        #                                 # config=config,
-        #                                 init_kwargs={
-        #                                     "wandb":{
-        #                                             "name":self.training_args.run_name,
-        #                                             "tags": ["tag_a", "tag_b"],
-        #                                             "dir": self.training_args.output_dir,
-        #                                             # "resume": "auto"
-        #                                             "resume": False
-        #                                             }
-        #                                     }
-        #                                 )
-        #         loaded = True
-
         loaded = self.load_previous_run()
         if loaded:
             global_step =  self.train_state.get("global_step")
@@ -1016,19 +948,15 @@ class PEFTTrainer:
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     logger.info(f"loss: {logging_loss/self.training_args.logging_steps}  global_step: {global_step}")
                     logging_loss = 0
-                    # self.accelerator.log(
-                    #         {
-                    #         "train/loss": logging_loss/self.training_args.logging_steps,
-                    #         },
-                    #         step=global_step
-                    # )
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             },
                             step=global_step)
-                
+                best_metric_val = self.train_state.get("best_metric_val")
 
-        
+        self.log({
+            "best_metric_val": best_metric_val
+        }, step=global_step)
         # save per epoch / at the end of training
         self.accelerator.save_state(
             self.training_args.output_dir
@@ -1045,7 +973,7 @@ class PEFTTrainer:
 
 
 
-    def evaluate(self, mode="eval"):
+    def evaluate(self, mode="eval", step=None):
         """
         eval mode: evaluate use loaded current model
         test mode: evaluate best model loaded from output_dir
@@ -1054,7 +982,14 @@ class PEFTTrainer:
 
         log automatically on main process, return True if it outperform previous best checkpoint, False otherwise.
         """
-        assert mode in ["eval", "test"], "must be either eval or test  mode"
+        if mode=="test":
+            assert step is None
+        elif mode=="eval":
+            assert step is not None
+        else:
+            raise NotImplementedError(
+                "mode must be either eval or test mode"
+            )
         if mode == "eval":
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
@@ -1131,7 +1066,7 @@ class PEFTTrainer:
         for k in results:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
-
+        self.log(results_with_mode, step=step)
         return results_with_mode
 
     
@@ -1741,20 +1676,20 @@ class PEFTTrainer:
             self.save(global_step)
         
         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
-            results = self.evaluate()
-            self.log(results, step=global_step)
+            results = self.evaluate(step=global_step)
+            # self.log(results, step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
             if cur_metric_val > best_metric_val:
                 self.save(global_step, save_best_checkpoint=True)
-
-            self.log(
-                {
-                    "best_metric_val": best_metric_val,
-                    "best_checkpoint_global_step": global_step,
-                },
-                step=global_step
-            )
+                best_metric_val = cur_metric_val
+                self.log(
+                    {
+                        "best_metric_val": best_metric_val,
+                        "best_checkpoint_global_step": global_step,
+                    },
+                    step=global_step
+                )
 
 
 

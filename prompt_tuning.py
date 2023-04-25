@@ -438,6 +438,7 @@ def main():
         # training_args.eval_steps = 1
         training_args.save_steps = 1000 # no save needed actually
         training_args.per_device_eval_batch_size = 20
+        training_args.per_device_train_batch_size = 1
 
 
 
