@@ -12,7 +12,10 @@ import shutil
 # import Optional
 from typing import Optional, List
 from utils import flatten, build_peft_config_name
+import logging
+from logging import getLogger
 
+logger = getLogger(__name__)
 
 
 @dataclass
@@ -430,6 +433,8 @@ def main():
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
         os.environ["WANDB_MODE"] = "disabled"
+        eval_logger = logging.getLogger("compute_metrics.py")
+        eval_logger.setLevel(logging.DEBUG)
         # try to adjust train/eval bs during dev run
         training_args.dev_train_data_size = 20
         training_args.eval_steps = 40
@@ -550,6 +555,11 @@ def main():
     if training_args.do_test:
         trainer.evaluate("test")
     
+    logger.info(f"check the results in {training_args.output_dir}")
+    logger.info("*** Training finished ***")
+    
+    
+
     # TODO:
     # if training_args.do_search_peft_config_by_trainable_params:
     #     trainer.search_peft_config_by_trainable_params()

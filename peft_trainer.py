@@ -57,6 +57,7 @@ from accelerate.logging import get_logger
 import accelerate
 logging.basicConfig(level=logging.DEBUG)
 # logging.basicConfig(level=logging.INFO)
+
 logger = get_logger(__name__)
 
 
@@ -99,14 +100,6 @@ class TrainingState:
         return dict([(k, v) for k, v in self.__dict__.items() if not k.startswith("_")])
 
 
-    def validate(self):
-        if not isinstance(self.epoch, int):
-            raise ValueError("Epoch must be an integer.")
-        if not isinstance(self.loss, float):
-            raise ValueError("Loss must be a float.")
-        if not isinstance(self.accuracy, float):
-            raise ValueError("Accuracy must be a float.")
-
     def save_to_json(self, cp_path):
         file_path = os.path.join(cp_path, self.file_name)
         with open(file_path, "w") as f:
@@ -143,9 +136,9 @@ class PEFTTrainer:
 
         # )
         self.accelerator = Accelerator(
-                log_with="wandb",
-                project_dir="accelerate",
-                
+                log_with="tensorboard",
+                logging_dir="logs",
+                project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
         # deepspeed setting can be considered as distributed
@@ -1731,18 +1724,12 @@ class PEFTTrainer:
                 try:
                     self.accelerator.load_state(latest_cp)
                     # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
-                    self.accelerator.init_trackers("huggingface",
-                                        # config=config,
-                                        init_kwargs={
-                                            "wandb":{
-                                                    "name": self.training_args.run_name,
-                                                    "tags": ["tag_a", "tag_b"],
-                                                    "dir": self.training_args.output_dir,
-                                                    "resume": "auto"
-                                                    # "resume": "must"
-                                                }
-                                            }
-                                        )
+                    self.accelerator.init_trackers(
+                        self.training_args.run_name,
+                        config=self.train_state.to_dict(),
+                        init_kwargs={"tensorboard": {"flush_secs": 60}},
+                    )
+
                     self.train_state.load_from_json(latest_cp)
                     loaded = True
                 except Exception as e:
@@ -1758,18 +1745,11 @@ class PEFTTrainer:
             else:
                 logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
                 os.makedirs(self.training_args.output_dir, exist_ok = True)
-                self.accelerator.init_trackers("huggingface",
-                                        # config=config,
-                                        init_kwargs={
-                                            "wandb":{
-                                                    "name":self.training_args.run_name,
-                                                    "tags": ["tag_a", "tag_b"],
-                                                    "dir": self.training_args.output_dir,
-                                                    # "resume": "auto"
-                                                    "resume": False
-                                                    }
-                                            }
-                                        )
+                self.accelerator.init_trackers(
+                        self.training_args.run_name,
+                        config=self.train_state.to_dict(),
+                        init_kwargs={"tensorboard": {"flush_secs": 60}},
+                )
                 loaded = True
         return loaded
 
