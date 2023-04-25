@@ -66,24 +66,46 @@ class TrainingState:
     """
     def __init__(self, training_args, epoch=0, step =0 , global_step=0, loss=0, best_metric_val=0, eval_metric="rougeL"):
         self.training_args = training_args
-        self.epoch = epoch
-        self.step = step
-        self.global_step = global_step
-        self.loss = loss
-        self.eval_metric = eval_metric
-        self.best_metric_val = best_metric_val
-        self.best_checkpoint_path = None # for easier loading
-        self.best_checkpoint_global_step = None
-        self.best_checkpoint_epoch = None
-        self.best_checkpoint_step = None
+        # self.epoch = epoch
+        # self.step = step
+        # self.global_step = global_step
+        # self.loss = loss
+        # self.eval_metric = eval_metric
+        # self.best_metric_val = best_metric_val
+        # self.best_checkpoint_path = None # for easier loading
+        # self.best_checkpoint_global_step = None
+        # self.best_checkpoint_epoch = None
+        # self.best_checkpoint_step = None
+        self.state_dict = {
+            "epoch": 0,
+            "step": 0,
+            "global_step": 0,
+            "loss": 0,
+            "best_metric_val":0,
+            "eval_metric":0
+        }
         self.file_name = "training_state.json"
 
-    def update(self, dict):
-        for k, v in dict.items():
+    def get(self, k):
+        if k in self.state_dict:
+
+            return self.state_dict[k]
+        else:
             if hasattr(self, k):
-                setattr(self, k, v)
+                return getattr(self,k)
             else:
-                logger.warning(f"key {k} is not in TrainingState")
+                raise ValueError(
+                    f"{k} cannot be found in train state"
+                )
+            
+
+    def update(self, dict):
+        self.state_dict.update(dict)
+        # for k, v in dict.items():
+        #     if hasattr(self, k):
+        #         setattr(self, k, v)
+        #     else:
+        #         logger.warning(f"key {k} is not in TrainingState")
 
     def to_dict(self):
         return dict([(k, v) for k, v in self.__dict__.items() if not k.startswith("_")])
@@ -143,6 +165,8 @@ class PEFTTrainer:
         self.distributed_type = self.accelerator.distributed_type
         self.num_processes = self.accelerator.num_processes
 
+        self.train_state = TrainingState(self.training_args.to_dict(),
+            epoch = 0, step = 0, global_step = 0, loss = 0, best_metric_val = -1, eval_metric = self.training_args.eval_metric)
 
         self.potential_model_path =  os.path.join(
             self.training_args.saved_pretrained_model_path,
@@ -227,7 +251,7 @@ class PEFTTrainer:
             self.scheduler = get_constant_schedule(self.optimizer)
         else:
             # peft 
-            if self.model_args.tuning_mode != "fine_tuning":
+            if self.model_args.tuning_mode not in ["fine_tuning" ,"adapter_peft"]:
                 optimizer_grouped_parameters = [
                     {
                         "params": [p for p in self.model.parameters() if p.requires_grad],
@@ -829,7 +853,7 @@ class PEFTTrainer:
         start_epoch = 0
         start_step = 0
         loss = 0
-        train_state = TrainingState(self.training_args.to_dict(),
+        self.train_state = TrainingState(self.training_args.to_dict(),
             epoch = 0, step = 0, global_step = 0, loss = 0, best_metric_val = -1, eval_metric = self.training_args.eval_metric)
 
         # it has past run but might not have model checkpoint and wandb file
@@ -873,7 +897,7 @@ class PEFTTrainer:
                                                 }
                                             }
                                         )
-                    train_state.load_from_json(latest_cp)
+                    self.train_state.load_from_json(latest_cp)
                     loaded = True
                 except Exception as e:
                     # it can be state dict file corrupted or model checkpoint corrupted
@@ -904,10 +928,10 @@ class PEFTTrainer:
 
 
         if loaded:
-            global_step =  train_state.global_step
-            start_epoch = train_state.epoch
-            start_step = train_state.step
-            best_metric_val = train_state.best_metric_val
+            global_step =  self.train_state.get("global_step")
+            start_epoch = self.train_state.get("epoch")
+            start_step = self.train_state.get("step")
+            best_metric_val = self.train_state.get("best_metric_val")
         time.sleep(self.accelerator.process_index * 3)
         print("global_step", global_step)
         print("self.training_args.num_train_epochs * len(self.train_dataloader): " , self.training_args.num_train_epochs * len(self.train_dataloader))
@@ -963,7 +987,7 @@ class PEFTTrainer:
                     # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
                         
-                        train_state.update(
+                        self.train_state.update(
                             {
                                 "step": step,
                                 "epoch": epoch,
@@ -1002,8 +1026,8 @@ class PEFTTrainer:
                             # but only main process results is valid
                             results = self.evaluate()
                             assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
-                            self.accelerator.log(results, step=global_step)
-                            
+                            # self.accelerator.log(results, step=global_step)
+                            self.log(results, step=global_step)
                             eval_metric_name = "eval/"+self.training_args.eval_metric
                             
                             assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
@@ -1011,12 +1035,12 @@ class PEFTTrainer:
                             
                             
                             cur_metric_val = results[eval_metric_name]
-                            logger.info(f"cur_metric_val: {cur_metric_val}")
-                            
+                            # logger.info(f"cur_metric_val: {cur_metric_val}")
+
                             if cur_metric_val > best_metric_val:
-                                
-                                print("cur_metric_val > best_metric_val, save best checkpoint")
+
                                 logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
+
                                 best_metric_val = cur_metric_val
                                 best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
                                 
@@ -1025,19 +1049,29 @@ class PEFTTrainer:
                                 
                                 if self.accelerator.is_main_process:
                                     remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
-                                    train_state.update(
+                                    self.log(
                                         {
                                             "best_metric_val": best_metric_val,
                                             "best_checkpoint_path": best_checkpoint_path,
                                             "best_checkpoint_global_step": global_step,
                                             "best_checkpoint_epoch": epoch,
                                             "best_checkpoint_step": step,
-                                        }
+                                        },
+                                        step=global_step
                                     )
-                                    train_state.save_to_json(best_checkpoint_path)
+                                    # self.train_state.update(
+                                    #     {
+                                    #         "best_metric_val": best_metric_val,
+                                    #         "best_checkpoint_path": best_checkpoint_path,
+                                    #         "best_checkpoint_global_step": global_step,
+                                    #         "best_checkpoint_epoch": epoch,
+                                    #         "best_checkpoint_step": step,
+                                    #     }
+                                    # )
+                                    self.train_state.save_to_json(best_checkpoint_path)
 
                                     # overwrite output dir checkpoint as it's been updated
-                                    train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
+                                    self.train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
                     
                            
 
@@ -1066,8 +1100,13 @@ class PEFTTrainer:
                         if self.accelerator.is_main_process:
                             assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
                             cur_metric_val = results["eval/"+self.training_args.eval_metric]
-                            logger.info(f"rougel score: {cur_metric_val}")
-
+                            # logger.info(f"rougel score: {cur_metric_val}")
+                            self.log(
+                                {
+                                   f"eval/{self.training_args.eval_metric}": cur_metric_val,
+                                },
+                                step=global_step
+                            )
 
                 # log each backward step (not grad acc step)
                 global_step += 1
@@ -1077,12 +1116,16 @@ class PEFTTrainer:
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     logger.info(f"loss: {logging_loss/self.training_args.logging_steps}  global_step: {global_step}")
                     logging_loss = 0
-                    self.accelerator.log(
-                            {
+                    # self.accelerator.log(
+                    #         {
+                    #         "train/loss": logging_loss/self.training_args.logging_steps,
+                    #         },
+                    #         step=global_step
+                    # )
+                    self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             },
-                            step=global_step
-                    )
+                            step=global_step)
                 
 
         
@@ -1091,6 +1134,14 @@ class PEFTTrainer:
             self.training_args.output_dir
         )
         self.accelerator.end_training()
+
+
+    def log(self, d, step):
+        logger.info(f"logging: {d}")
+        self.accelerator.log(d,
+                            step=step
+        )
+        self.train_state.update(d)
 
 
 
@@ -1146,14 +1197,14 @@ class PEFTTrainer:
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
-                                        synced_gpus = True,
+                                        synced_gpus = True if self.use_distributed else False,
                                         # synced_gpus = False,
                                         # pad_token_id=self.tokenizer.pad_token_id,
                     )
                 else:
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
-                                            synced_gpus = True,
+                                            synced_gpus = True if self.use_distributed else False,
                                             # synced_gpus = False,
                                             # pad_token_id=self.tokenizer.pad_token_id,
                     )

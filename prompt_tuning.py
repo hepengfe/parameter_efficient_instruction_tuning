@@ -412,11 +412,16 @@ def main():
         training_args.per_device_test_batch_size = 2
 
         # fine_tuning
-        training_args.per_device_train_batch_size = 2
+        training_args.per_device_train_batch_size = 1
         training_args.per_device_eval_batch_size = 35 # can be increased for offload
         training_args.per_device_test_batch_size = 2
 
 
+        # debug logging
+        training_args.save_steps = 10
+        training_args.eval_steps = 10
+        training_args.per_device_eval_batch_size = 1
+        training_args.dev_run_data_size = 4
         # model_args.tuning_mode = "fine_tuning"
     
     
