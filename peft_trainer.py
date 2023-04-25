@@ -64,31 +64,19 @@ class TrainingState:
     """
     Track current training state.
     """
-    def __init__(self, training_args, epoch=0, step =0 , global_step=0, loss=0, best_metric_val=0, eval_metric="rougeL"):
+    def __init__(self, training_args, global_step=0, loss=0, best_metric_val=0, eval_metric="rougeL"):
         self.training_args = training_args
-        # self.epoch = epoch
-        # self.step = step
-        # self.global_step = global_step
-        # self.loss = loss
-        # self.eval_metric = eval_metric
-        # self.best_metric_val = best_metric_val
-        # self.best_checkpoint_path = None # for easier loading
-        # self.best_checkpoint_global_step = None
-        # self.best_checkpoint_epoch = None
-        # self.best_checkpoint_step = None
+
         self.state_dict = {
-            "epoch": 0,
-            "step": 0,
-            "global_step": 0,
-            "loss": 0,
-            "best_metric_val":0,
-            "eval_metric":0
+            "global_step": global_step,
+            "loss": loss,
+            "best_metric_val":best_metric_val,
+            "eval_metric":eval_metric
         }
         self.file_name = "training_state.json"
 
     def get(self, k):
         if k in self.state_dict:
-
             return self.state_dict[k]
         else:
             if hasattr(self, k):
@@ -165,8 +153,10 @@ class PEFTTrainer:
         self.distributed_type = self.accelerator.distributed_type
         self.num_processes = self.accelerator.num_processes
 
-        self.train_state = TrainingState(self.training_args.to_dict(),
-            epoch = 0, step = 0, global_step = 0, loss = 0, best_metric_val = -1, eval_metric = self.training_args.eval_metric)
+        self.train_state = TrainingState(
+            self.training_args.to_dict(), 
+            eval_metric = self.training_args.eval_metric
+        )
 
         self.potential_model_path =  os.path.join(
             self.training_args.saved_pretrained_model_path,
@@ -853,12 +843,14 @@ class PEFTTrainer:
         start_epoch = 0
         start_step = 0
         loss = 0
-        self.train_state = TrainingState(self.training_args.to_dict(),
-            epoch = 0, step = 0, global_step = 0, loss = 0, best_metric_val = -1, eval_metric = self.training_args.eval_metric)
+        self.train_state = TrainingState(
+            self.training_args.to_dict(),
+            eval_metric = self.training_args.eval_metric
+        )
 
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
-        loaded = False
+        # loaded = False
 
         
         # NOTE: non-accelerator resume training is not supported
@@ -867,70 +859,68 @@ class PEFTTrainer:
         # a better way: main process check and rm corrumpted checkpoint
         # if a latest_cp is found, all processes load it
         
-        while not loaded:
-            self.accelerator.wait_for_everyone()
-            if os.path.exists(self.training_args.output_dir):
-                logger.info("load from existing state")
-                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+        # while not loaded:
+        #     self.accelerator.wait_for_everyone()
+        #     if os.path.exists(self.training_args.output_dir):
+        #         logger.info("load from existing state")
+        #         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                 
 
-                # if no checkpoint, then remove the folder and re-init the tracker
-                if latest_cp is None and self.accelerator.is_local_main_process:
-                    # if os.path.exists(self.training_args.output_dir):
-                    shutil.rmtree(self.training_args.output_dir)
-                    logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
-                    time.sleep(3)
+        #         # if no checkpoint, then remove the folder and re-init the tracker
+        #         if latest_cp is None and self.accelerator.is_local_main_process:
+        #             # if os.path.exists(self.training_args.output_dir):
+        #             shutil.rmtree(self.training_args.output_dir)
+        #             logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+        #             time.sleep(3)
 
-                # try to load the latest checkpoint
-                try:
-                    self.accelerator.load_state(latest_cp)
-                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
-                    self.accelerator.init_trackers("huggingface",
-                                        # config=config,
-                                        init_kwargs={
-                                            "wandb":{
-                                                    "name": self.training_args.run_name,
-                                                    "tags": ["tag_a", "tag_b"],
-                                                    "dir": self.training_args.output_dir,
-                                                    "resume": "auto"
-                                                    # "resume": "must"
-                                                }
-                                            }
-                                        )
-                    self.train_state.load_from_json(latest_cp)
-                    loaded = True
-                except Exception as e:
-                    # it can be state dict file corrupted or model checkpoint corrupted
-                    # in any case, remove the checkpoint folder and reload the previous one
-                    # remove the latest checkpoint
-                    # output_dir might already has been removed
-                    if latest_cp is not None and self.accelerator.is_local_main_process:
-                        logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
-                        shutil.rmtree(latest_cp)
-                    # still not loaded
-                    continue
-            else:
-                logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
-                os.makedirs(self.training_args.output_dir, exist_ok = True)
-                self.accelerator.init_trackers("huggingface",
-                                        # config=config,
-                                        init_kwargs={
-                                            "wandb":{
-                                                    "name":self.training_args.run_name,
-                                                    "tags": ["tag_a", "tag_b"],
-                                                    "dir": self.training_args.output_dir,
-                                                    # "resume": "auto"
-                                                    "resume": False
-                                                    }
-                                            }
-                                        )
-                loaded = True
+        #         # try to load the latest checkpoint
+        #         try:
+        #             self.accelerator.load_state(latest_cp)
+        #             # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
+        #             self.accelerator.init_trackers("huggingface",
+        #                                 # config=config,
+        #                                 init_kwargs={
+        #                                     "wandb":{
+        #                                             "name": self.training_args.run_name,
+        #                                             "tags": ["tag_a", "tag_b"],
+        #                                             "dir": self.training_args.output_dir,
+        #                                             "resume": "auto"
+        #                                             # "resume": "must"
+        #                                         }
+        #                                     }
+        #                                 )
+        #             self.train_state.load_from_json(latest_cp)
+        #             loaded = True
+        #         except Exception as e:
+        #             # it can be state dict file corrupted or model checkpoint corrupted
+        #             # in any case, remove the checkpoint folder and reload the previous one
+        #             # remove the latest checkpoint
+        #             # output_dir might already has been removed
+        #             if latest_cp is not None and self.accelerator.is_local_main_process:
+        #                 logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
+        #                 shutil.rmtree(latest_cp)
+        #             # still not loaded
+        #             continue
+        #     else:
+        #         logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
+        #         os.makedirs(self.training_args.output_dir, exist_ok = True)
+        #         self.accelerator.init_trackers("huggingface",
+        #                                 # config=config,
+        #                                 init_kwargs={
+        #                                     "wandb":{
+        #                                             "name":self.training_args.run_name,
+        #                                             "tags": ["tag_a", "tag_b"],
+        #                                             "dir": self.training_args.output_dir,
+        #                                             # "resume": "auto"
+        #                                             "resume": False
+        #                                             }
+        #                                     }
+        #                                 )
+        #         loaded = True
 
-
+        loaded = self.load_previous_run()
         if loaded:
             global_step =  self.train_state.get("global_step")
-            start_epoch = self.train_state.get("epoch")
-            start_step = self.train_state.get("step")
             best_metric_val = self.train_state.get("best_metric_val")
         time.sleep(self.accelerator.process_index * 3)
         print("global_step", global_step)
@@ -1762,8 +1752,6 @@ class PEFTTrainer:
                 {
                     "best_metric_val": best_metric_val,
                     "best_checkpoint_global_step": global_step,
-                    "best_checkpoint_epoch": epoch,
-                    "best_checkpoint_step": step,
                 },
                 step=global_step
             )
@@ -1788,8 +1776,67 @@ class PEFTTrainer:
             self.train_state.save_to_json(checkpoint_folder_path)
 
 
-    
+    def load_previous_run(self):
+        loaded = False
+        while not loaded:
+            self.accelerator.wait_for_everyone()
+            if os.path.exists(self.training_args.output_dir):
+                logger.info("load from existing state")
+                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+                
 
+                # if no checkpoint, then remove the folder and re-init the tracker
+                if latest_cp is None and self.accelerator.is_local_main_process:
+                    # if os.path.exists(self.training_args.output_dir):
+                    shutil.rmtree(self.training_args.output_dir)
+                    logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+                    time.sleep(3)
+
+                # try to load the latest checkpoint
+                try:
+                    self.accelerator.load_state(latest_cp)
+                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
+                    self.accelerator.init_trackers("huggingface",
+                                        # config=config,
+                                        init_kwargs={
+                                            "wandb":{
+                                                    "name": self.training_args.run_name,
+                                                    "tags": ["tag_a", "tag_b"],
+                                                    "dir": self.training_args.output_dir,
+                                                    "resume": "auto"
+                                                    # "resume": "must"
+                                                }
+                                            }
+                                        )
+                    self.train_state.load_from_json(latest_cp)
+                    loaded = True
+                except Exception as e:
+                    # it can be state dict file corrupted or model checkpoint corrupted
+                    # in any case, remove the checkpoint folder and reload the previous one
+                    # remove the latest checkpoint
+                    # output_dir might already has been removed
+                    if latest_cp is not None and self.accelerator.is_local_main_process:
+                        logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
+                        shutil.rmtree(latest_cp)
+                    # still not loaded
+                    continue
+            else:
+                logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
+                os.makedirs(self.training_args.output_dir, exist_ok = True)
+                self.accelerator.init_trackers("huggingface",
+                                        # config=config,
+                                        init_kwargs={
+                                            "wandb":{
+                                                    "name":self.training_args.run_name,
+                                                    "tags": ["tag_a", "tag_b"],
+                                                    "dir": self.training_args.output_dir,
+                                                    # "resume": "auto"
+                                                    "resume": False
+                                                    }
+                                            }
+                                        )
+                loaded = True
+        return loaded
 
 
 class NoOpContextManager:
