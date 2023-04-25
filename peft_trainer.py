@@ -1726,7 +1726,7 @@ class PEFTTrainer:
                     # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
                     self.accelerator.init_trackers(
                         self.training_args.run_name,
-                        config=self.train_state.to_dict(),
+                        # config=self.train_state.to_dict(),
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                     )
 
@@ -1747,7 +1747,7 @@ class PEFTTrainer:
                 os.makedirs(self.training_args.output_dir, exist_ok = True)
                 self.accelerator.init_trackers(
                         self.training_args.run_name,
-                        config=self.train_state.to_dict(),
+                        # config=self.train_state.to_dict(),
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                 )
                 loaded = True
