@@ -1001,88 +1001,13 @@ class PEFTTrainer:
                         
                         self.accelerator.backward(loss) # it does gradient acc internally
                         
-
                         # under accelerator.accumulate context
                         # it steps until gradient_accumulation_steps
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
+                        self.save_and_eval(global_step, best_metric_val)
 
-                        
-                        
-                        cp_folder_name = f"checkpoint-{global_step}"
-                        # save first as eval is prone to error
-                        if (global_step != 0 or self.training_args.dev_run) and global_step  % self.training_args.save_steps == 0:
-                            self.accelerator.save_state(
-                                os.path.join(self.training_args.output_dir, cp_folder_name)
-                            )
-                            
-                            if self.accelerator.is_main_process:
-                                remove_old_checkpoints(self.training_args.output_dir, self.training_args.checkpoint_save_total_limit)
-
-                        # eval
-                        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
-                            # parallel evaluation called by all processes
-                            # but only main process results is valid
-                            results = self.evaluate()
-                            assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
-                            # self.accelerator.log(results, step=global_step)
-                            self.log(results, step=global_step)
-                            eval_metric_name = "eval/"+self.training_args.eval_metric
-                            
-                            assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
-                            assert eval_metric_name in results, f"eval_metric {eval_metric_name} not in evaluation results"
-                            
-                            
-                            cur_metric_val = results[eval_metric_name]
-                            # logger.info(f"cur_metric_val: {cur_metric_val}")
-
-                            if cur_metric_val > best_metric_val:
-
-                                logger.info(f"cur_metric_val: {cur_metric_val} > best_metric_val: {best_metric_val}, save best checkpoint")
-
-                                best_metric_val = cur_metric_val
-                                best_checkpoint_path = os.path.join(self.training_args.output_dir, "best_checkpoint",cp_folder_name)
-                                
-                                # only multi-processes save_state work for deepspeed
-                                self.accelerator.save_state(best_checkpoint_path)
-                                
-                                if self.accelerator.is_main_process:
-                                    remove_old_checkpoints(os.path.join(self.training_args.output_dir, "best_checkpoint"), self.training_args.best_checkpoint_save_total_limit)
-                                    self.log(
-                                        {
-                                            "best_metric_val": best_metric_val,
-                                            "best_checkpoint_path": best_checkpoint_path,
-                                            "best_checkpoint_global_step": global_step,
-                                            "best_checkpoint_epoch": epoch,
-                                            "best_checkpoint_step": step,
-                                        },
-                                        step=global_step
-                                    )
-                                    # self.train_state.update(
-                                    #     {
-                                    #         "best_metric_val": best_metric_val,
-                                    #         "best_checkpoint_path": best_checkpoint_path,
-                                    #         "best_checkpoint_global_step": global_step,
-                                    #         "best_checkpoint_epoch": epoch,
-                                    #         "best_checkpoint_step": step,
-                                    #     }
-                                    # )
-                                    self.train_state.save_to_json(best_checkpoint_path)
-
-                                    # overwrite output dir checkpoint as it's been updated
-                                    self.train_state.save_to_json(os.path.join(self.training_args.output_dir, cp_folder_name))
-                    
-                           
-
-                        # wait for main process to finish evaluation?
-                        # self.accelerator.wait_for_everyone()
-                        # TODO: suspend signal
-                        # wandb.mark_preempting()
-                        
-                        # if accelerator.sync_gradients:
-                        #     current_step += 1
-                        #     accelerator.print(torch.mean(avg_loss / total_accumulation_steps))
                 else:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
@@ -1091,22 +1016,7 @@ class PEFTTrainer:
                     loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
-                    
-                    if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
-                        
-                    # if global_step % self.training_args.eval_steps == 0:
-                        results = self.evaluate()
-                        
-                        if self.accelerator.is_main_process:
-                            assert results is not None, "evaluation results is None, please check if results gathering is done in single process"
-                            cur_metric_val = results["eval/"+self.training_args.eval_metric]
-                            # logger.info(f"rougel score: {cur_metric_val}")
-                            self.log(
-                                {
-                                   f"eval/{self.training_args.eval_metric}": cur_metric_val,
-                                },
-                                step=global_step
-                            )
+                    self.save_and_eval(global_step, best_metric_val)
 
                 # log each backward step (not grad acc step)
                 global_step += 1
@@ -1832,6 +1742,56 @@ class PEFTTrainer:
         
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
+
+    def save_and_eval(self, global_step, best_metric_val):
+        """
+        if global step satisfies condition, save and/or evaluate.
+        """
+        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+            self.save(global_step)
+        
+        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+            results = self.evaluate()
+            self.log(results, step=global_step)
+            eval_metric_name = "eval/"+self.training_args.eval_metric
+            cur_metric_val = results[eval_metric_name]
+            if cur_metric_val > best_metric_val:
+                self.save(global_step, save_best_checkpoint=True)
+
+            self.log(
+                {
+                    "best_metric_val": best_metric_val,
+                    "best_checkpoint_global_step": global_step,
+                    "best_checkpoint_epoch": epoch,
+                    "best_checkpoint_step": step,
+                },
+                step=global_step
+            )
+
+
+
+    def save(self, global_step, save_best_checkpoint = False):
+        """
+        cp_folder_path could be best checkpoint folder path or checkpoint folder path.
+        """
+        cp_folder_name = f"checkpoint-{global_step}"
+        if save_best_checkpoint:
+            checkpoint_dir_path = os.path.join(self.training_args.output_dir, "best_checkpoint")
+            checkpoint_folder_path = os.path.join(checkpoint_dir_path, cp_folder_name)
+        else:
+            checkpoint_dir_path = os.path.join(self.training_args.output_dir)
+            checkpoint_folder_path = os.path.join(checkpoint_dir_path, cp_folder_name)
+        self.accelerator.save_state(checkpoint_folder_path)
+
+        if self.accelerator.is_main_process:
+            remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
+            self.train_state.save_to_json(checkpoint_folder_path)
+
+
+    
+
+
+
 class NoOpContextManager:
     def __enter__(self):
         pass
