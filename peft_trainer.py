@@ -842,35 +842,35 @@ class PEFTTrainer:
         )
 
 
-        if self.accelerator.is_main_process:
-            # it has past run but might not have model checkpoint and wandb file
-            # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
-            loaded = self.load_previous_run()
-            if loaded:
-                global_step =  self.train_state.get("global_step")
-                best_metric_val = self.train_state.get("best_metric_val")
 
-            
-            # NOTE: gradient accumulation step is not unrelated to the computation below
-            
-            train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
+        # it has past run but might not have model checkpoint and wandb file
+        # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
+        loaded = self.load_previous_run()
+        if loaded:
+            global_step =  self.train_state.get("global_step")
+            best_metric_val = self.train_state.get("best_metric_val")
 
-            # with gradient accumulation, per gradient update step is actually multiple steps
-            end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
-            expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
-            assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
+        
+        # NOTE: gradient accumulation step is not unrelated to the computation below
+        
+        train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
 
-            if global_step >= end_step:
-                logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
-                logger.info("Ending training...")
-                return
+        # with gradient accumulation, per gradient update step is actually multiple steps
+        end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
+        assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
+
+        if global_step >= end_step:
+            logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
+            logger.info("Ending training...")
+            return
 
 
-            logger.info(f"Per step batch size (no grad acc): {train_bs_per_step}")
-            # NOTE: only loss computation will be affected by gradient accumulation
+        logger.info(f"Per step batch size (no grad acc): {train_bs_per_step}")
+        # NOTE: only loss computation will be affected by gradient accumulation
 
-            train_bs = self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes
-            logger.info(f"Training batch size (considering grad acc): {train_bs}")
+        train_bs = self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes
+        logger.info(f"Training batch size (considering grad acc): {train_bs}")
 
         # TODO: add expected train bs assertion or automatic adjusting
 
