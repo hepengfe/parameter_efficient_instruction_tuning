@@ -223,6 +223,7 @@ class PEFTTrainer:
             self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
             # lr  = self.training_args.learning_rate / self.num_processes
             logger.info(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
+
         if not self.distributed_type == DistributedType.DEEPSPEED:
             # create AdamW optimizer
             self.optimizer = AdamW(
@@ -259,7 +260,6 @@ class PEFTTrainer:
                 )
 
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
-            
             logger.info(f"Learning rate(lr) is set to {self.optimizer.lr}", )
             self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
 
