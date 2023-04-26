@@ -248,9 +248,18 @@ class PEFTTrainer:
                 for param in self.model.parameters():
                     param.requires_grad = True
                 logger.info(f"optimizer_grouped_parameters: {str(optimizer_grouped_parameters)}")
-                self.optimizer = accelerate.utils.DummyOptim(optimizer_grouped_parameters)
+                self.optimizer = accelerate.utils.DummyOptim(
+                    optimizer_grouped_parameters,
+                    lr=self.training_args.learning_rate   
+                )
             else:
-                self.optimizer = accelerate.utils.DummyOptim(self.model.parameters())
+                self.optimizer = accelerate.utils.DummyOptim(
+                    self.model.parameters(),
+                    lr=self.training_args.learning_rate
+                )
+
+            assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
+            logger.info("Learning rate(lr) is set to ", self.optimizer.lr)
             self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
 
         # # self.optimizer = Adafactor(
