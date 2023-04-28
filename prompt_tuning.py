@@ -44,11 +44,6 @@ class PeftArguments:
     """
     Arguments pertaining to peft
     """
-    # general peft
-    trainable_params_percentage: float = field(
-        default=None,
-        metadata={"help": "percentage of trainable parameters of peft methods w.r.t to the original pre-trained model"}
-    )
 
     # lora
     lora_r: int = field(
@@ -74,7 +69,7 @@ class PeftArguments:
     )
 
     # prompt tuning
-    num_soft_tokens: int = field(
+    prompt_len: int = field(
         default=10,
         metadata={"help": "number of soft tokens"}
     )
@@ -367,6 +362,16 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to run on the cluster." },
     )
     
+    do_search_hyperparams: bool = field(
+        default=False,
+        metadata={ "help": "Whether to search hyperparameters." },
+    )
+    
+    trainable_params_percentage: str = field(
+        default="0.01",
+        metadata={ "help": "The percentage of trainable parameters." },
+    )
+    
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -446,6 +451,11 @@ def main():
         training_args.per_device_train_batch_size = 1
 
 
+    if training_args.do_search_hyperparams:
+        training_args.trainable_params_percentage = sorted([float(v) for v in training_args.trainable_params_percentage.split(",")])
+        os.environ["WANDB_MODE"] = "disabled"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "" # no gpu needed for search
+
 
     if training_args.dev_eval:
         # dev issues such as empty prediction (although it's mostly likely a generation issue)
@@ -455,16 +465,18 @@ def main():
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
     assert training_args.logging_steps > 0, "logging_steps should be larger than 0"
+    # search mode -> no do_train and do_eval
+    if training_args.do_search_hyperparams:
+        assert not training_args.do_train, "do_train should be false for search mode"
+        assert not training_args.do_test, "do_test should be false for search mode"
+        
+    # tranable params percentage list
     
     
     if data_args.dataset_name == "ni":
         assert training_args.predict_with_generate, "predict_with_generate is required for ni"
     
-    if peft_args.trainable_params_percentage is None:
-        if model_args.tuning_mode == "lora":
-            assert peft_args.lora_r is not None, "lora_r is required for lora if trainable_params_percentage is not specified"
-        if model_args.tuning_mode == "prefix_tuning":
-            assert peft_args.prefix_len is not None, "prefix_len is required for prefix_tuning"
+
 
     if model_args.tuning_mode == "layer_tuning":
         assert peft_args.layer_name is not None, "layer_name should be specified for layer tuning mode"
@@ -488,7 +500,7 @@ def main():
         result = re.findall(r'\d+', data_args.data_dir)
         if len(result) != 0:
             num_validation_tasks = int(result[-1])
-    assert training_args.do_train or training_args.do_test, "At least one of `do_train` or `do_test` must be True."
+    assert training_args.do_train or training_args.do_test or training_args.do_search_hyperparams, "At least one of `do_train` or `do_test` must be True."
     assert not (training_args.do_train and training_args.do_test), "do_train and do_test cannot be both True"
 
 
@@ -549,14 +561,19 @@ def main():
     if training_args.do_train:
         trainer.train() # train from scratch
         trainer.evaluate("test")
-
+        logger.info(f"check the results in {training_args.output_dir}")
+        logger.info("*** Training finished ***")
 
 
     if training_args.do_test:
         trainer.evaluate("test")
+        logger.info("*** Test finished ***")
     
-    logger.info(f"check the results in {training_args.output_dir}")
-    logger.info("*** Training finished ***")
+    if training_args.do_search_hyperparams:
+        
+        trainer.search_for_hyperperameters()
+        logger.info("*** Hyperparameter search finished ***")
+
     
     
 

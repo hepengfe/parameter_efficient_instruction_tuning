@@ -10,6 +10,8 @@ import os
 
 
 model_names = ("google/t5-small-lm-adapt", "google/t5-large-lm-adapt", "google/t5-xl-lm-adapt")
+
+model_names = ("google/t5-xl-lm-adapt",)
 # cache_dir = "cache/model"
 cache_dir="cache"
 saved_pretrained_dir = os.path.join(cache_dir, "saved_pretrained")
@@ -26,14 +28,14 @@ for m in model_names:
     # priority: 1. potential_model_path 2. cache_dir 3. download from huggingface
     
 
-    # model = AutoModelForSeq2SeqLM.from_pretrained(m, cache_dir=cache_dir)
+    model = AutoModelForSeq2SeqLM.from_pretrained(m, cache_dir=cache_dir)
     tokenizer =  AutoTokenizer.from_pretrained(m,use_fast=True,
                 return_tensors="pt")
 
 
     # AutoTokenizer.from_pretrained(os.path.join("cache/saved_pretrained", "gpt2"), max_length=1e5)
 
-    # model.save_pretrained(f"model/{m}")
+    model.save_pretrained(f"model/{m}")
     tokenizer.save_pretrained(os.path.join(saved_pretrained_dir,m))
 
 

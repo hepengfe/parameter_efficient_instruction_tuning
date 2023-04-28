@@ -45,10 +45,6 @@ def build_peft_config_name(model_args, peft_args, training_args):
     peft_config_name += "_accelerator_" + str(training_args.use_accelerate)
     
     
-    
-    # trainable_params_percentage is None, use preset config 
-    if peft_args.trainable_params_percentage is not None:
-        peft_config_name += "_trainable_params_percentage_" + str(peft_args.trainable_params_percentage)
     return peft_config_name
 
 def flatten(s, source_char="/", flatten_char="_"):
