@@ -38,6 +38,7 @@ class ModelArguments:
     )
 
     
+    
 
 @dataclass
 class PeftArguments:
@@ -103,6 +104,9 @@ class PeftArguments:
         metadata={"help": "device id of the module to be tuned"}
     )
 
+    trainable_params_percentage: Optional[float] = field(
+        default=None,
+    )
     
     
     
@@ -367,10 +371,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to search hyperparameters." },
     )
     
-    trainable_params_percentage: str = field(
-        default="0.01",
-        metadata={ "help": "The percentage of trainable parameters." },
-    )
+
     
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
@@ -452,7 +453,7 @@ def main():
 
 
     if training_args.do_search_hyperparams:
-        training_args.trainable_params_percentage = sorted([float(v) for v in training_args.trainable_params_percentage.split(",")])
+        peft_args.trainable_params_percentage = sorted([float(v) for v in peft_args.trainable_params_percentage.split(",")])
         os.environ["WANDB_MODE"] = "disabled"
         os.environ["CUDA_VISIBLE_DEVICES"] = "" # no gpu needed for search
 
