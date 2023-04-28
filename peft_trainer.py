@@ -225,7 +225,7 @@ class PEFTTrainer:
 
         # lr should be scaled linearly with the number of processes
         if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
-            self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
+            # self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
             # lr  = self.training_args.learning_rate / self.num_processes
             logger.info(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
 
@@ -253,7 +253,7 @@ class PEFTTrainer:
                 ]
                 for param in self.model.parameters():
                     param.requires_grad = True
-                logger.info(f"optimizer_grouped_parameters: {str(optimizer_grouped_parameters)}")
+                logger.debug(f"optimizer_grouped_parameters: {str(optimizer_grouped_parameters)}")
                 self.optimizer = accelerate.utils.DummyOptim(
                     optimizer_grouped_parameters,
                     lr=self.training_args.learning_rate   

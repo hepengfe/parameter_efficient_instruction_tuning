@@ -1,7 +1,9 @@
 # this file is adapted for hfai run
 # do not use this file to run training tasks locally
 import haienv
-haienv.set_env('peit4')
+# haienv.set_env('202111') # base env?
+# haienv.set_env('peit4')
+haienv.set_env('peit3')
 from argparse import ArgumentParser
 import os
 import sys
@@ -30,9 +32,9 @@ def main():
     if not hasattr(args, "func"):
         parser.print_help()
         exit(1)
-    
+    print("sys path: ", sys.path)
     # pre-check deepspeed packages
-    subprocess.check_output('ninja --version'.split())
+    # subprocess.check_output('ninja --version'.split())
 
     hfai_proj_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/"
 
@@ -45,3 +47,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# submitted
+# ['.', '/weka-jd/prod/marsV2/hf_venvs/hf_env', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python3.8/site-packages', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python3.8', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python3.8/lib-dynload', '/weka-jd/prod/marsV2/hf_venvs/python3.8/202207/lib/python3.8/site-packages', '/weka-jd/prod/marsV2/hf_venvs/haienv']
+
+# /weka-jd/prod/marsV2/hf_venvs/python3.8/202207/bin/ninja
+
+
+# peit4 container
+# ['', '/ceph-jd/pub/jupyter/wangyizhong/home', '/weka-jd/prod/marsV2/hf_venvs/hf_env', '/opt/alpha-lib-linux/build/pyarmor_3', '/opt/alpha-lib-linux/build/out/lib', '/opt/alpha-lib-linux/home', '/opt/alpha-lib-linux/home/share', '/opt/alpha-lib-linux/home/share/store_tools', '/opt/apex', '/opt/alpha_packs', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python38.zip', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python3.8', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python3.8/lib-dynload', '/hf_shared/hfai_envs/wangyizhong/peit4_0/lib/python3.8/site-packages', '/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/adapter-transformers/src', '/weka-jd/prod/platform_team/system_env/py38-202207_0/lib/python3.8/site-packages', '/weka-jd/prod/marsV2/hf_venvs/haienv']
+
+
+
+
+
+
+
+# peit3 container
+# ['', '/ceph-jd/pub/jupyter/wangyizhong/home', '/weka-jd/prod/marsV2/hf_venvs/hf_env', '/opt/alpha-lib-linux/build/pyarmor_3', '/opt/alpha-lib-linux/build/out/lib', '/opt/alpha-lib-linux/home', '/opt/alpha-lib-linux/home/share', '/opt/alpha-lib-linux/home/share/store_tools', '/opt/apex', '/opt/alpha_packs', '/hf_shared/hfai_envs/wangyizhong/peit3_0/lib/python38.zip', '/hf_shared/hfai_envs/wangyizhong/peit3_0/lib/python3.8', '/hf_shared/hfai_envs/wangyizhong/peit3_0/lib/python3.8/lib-dynload', '/hf_shared/hfai_envs/wangyizhong/peit3_0/lib/python3.8/site-packages']
