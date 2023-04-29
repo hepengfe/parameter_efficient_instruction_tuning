@@ -43,8 +43,8 @@ for m in model_names:
     tokenizer =  AutoTokenizer.from_pretrained(m,
                                                use_fast=True,
                                                 return_tensors="pt",
-                                                # truncation=True,
-                                                # max_length=512,
+                                                truncation=True,
+                                                max_length=512,
                                                 )
 
 

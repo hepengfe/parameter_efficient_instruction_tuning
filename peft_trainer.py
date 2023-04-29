@@ -955,7 +955,6 @@ class PEFTTrainer:
                         outputs = self.model(**inputs)
                         loss = outputs["loss"]
                         # log before backward
-                        print("loss before backward: ", loss)
                         self.accelerator.backward(loss) # it does gradient acc internally
                         
                         # under accelerator.accumulate context
@@ -978,9 +977,7 @@ class PEFTTrainer:
                 # log each backward step (not grad acc step)
                 global_step += 1
                 progress_bar.update(1)
-                print("loss.item() ",loss.item())
                 logging_loss += loss.item()
-                print("logging loss: ", logging_loss)
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
@@ -1674,7 +1671,7 @@ class PEFTTrainer:
         """
         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
             self.save(global_step)
-            exit()
+
         
         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
             results = self.evaluate(step=global_step)
@@ -1691,7 +1688,7 @@ class PEFTTrainer:
                     },
                     step=global_step
                 )
-            exit()
+
 
 
     def save(self, global_step, save_best_checkpoint = False):
