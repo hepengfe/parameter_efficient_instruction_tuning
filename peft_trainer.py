@@ -946,11 +946,16 @@ class PEFTTrainer:
                                 "global_step": global_step,
                             }
                         )
+                        # if self.accelerator.is_local_main_process:
+                        #     import pdb; pdb.set_trace()
+                        #     print('')
+                        # self.accelerator.wait_for_everyone()
+                            
                         # move inputs to device
                         outputs = self.model(**inputs)
                         loss = outputs["loss"]
                         # log before backward
-                        
+                        print("loss before backward: ", loss)
                         self.accelerator.backward(loss) # it does gradient acc internally
                         
                         # under accelerator.accumulate context
@@ -973,8 +978,9 @@ class PEFTTrainer:
                 # log each backward step (not grad acc step)
                 global_step += 1
                 progress_bar.update(1)
-
+                print("loss.item() ",loss.item())
                 logging_loss += loss.item()
+                print("logging loss: ", logging_loss)
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
@@ -1668,6 +1674,7 @@ class PEFTTrainer:
         """
         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
             self.save(global_step)
+            exit()
         
         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
             results = self.evaluate(step=global_step)
@@ -1684,7 +1691,7 @@ class PEFTTrainer:
                     },
                     step=global_step
                 )
-
+            exit()
 
 
     def save(self, global_step, save_best_checkpoint = False):
@@ -1694,15 +1701,26 @@ class PEFTTrainer:
         cp_folder_name = f"checkpoint-{global_step}"
         if save_best_checkpoint:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir, "best_checkpoint")
-            checkpoint_folder_path = os.path.join(checkpoint_dir_path, cp_folder_name)
+            checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         else:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir)
-            checkpoint_folder_path = os.path.join(checkpoint_dir_path, cp_folder_name)
-        self.accelerator.save_state(checkpoint_folder_path)
+            checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
+        self.accelerator.save_state(checkpoint_folder_path_to_save)
+        self.tokenizer.save_pretrained(checkpoint_folder_path_to_save)
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        if self.model_args.tuning_mode == "fine_tuning":
+            unwrapped_model.save_pretrained(checkpoint_folder_path_to_save,
+                                            is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save, state_dict=self.accelerator.get_state_dict(unwrapped_model))
+        else:
+            # PEFT
+            state_dict = self.accelerator.get_state_dict(self.model)
+            if self.accelerator.is_main_process:
+                unwrapped_model.save_pretrained(checkpoint_folder_path_to_save, state_dict=state_dict)
+
 
         if self.accelerator.is_main_process:
             remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
-            self.train_state.save_to_json(checkpoint_folder_path)
+            self.train_state.save_to_json(checkpoint_folder_path_to_save)
 
 
     def load_previous_run(self):

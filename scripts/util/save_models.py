@@ -15,9 +15,9 @@ model_names = ("google/t5-small-lm-adapt", "google/t5-large-lm-adapt", "google/t
 # test llama
 # tokenizer = AutoTokenizer.from_pretrained("cache/saved_pretrained/facebook/llama-7b")
 # , use_fast=True, return_tensors="pt"
-model = AutoModelForSeq2SeqLM.from_pretrained("cache/saved_pretrained/facebook/llama-7b")
+# model = AutoModelForSeq2SeqLM.from_pretrained("cache/saved_pretrained/facebook/llama-7b")
 
-exit()
+# exit()
 
 
 
@@ -43,8 +43,8 @@ for m in model_names:
     tokenizer =  AutoTokenizer.from_pretrained(m,
                                                use_fast=True,
                                                 return_tensors="pt",
-                                                truncation=True,
-                                                max_length=512,
+                                                # truncation=True,
+                                                # max_length=512,
                                                 )
 
 
