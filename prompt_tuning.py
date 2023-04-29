@@ -17,6 +17,7 @@ from logging import getLogger
 
 logger = getLogger(__name__)
 
+logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
 @dataclass
 class ModelArguments:
@@ -389,7 +390,9 @@ def main():
         os.environ['HF_DATASETS_OFFLINE']= "1"
         os.environ['HF_DATASETS_CACHE'] = "cache"
         os.environ["WANDB_MODE"] = "offline"
-        
+        # logging_dir
+        training_args.logging_dir = "/ceph-jd/pub/jupyter/wangyizhong/notebooks/"      
+        logging.getLogger().setLevel(logging.ERROR) # set all logging to error to prevent error message in warnings
     
     if training_args.dev_run:
         # no adjustable variables

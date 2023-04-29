@@ -189,7 +189,6 @@ class PEFTTrainer:
         assert self.tokenizer is not None, "tokenizer should loaded"
         self.load_optimizer_n_scheduler()
         self.build_dataloader()
-        
         if self.use_distributed:
             if self.distributed_type == DistributedType.DEEPSPEED:
                 # model prepare should be called with dataloader prepare in deepspeed mode
@@ -998,10 +997,13 @@ class PEFTTrainer:
 
     def log(self, d, step):
         logger.info(f"logging: {d}, step: {step}")
+        if self.training_args.is_cluster:
+            print(f"logging: {d}, step: {step}")
         self.accelerator.log(d,
                             step=step
         )
         self.train_state.update(d)
+        
 
 
 

@@ -1,5 +1,5 @@
 wandb
-./data
+# ./data
 out
 scripts/util
 src/peft.egg-info
@@ -8,10 +8,12 @@ __pycache__
 .git
 *.log
 cache/model_
+cache/saved_pretrained/
 cache/saved_pretrained/*.bin
 # cache/saved_pretrained/*.json
 cache/tmp
 cache/packages
+cache/*.lock
 build
 adapter-transformers
 model
