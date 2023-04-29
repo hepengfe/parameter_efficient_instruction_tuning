@@ -13,4 +13,5 @@ To install the package, do the following.
 * 1.10.2+cu113 by platform.  "torch>=1.13.0" by peft setup.
 
 * for hfai run, refer to scripts under `scripts/hfai` folder.
-* for 
+* for hfai run, make sure supress warning that contains `error` string. Otherwise, cluster will kill the job.
+* 

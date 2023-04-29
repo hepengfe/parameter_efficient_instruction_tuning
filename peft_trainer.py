@@ -66,6 +66,9 @@ class TrainingState:
     Track current training state.
     """
     def __init__(self, training_args, global_step=0, loss=0, best_metric_val=0, eval_metric="rougeL"):
+        
+        for k in list(training_args.keys()):
+            training_args[f"training_args/{k}"] = training_args.pop(k)
         self.training_args = training_args
 
         self.state_dict = {
@@ -75,6 +78,7 @@ class TrainingState:
             "eval_metric":eval_metric
         }
         self.file_name = "training_state.json"
+
 
     def get(self, k):
         if k in self.state_dict:
@@ -110,7 +114,18 @@ class TrainingState:
         file_path = os.path.join(cp_path, self.file_name)
         with open(file_path, "r") as f:
             data = json.load(f)
-        return self.update(data)
+        # if self.accelerator.is_main_process:
+        #     import pdb; pdb.set_trace()
+        #     print('check keys')
+        #     # it updates d like  {"state_dict": ___}
+        #     # so eval_save doesn't log the step
+        #     # log is implemented wrong
+        #     # it's right in file
+        #     # so it's wrong in loading
+        # self.accelerator.wait_for_everyone()
+        self.state_dict = data["state_dict"]
+        self.training_args = data["training_args"]
+
     
     def __str__(self):
         return str(self.to_dict())
@@ -145,7 +160,7 @@ class PEFTTrainer:
         
         self.accelerator = Accelerator(
                 log_with="tensorboard",
-                logging_dir="logs",
+                logging_dir=self.training_args.logging_dir,
                 project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
@@ -253,7 +268,6 @@ class PEFTTrainer:
                 ]
                 for param in self.model.parameters():
                     param.requires_grad = True
-                logger.debug(f"optimizer_grouped_parameters: {str(optimizer_grouped_parameters)}")
                 self.optimizer = accelerate.utils.DummyOptim(
                     optimizer_grouped_parameters,
                     lr=self.training_args.learning_rate   
@@ -292,6 +306,8 @@ class PEFTTrainer:
                 self.model_name_or_path,
                 cache_dir=self.training_args.cache_dir,
                 # use_cache = self.arguments.use_cache,
+                truncation=True,
+                max_length=512,
                 use_fast=True,
                 return_tensors="pt"
             )
@@ -315,15 +331,9 @@ class PEFTTrainer:
         3. handles model parallel if needed.
         NOTE: it doesn't load peft module if it's not from checkpoint.
         """
-        print(
-            "Loading",
-            self.model_args.model_name_or_path,
-            "(for large models, this might take a while)",
-        )
-        print("Files will be cached at:", self.training_args.cache_dir)
-        print(
-            "Ensure this directory is persistent if you do not want to download model files again!"
-        )
+        logging.info(f"Loading {self.model_args.model_name_or_path} (for large models, this might take a while)")
+        logging.info(f"Files will be cached at: {self.training_args.cache_dir}")
+        logging.info(f"Ensure this directory is persistent if you do not want to download model files again!")
 
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
@@ -866,7 +876,15 @@ class PEFTTrainer:
         if loaded:
             global_step =  self.train_state.get("global_step")
             best_metric_val = self.train_state.get("best_metric_val")
-
+        # if self.accelerator.is_main_process:
+        #     import pdb; pdb.set_trace()
+        #     print('check keys')
+        #     # it updates d like  {"state_dict": ___}
+        #     # so eval_save doesn't log the step
+        #     # log is implemented wrong
+        #     # it's right in file
+        #     # so it's wrong in loading
+        # self.accelerator.wait_for_everyone()
         
         # NOTE: gradient accumulation step is not unrelated to the computation below
         
@@ -912,7 +930,8 @@ class PEFTTrainer:
         self.model.train()
         logging_loss = 0
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
-            print("------------new epoch: ", epoch, "global_step: ", global_step)
+            if self.accelerator.is_local_main_process:
+                logger.info(f"------------new epoch: {epoch} global_step: {global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
                 
@@ -1446,6 +1465,8 @@ class PEFTTrainer:
                 task_type=task_type,
                 inference_mode=False,
                 r=cur_lora_r,
+                lora_alpha=32,
+                lora_dropout=0.1,
                 # lora_modules
                 target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             )

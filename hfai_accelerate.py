@@ -1,5 +1,6 @@
 # this file is adapted for hfai run
 # do not use this file to run training tasks locally
+
 import haienv
 # haienv.set_env('202111') # base env?
 # haienv.set_env('peit4')
@@ -18,25 +19,25 @@ from accelerate.commands.tpu import tpu_command_parser
 def main():
     parser = ArgumentParser("Accelerate CLI tool", usage="accelerate <command> [<args>]", allow_abbrev=False)
     subparsers = parser.add_subparsers(help="accelerate command helpers")
-
+    
     # Register commands
     get_config_parser(subparsers=subparsers)
     env_command_parser(subparsers=subparsers)
     launch_command_parser(subparsers=subparsers)
     tpu_command_parser(subparsers=subparsers)
     test_command_parser(subparsers=subparsers)
-
+    
     # Let's go
     args = parser.parse_args()
 
     if not hasattr(args, "func"):
         parser.print_help()
         exit(1)
-    print("sys path: ", sys.path)
     # pre-check deepspeed packages
-    # subprocess.check_output('ninja --version'.split())
+    subprocess.check_output('ninja --version'.split())
 
     hfai_proj_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/"
+    
 
     if args.config_file is not None:
         args.config_file = os.path.join(hfai_proj_dir, args.config_file)

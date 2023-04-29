@@ -243,6 +243,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     cache_dir: Optional[str] = field(
         default="cache", metadata={"help": "Where do you want to store the pretrained models."}
     )
+
+    logging_dir: Optional[str] = field(
+        default="logs", metadata={"help": "Where do you want to store the logs."}
+    )
+
     output_dir: str = field(
         default=None, metadata={"help": "Where do you want to store the checkpoints."}
     )
@@ -430,7 +435,7 @@ def main():
         training_args.save_steps = 10
         training_args.eval_steps = 10
         training_args.per_device_eval_batch_size = 1
-        training_args.dev_run_data_size = 4
+        training_args.dev_run_data_size = 16
         # model_args.tuning_mode = "fine_tuning"
     
     
@@ -442,14 +447,14 @@ def main():
         eval_logger = logging.getLogger("compute_metrics.py")
         eval_logger.setLevel(logging.DEBUG)
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 20
+        training_args.dev_train_data_size = 160
         training_args.eval_steps = 40
         training_args.num_train_epochs = 10
         # # test eval bs
         # training_args.eval_steps = 1
         training_args.save_steps = 1000 # no save needed actually
         training_args.per_device_eval_batch_size = 20
-        training_args.per_device_train_batch_size = 1
+        # training_args.per_device_train_batch_size = 1
 
 
     if training_args.do_search_hyperparams:

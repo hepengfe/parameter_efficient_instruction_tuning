@@ -8,9 +8,10 @@ __pycache__
 .git
 *.log
 cache/model_
-cache/saved_pretrained/google
-cache/saved_pretrained/gpt2
+cache/saved_pretrained/*.bin
+# cache/saved_pretrained/*.json
 cache/tmp
+cache/packages
 build
 adapter-transformers
 model
@@ -18,4 +19,4 @@ peft_trainer_callback.py
 accelerate
 logs/
 # the following is optional for faster iteration, comment them when we need to push model/dataset
-cache
+# cache
