@@ -176,7 +176,6 @@ class PEFTTrainer:
         )
         
 
-        
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
   
