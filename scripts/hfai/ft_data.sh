@@ -19,7 +19,7 @@ default_lora_modules="qv"
 
 
 search_seq=(1e-5 5e-5 1e-4 5e-4 1e-3) # train data
-search_seq=("default_train8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
+search_seq=("default_train_8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
 defaulat_eval_save_steps=1500
 
 if [ $1 == "cluster" ]; then

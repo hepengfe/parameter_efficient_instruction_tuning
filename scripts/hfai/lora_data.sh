@@ -3,7 +3,7 @@ expr_name=$1
 peft_hp=$2
 run_name_prefix="lora_num_train_task"
 
-search_seq=("default_train8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50") # train data 
+search_seq=("default_train_8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50") # train data 
 
 hfai workspace push  --force --no_zip
 
