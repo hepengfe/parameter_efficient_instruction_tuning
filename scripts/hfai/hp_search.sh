@@ -70,10 +70,6 @@ hfai workspace push  --force --no_zip
 # we can remove default element from search seq to avoid duplicate expr
 # the following is the script for removing default element from search seq
 # array=("apple" "banana" "cherry")
-# remove_value="banana"
-# for i in "${!array[@]}"; do
-#     if [[ "${array[$i]}" == "${remove_value}" ]]; then
-#         unset 'array[$i]'
-#     fi
-# done
+# unset by prompted index
+# unset 'array[$i]'
 # echo "${array[@]}"

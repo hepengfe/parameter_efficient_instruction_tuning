@@ -1470,7 +1470,7 @@ class PEFTTrainer:
                 task_type=task_type,
                 inference_mode=False,
                 r=cur_lora_r,
-                lora_alpha=32,
+                lora_alpha=self.peft_args.lora_alpha,
                 lora_dropout=0.1,
                 # lora_modules
                 target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
