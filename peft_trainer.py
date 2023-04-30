@@ -174,10 +174,7 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
-        if self.training_args.is_cluster:
-            import hfai
 
-        
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
   
@@ -975,6 +972,7 @@ class PEFTTrainer:
                     self.save_and_eval(global_step, best_metric_val)
 
                 if self.training_args.is_cluster:
+                    import hfai
                     # cluster pre-interrupt saving
                     if hfai.distributed.get_rank() == 0 and self.accelerator.is_local_main_process: # 获取当前节点序号。在0号节点的0号进程上接收集群调度信息
                         if hfai.client.receive_suspend_command(): 
