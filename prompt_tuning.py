@@ -64,6 +64,11 @@ class PeftArguments:
     )
 
     # adaptor
+    adapter_size: int = field(
+        default=64,
+        metadata={"help": "adapter size"}
+    )
+    
     reduction_factor: float = field(
         default=None,
         metadata={"help": "reduction factor for adaptor"}

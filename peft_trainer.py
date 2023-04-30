@@ -234,7 +234,7 @@ class PEFTTrainer:
     def load_optimizer_n_scheduler(self):
         trainable_params_percent = self.check_trainable_parameters()
         logger.info(f"trainable_params: {trainable_params_percent}")
-        exit()
+
 
         # lr should be scaled linearly with the number of processes
         if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
@@ -922,8 +922,7 @@ class PEFTTrainer:
             progress_bar = tqdm(
                 range(global_step, end_step), initial=global_step
             )
-        
-            
+
         self.model.train()
         logging_loss = 0
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
@@ -992,7 +991,9 @@ class PEFTTrainer:
                             step=global_step)
                     logging_loss = 0
                 best_metric_val = self.train_state.get("best_metric_val")
-            
+            # eval and save per epoch as well
+            # guarantee to have a best checkpoint folder at the end of training
+            self.save_and_eval(global_step, best_metric_val)
             
 
         self.log({
@@ -1474,14 +1475,13 @@ class PEFTTrainer:
 
         elif self.model_args.tuning_mode in ["adapter", "compactor"]:
             cur_reduction_factor = 64 if self.peft_args.reduction_factor is  None else self.peft_args.reduction_factor
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.reduction_factor > 0, "either reduction_factor or trainable_params_percentage should be set"
-
+ 
             from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
             # check existing adapter and remove them
             # config = AdapterConfig()
             if self.model_args.tuning_mode == "adapter":
                 # config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
-                config = HoulsbyConfig(adapter_size=64)
+                config = HoulsbyConfig(adapter_size=self.peft_args.adapter_size,)
             else:
                 config = CompacterConfig(reduction_factor=cur_reduction_factor,
                                             phm_dim=self.peft_args.phm_dimension )
