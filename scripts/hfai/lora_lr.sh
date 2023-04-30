@@ -1,6 +1,6 @@
 # bash scripts/hfai/lora_lr.sh dev -> for local run
 # bash scripts/hfai/lora_lr.sh dev_cmd -> for print command and check
-# bash scripts/hfai/lora_lr.sh cluster-> for cluster run
+# bash scripts/hfai/lora_lr.sh cluster -> for cluster run
 
 default_data_folder="default_train_707_val_50"
 default_lr=5e-4
