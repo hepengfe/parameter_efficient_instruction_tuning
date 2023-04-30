@@ -246,7 +246,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     )
 
     logging_dir: Optional[str] = field(
-        default="logs", metadata={"help": "Where do you want to store the logs."}
+        default="logs", metadata={"help": "a suffix logging_dir can be passed in. Such as lora/lr_5e-4 and it will be further appended to the actual logging_dir under different training environments."}
     )
 
     output_dir: str = field(
@@ -557,6 +557,8 @@ def main():
 
 
     # run_name: xx-xx-xx
+    training_args.run_name = flatten(training_args.run_name, "/", "-") # could pass in dir like run name like xx/xx/xx
+    # passed run_name as prefix
     training_args.run_name += flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
     
     print("output_dir: ", training_args.output_dir)
