@@ -392,8 +392,11 @@ def main():
         os.environ['HF_DATASETS_CACHE'] = "cache"
         os.environ["WANDB_MODE"] = "offline"
         # logging_dir
-        training_args.logging_dir = "/ceph-jd/pub/jupyter/wangyizhong/notebooks/"      
+        training_args.logging_dir = os.path.join("/ceph-jd/pub/jupyter/wangyizhong/notebooks/", training_args.logging_dir)  
         logging.getLogger().setLevel(logging.ERROR) # set all logging to error to prevent error message in warnings
+    else:
+        training_args.logging_dir = os.path.join("./logs", training_args.logging_dir)
+        
     
     if training_args.dev_run:
         # no adjustable variables

@@ -65,3 +65,15 @@ hfai workspace push  --force --no_zip
 # for example, ia3 lr, prefix_tuning lr, prefix_tuning dimension, etc.
 
 # debug script
+
+
+# we can remove default element from search seq to avoid duplicate expr
+# the following is the script for removing default element from search seq
+# array=("apple" "banana" "cherry")
+# remove_value="banana"
+# for i in "${!array[@]}"; do
+#     if [[ "${array[$i]}" == "${remove_value}" ]]; then
+#         unset 'array[$i]'
+#     fi
+# done
+# echo "${array[@]}"

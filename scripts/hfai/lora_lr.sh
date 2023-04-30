@@ -1,4 +1,4 @@
-# bash scripts/hfai/lora_lr.sh
+# bash scripts/hfai/lora_lr.sh dev
 
 default_data_folder="default_train_707_val_50"
 default_lr=5e-4
@@ -10,9 +10,13 @@ default_eval_bs=20
 
 
 
+if [ $1 != "dev" ]; then
+    hfai workspace push  --force --no_zip
+fi
 
-hfai workspace push  --force --no_zip
 
+
+launch_commad="hfai python hfai_accelerate.py  launch --config_file configs/hfai/default_config_ddp.yaml"
 for ((i=0; i<${#search_seq[@]}; i++))
     do
         data_folder=$default_data_folder
@@ -26,6 +30,14 @@ for ((i=0; i<${#search_seq[@]}; i++))
         # variables unrelated to name
         eval_bs=$default_eval_bs
 
+        if [ $1 == "dev" ]
+        then
+            launch_commad="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+        fi
         # name is expr name + train data size
-        hfai python hfai_accelerate.py  launch --config_file configs/hfai/default_config_ddp.yaml prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps 3000 --save_steps 1000  --tuning_mode lora_peft  --learning_rate ${search_seq[i]} --lora_r $peft_hp --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 2 --do_train --is_cluster --logging_steps 500 --run_name $expr_name --logging_dir $expr_dir -- --nodes 1 --no_inherit --name $expr_name
+        ${launch_commad} prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps 3000 --save_steps 1000  ${tuning_setting} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 2 --do_train --is_cluster --logging_steps 500 --run_name $expr_name --logging_dir $expr_dir -- --nodes 1 --no_inherit --name $expr_name
+        if [ $1 == "dev" ]
+        then
+            break
+        fi
 done
