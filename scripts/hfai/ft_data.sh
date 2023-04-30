@@ -8,7 +8,7 @@ default_lr=1e-5
 peft_method="fine_tuning"
 default_peft_hp=64 # for lora rank only
 # train_data_size/peft_method/peft_hp/lr 
-default_eval_bs=14
+default_eval_bs=15
 default_model="google/t5-xl-lm-adapt"
 default_dataset="ni"
 
@@ -22,7 +22,7 @@ search_seq=(1e-5 5e-5 1e-4 5e-4 1e-3) # train data
 search_seq=("default_train_8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
 defaulat_eval_save_steps=1500
 default_eval_step=3000
-default_save_step=500
+default_save_step=100
 
 if [ $1 == "cluster" ]; then
     hfai workspace push  --force --no_zip
@@ -76,7 +76,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
             launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_deepspeed_2gpu.yaml"
             launch_suffix="--dev_train"
         fi
-        launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${eval_step} --save_steps ${save_step}  ${tuning_setting} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train --logging_steps 500 --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
+        launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${eval_step} --save_steps ${save_step}  ${tuning_setting} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train --logging_steps 100 --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
 
         if [ $1 == "dev_cmd" ];then
             echo "---------------cmd $i-----------------"
