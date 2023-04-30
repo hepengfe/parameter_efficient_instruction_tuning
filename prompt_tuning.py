@@ -564,9 +564,10 @@ def main():
     # passed run_name as prefix
     training_args.run_name += flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
     
+    print("logging_dir: ", training_args.logging_dir)
     print("output_dir: ", training_args.output_dir)
     print("run_name: ", training_args.run_name)
-    
+
     
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
