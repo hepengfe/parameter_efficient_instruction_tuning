@@ -312,7 +312,8 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     run_name: Optional[str] = field(
         default="", metadata={"help": "An optional descriptor for the run. Notably used for wandb logging."}
     )
-    
+
+
     do_train: bool = field(
         default=False, metadata={"help": "Whether to run training."}
     )
@@ -556,7 +557,7 @@ def main():
 
 
     # run_name: xx-xx-xx
-    training_args.run_name = flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
+    training_args.run_name += flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
     
     print("output_dir: ", training_args.output_dir)
     print("run_name: ", training_args.run_name)

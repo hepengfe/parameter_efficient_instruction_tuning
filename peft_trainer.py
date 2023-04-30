@@ -997,7 +997,7 @@ class PEFTTrainer:
 
     def log(self, d, step):
         logger.info(f"logging: {d}, step: {step}")
-        if self.training_args.is_cluster:
+        if self.training_args.is_cluster and self.accelerator.is_local_main_process:
             print(f"logging: {d}, step: {step}")
         self.accelerator.log(d,
                             step=step
