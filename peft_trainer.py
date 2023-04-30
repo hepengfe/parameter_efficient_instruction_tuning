@@ -234,7 +234,7 @@ class PEFTTrainer:
     def load_optimizer_n_scheduler(self):
         trainable_params_percent = self.check_trainable_parameters()
         logger.info(f"trainable_params: {trainable_params_percent}")
-
+        exit()
 
         # lr should be scaled linearly with the number of processes
         if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
@@ -813,7 +813,6 @@ class PEFTTrainer:
             self.model.enable_input_require_grads()
             
             self.model = get_peft_model(self.model, peft_config)
-        return self.check_trainable_parameters()
 
 
 
@@ -1388,7 +1387,7 @@ class PEFTTrainer:
                 # prompt_tuning_init_text=prompt_tuning_init_text,
                 # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
             )
-            cur_trainable_params_percentage = self.load_peft_module(config)
+            self.load_peft_module(config)
 
         elif self.model_args.tuning_mode == "prefix_tuning":
             from transformers.adapters import PrefixTuningConfig
@@ -1401,7 +1400,7 @@ class PEFTTrainer:
             config = PrefixTuningConfig(prefix_length=cur_prefix_len,       bottleneck_size=bottleneck_size,
                                         encoder_prefix=True,
                                         cross_prefix=True)
-            cur_trainable_params_percentage = self.load_peft_module(config)
+            self.load_peft_module(config)
 
         
         elif self.model_args.tuning_mode == "lora_adapter":
@@ -1419,13 +1418,8 @@ class PEFTTrainer:
                 # lora_modules
                 target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             )
-            self.model = get_peft_model(self.model, config)
-            print("current trainable params percentage is {}".format(self.check_trainable_parameters()))
-            
-            
-            
-            
-            
+            get_peft_model(self.model, config)
+
             
             # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
             # print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
@@ -1449,28 +1443,8 @@ class PEFTTrainer:
                                 alpha=16,
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
                                 )
-            # self.model.add_adapter("lora_adapter", config=config)
-            cur_trainable_params_percentage = self.load_peft_module(config)
-            
-            logger.info("current trainable params percentage is {}".format(cur_trainable_params_percentage))
-            
-            
-            
-            
-            # while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
-            #     cur_lora_r += 1
-            #     config = LoRAConfig(
-            #                     r=cur_lora_r,
-            #                     alpha=16,
-            #                     attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
-            #                     )
-            #     cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            
-            
-            
-            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            # self.peft_args.lora_r = cur_lora_r
+            self.load_peft_module(config)
+
         elif self.model_args.tuning_mode == "lora_peft":
             from peft import LoraConfig
             # peft package
@@ -1486,8 +1460,8 @@ class PEFTTrainer:
                 # lora_modules
                 target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             )
-            self.model = get_peft_model(self.model, config)
-            print("current trainable params percentage is {}".format(self.check_trainable_parameters()))
+            get_peft_model(self.model, config)
+
         elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config
             cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
@@ -1496,15 +1470,7 @@ class PEFTTrainer:
             config = IA3Config(
                 r = cur_lora_r,
             )
-            cur_trainable_params_percentage = self.load_peft_module(config)
-            print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
-                cur_lora_r += 1
-                config = IA3Config(
-                    r = cur_lora_r,
-                )
-                cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-                print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
+            self.load_peft_module(config)
 
         elif self.model_args.tuning_mode in ["adapter", "compactor"]:
             cur_reduction_factor = 64 if self.peft_args.reduction_factor is  None else self.peft_args.reduction_factor
@@ -1514,18 +1480,19 @@ class PEFTTrainer:
             # check existing adapter and remove them
             # config = AdapterConfig()
             if self.model_args.tuning_mode == "adapter":
-                config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                # config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
+                config = HoulsbyConfig(adapter_size=64)
             else:
                 config = CompacterConfig(reduction_factor=cur_reduction_factor,
                                             phm_dim=self.peft_args.phm_dimension )
 
-            cur_trainable_params_percentage = self.load_peft_module(config)
+            self.load_peft_module(config)
 
         elif self.model_args.tuning_mode == "parallel_adapter":
             from transformers.adapters import ParallelConfig
             config = ParallelConfig(reduction_factor= self.peft_args.reduction_factor)
-            cur_trainable_params_percentage = self.load_peft_module(config)
-            print(f"cur_trainable_params_percentage: {cur_trainable_params_percentage}")
+            self.load_peft_module(config)
+
         elif self.model_args.tuning_mode == "embedding_tuning":
             self.convert_to_embedding_tuning()
             if self.peft_args.num_soft_tokens > 0:
@@ -1641,8 +1608,7 @@ class PEFTTrainer:
             
             self.model.set_active_adapters(["sst-2", "lora_adapter"])
             
-            
-            print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
+
 
             self.peft_args.lora_r = cur_lora_r
 
@@ -1673,8 +1639,7 @@ class PEFTTrainer:
 
             self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = False
 
-            print('cur_trainable_params_percentage', self.check_trainable_parameters())
-        
+
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
