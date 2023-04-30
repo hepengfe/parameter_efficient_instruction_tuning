@@ -44,6 +44,7 @@ import wandb
 import shutil
 from util.compute_metrics import compute_metrics, compute_grouped_metrics
 from accelerate.utils import DistributedType
+import time
 
 # modules use two pacakges 
 ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
@@ -173,8 +174,8 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
-
-
+        if self.training_args.is_cluster:
+            import hfai
 
         
         # model needs to be loaded on all machines
@@ -973,6 +974,15 @@ class PEFTTrainer:
                     self.scheduler.step()
                     self.save_and_eval(global_step, best_metric_val)
 
+                if self.training_args.is_cluster:
+                    # cluster pre-interrupt saving
+                    if hfai.distributed.get_rank() == 0 and self.accelerator.is_local_main_process: # 获取当前节点序号。在0号节点的0号进程上接收集群调度信息
+                        if hfai.client.receive_suspend_command(): 
+                            self.save(global_step)
+                            hfai.client.go_suspend()
+
+
+
                 # log each backward step (not grad acc step)
                 global_step += 1
                 progress_bar.update(1)
@@ -984,6 +994,8 @@ class PEFTTrainer:
                             step=global_step)
                     logging_loss = 0
                 best_metric_val = self.train_state.get("best_metric_val")
+            
+            
 
         self.log({
             "best_metric_val": best_metric_val
@@ -1671,7 +1683,7 @@ class PEFTTrainer:
         """
         if global step satisfies condition, save and/or evaluate.
         """
-        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0:
             self.save(global_step)
 
         
@@ -1693,11 +1705,16 @@ class PEFTTrainer:
 
 
 
-    def save(self, global_step, save_best_checkpoint = False):
+    def save(self, global_step, remove_old_cp = True, save_best_checkpoint = False):
         """
         cp_folder_path could be best checkpoint folder path or checkpoint folder path.
+        
+        if save_best_checkpoint is True, then save to best checkpoint folder path.
         """
+        start_time = time.time()
         cp_folder_name = f"checkpoint-{global_step}"
+        # remove old checkpoint if eval and has a better checkpoint
+
         if save_best_checkpoint:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir, "best_checkpoint")
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
@@ -1705,22 +1722,25 @@ class PEFTTrainer:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir)
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         self.accelerator.save_state(checkpoint_folder_path_to_save)
-        self.tokenizer.save_pretrained(checkpoint_folder_path_to_save)
-        unwrapped_model = self.accelerator.unwrap_model(self.model)
-        if self.model_args.tuning_mode == "fine_tuning":
-            unwrapped_model.save_pretrained(checkpoint_folder_path_to_save,
-                                            is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save, state_dict=self.accelerator.get_state_dict(unwrapped_model))
-        else:
-            # PEFT
-            state_dict = self.accelerator.get_state_dict(self.model)
-            if self.accelerator.is_main_process:
-                unwrapped_model.save_pretrained(checkpoint_folder_path_to_save, state_dict=state_dict)
 
+        if save_best_checkpoint:
+            self.tokenizer.save_pretrained(checkpoint_folder_path_to_save)
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            if self.model_args.tuning_mode == "fine_tuning":
+                unwrapped_model.save_pretrained(checkpoint_folder_path_to_save,
+                                                is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save, state_dict=self.accelerator.get_state_dict(unwrapped_model))
+            else:
+                # PEFT
+                state_dict = self.accelerator.get_state_dict(self.model)
+                if self.accelerator.is_main_process:
+                    unwrapped_model.save_pretrained(checkpoint_folder_path_to_save, state_dict=state_dict)
 
         if self.accelerator.is_main_process:
-            remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
+            if remove_old_cp:
+                remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
             self.train_state.save_to_json(checkpoint_folder_path_to_save)
-
+        end_time = time.time()
+        print("Model saving time in seconds:", time.time() - start_time)
 
     def load_previous_run(self):
         loaded = False

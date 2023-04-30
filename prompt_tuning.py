@@ -460,12 +460,19 @@ def main():
         eval_logger.setLevel(logging.DEBUG)
         # try to adjust train/eval bs during dev run
         training_args.dev_train_data_size = 160
-        training_args.eval_steps = 40
+        
+        
+        # training_args.save_steps = 6
+        # training_args.eval_steps = 5
+        
+        # async eval and save
+        training_args.save_steps = 5
+        training_args.eval_steps = 30
         training_args.num_train_epochs = 10
         # # test eval bs
         # training_args.eval_steps = 1
-        training_args.save_steps = 1000 # no save needed actually
-        training_args.per_device_eval_batch_size = 20
+        # training_args.save_steps = 1000 # no save needed actually
+        training_args.per_device_eval_batch_size = 15
         # training_args.per_device_train_batch_size = 1
 
 
