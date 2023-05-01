@@ -16,7 +16,7 @@ default_data_folder="default_train_707_val_50"
 
 
 # train_data_size/peft_method/peft_hp/lr 
-default_eval_bs=20
+
 default_model="google/t5-xl-lm-adapt"
 default_dataset="ni"
 
@@ -34,10 +34,12 @@ if [ $tuning_mode == "fine_tuning" ]; then
     lr=1e-5
     config_file="configs/hfai/default_config_deepspeed_hf.yaml"
     default_eval_step=5000
+    default_eval_bs=15
 else
     lr=5e-4
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
+    default_eval_bs=20
 fi
 
 
@@ -102,15 +104,13 @@ fi
 
 
 # ddp higher save/eval interval
-default_save_step=$((default_eval_step/5))
-defualt_logging_steps=$((default_eval_step/20))
+default_save_step=$((default_eval_step/5)) # 5000/5=1000
+defualt_logging_steps=$((default_eval_step/20)) # 5000/20=250
 
 if [ $script_mode == "cluster" ]; then
     hfai workspace push  --force --no_zip
 fi
 
-
-echo "search seq: ${search_seq}"
 
 for ((i=0; i<${#search_seq[@]}; i++))
     do
@@ -118,6 +118,9 @@ for ((i=0; i<${#search_seq[@]}; i++))
         # data
         data_folder=$default_data_folder
         dataset=$default_dataset
+        # training/evaluation
+        eval_bs=$default_eval_bs
+
         # set default hp
         # peft config
         # lora
@@ -144,14 +147,6 @@ for ((i=0; i<${#search_seq[@]}; i++))
             exit 1
         fi
 
-        # training/evaluation
-        eval_bs=$default_eval_bs
-        eval_save_steps=$defaulat_eval_save_steps
-
-
-        
-        eval_save_steps=3000 # ddp faster
-        
 
 
         # expr name

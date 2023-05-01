@@ -574,6 +574,10 @@ def main():
     
     if training_args.overwrite_output_dir and os.path.exists(training_args.output_dir):
         shutil.rmtree(training_args.output_dir, ignore_errors=True)
+        
+        # --overwrite_output_dir in cluster should be used for only one time
+        if training_args.is_cluster:
+            exit()
 
 
     # run_name: xx-xx-xx

@@ -916,7 +916,8 @@ class PEFTTrainer:
             progress_bar = tqdm(
                 range(global_step, end_step),
                 disable=not self.accelerator.is_local_main_process,
-                initial=global_step
+                initial=global_step,
+                miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
             )
             self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
 
@@ -924,7 +925,9 @@ class PEFTTrainer:
             self.print_log(f"skip first {start_step} steps in train_dataloader")
         else:
             progress_bar = tqdm(
-                range(global_step, end_step), initial=global_step
+                range(global_step, end_step),
+                initial=global_step,
+                miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
             )
 
         self.model.train()
@@ -946,11 +949,7 @@ class PEFTTrainer:
                                 "global_step": global_step,
                             }
                         )
-                        # if self.accelerator.is_local_main_process:
-                        #     import pdb; pdb.set_trace()
-                        #     print('')
-                        # self.accelerator.wait_for_everyone()
-                            
+
                         # move inputs to device
                         outputs = self.model(**inputs)
                         loss = outputs["loss"]
@@ -1016,7 +1015,6 @@ class PEFTTrainer:
         """
         print dictionary log and log to tensorboard/train state.
         """
-        self.print_log(f"logging: {d}, step: {step}")
         self.accelerator.log(d,
                             step=step
         )
@@ -1080,7 +1078,8 @@ class PEFTTrainer:
             
         
         with torch.no_grad():
-            for inputs in tqdm(dataloader2eval):
+            progress_bar = tqdm(dataloader2eval, miniters=0 if not self.training_args.is_cluster else 500)
+            for inputs in progress_bar:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
                 
@@ -1623,9 +1622,6 @@ class PEFTTrainer:
                 )
             
             self.model.set_active_adapters(["sst-2", "lora_adapter"])
-            
-
-
             self.peft_args.lora_r = cur_lora_r
 
             
@@ -1669,7 +1665,6 @@ class PEFTTrainer:
         
         if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
             results = self.evaluate(step=global_step)
-            # self.log(results, step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
             if cur_metric_val > best_metric_val:
@@ -1682,6 +1677,7 @@ class PEFTTrainer:
                     },
                     step=global_step
                 )
+                self.print_log(f"best_metric_val: {best_metric_val}, best_checkpoint_global_step: {global_step}")
 
 
 
