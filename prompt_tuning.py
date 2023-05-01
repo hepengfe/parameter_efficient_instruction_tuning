@@ -469,9 +469,9 @@ def main():
         
         # training_args.save_steps = 6
         # training_args.eval_steps = 5
-        
+        training_args.logging_steps=10
         # async eval and save
-        training_args.save_steps = 5
+        training_args.save_steps = 30
         training_args.eval_steps = 30
         training_args.num_train_epochs = 10
         # # test eval bs

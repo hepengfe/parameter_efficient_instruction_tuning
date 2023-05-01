@@ -271,7 +271,7 @@ class PEFTTrainer:
                 self.optimizer = accelerate.utils.DummyOptim(
                     optimizer_grouped_parameters,
                     lr=self.training_args.learning_rate   
-                )
+            )
             else:
                 self.optimizer = accelerate.utils.DummyOptim(
                     self.model.parameters(),
@@ -978,8 +978,11 @@ class PEFTTrainer:
                     # cluster pre-interrupt saving
                     if hfai.distributed.get_rank() == 0 and self.accelerator.is_local_main_process: # 获取当前节点序号。在0号节点的0号进程上接收集群调度信息
                         if hfai.client.receive_suspend_command(): 
+                            self.print_log(f"Received suspend command, saving model at {global_step} steps")
                             self.save(global_step)
+                            self.print_log(f"Model checkpoint at {global_step} steps is saved. Going suspend...")
                             hfai.client.go_suspend()
+                            
 
 
 
@@ -992,6 +995,7 @@ class PEFTTrainer:
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             },
                             step=global_step)
+                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
                     logging_loss = 0
                 best_metric_val = self.train_state.get("best_metric_val")
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")

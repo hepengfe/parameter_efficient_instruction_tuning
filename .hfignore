@@ -15,7 +15,18 @@ cache/tmp
 cache/packages
 cache/*.lock
 build
-adapter-transformers
+
+
+# adapter-transformers
+# adapter-transformers/examples/
+# adapter-transformers/adapter_docs/
+# adapter-transformers/notebooks/
+# adapter-transformers/tests*
+# adapter-transformers/tests*
+# adapter-transformers/.github*
+# adapter-transformers/docker
+
+
 model
 peft_trainer_callback.py
 accelerate
