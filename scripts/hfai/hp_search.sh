@@ -1,5 +1,5 @@
 # bash scripts/hfai/hp_search.sh <tuning_method>  <hp_to_search> <script_mode>
-# bash scripts/hfai/hp_search.sh fine_tuning data_sz cluster
+# bash scripts/hfai/hp_search.sh fine_tuning data_size cluster
 # bash scripts/hfai/hp_search.sh lora_peft lr dev_cmd
 # bash scripts/hfai/hp_search.sh adapter adapter_size dev
 

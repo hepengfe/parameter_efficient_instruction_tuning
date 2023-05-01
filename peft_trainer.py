@@ -73,6 +73,8 @@ class TrainingState:
         self.training_args = training_args
 
         self.state_dict = {
+            "epoch": 0,
+            "step": 0,
             "global_step": global_step,
             "loss": loss,
             "best_metric_val":best_metric_val,
@@ -233,14 +235,14 @@ class PEFTTrainer:
 
     def load_optimizer_n_scheduler(self):
         trainable_params_percent = self.check_trainable_parameters()
-        logger.info(f"trainable_params: {trainable_params_percent}")
+        self.print_log(f"trainable_params: {trainable_params_percent}")
 
 
         # lr should be scaled linearly with the number of processes
         if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
             # self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
             # lr  = self.training_args.learning_rate / self.num_processes
-            logger.info(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
+            self.print_log(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
 
         if not self.distributed_type == DistributedType.DEEPSPEED:
             # create AdamW optimizer
@@ -277,7 +279,7 @@ class PEFTTrainer:
                 )
 
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
-            logger.info(f"Learning rate(lr) is set to {self.optimizer.lr}", )
+            self.print_log(f"Learning rate(lr) is set to {self.optimizer.lr}", )
             self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
 
         # # self.optimizer = Adafactor(
@@ -500,14 +502,14 @@ class PEFTTrainer:
 
                 self.eval_dataset = self.eval_dataset.select(range(new_size))
                 new_len = len(self.eval_dataset)
-                logger.info(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.num_processes}, truncating from {org_len} to {new_len} examples")
+                self.print_log(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.num_processes}, truncating from {org_len} to {new_len} examples")
                 
 
             if len(self.test_dataset) % min_test_data_size_per_process != 0:
                 org_len = len(self.test_dataset)
                 new_len = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
                 self.test_dataset = self.test_dataset.select(range(new_len))
-                logger.info(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
+                self.print_log(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
             
             assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
             assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
@@ -871,6 +873,8 @@ class PEFTTrainer:
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
         loaded = self.load_previous_run()
         if loaded:
+            start_epoch = self.train_state.get("epoch")
+            start_step = self.train_state.get("step")
             global_step =  self.train_state.get("global_step")
             best_metric_val = self.train_state.get("best_metric_val")
         # if self.accelerator.is_main_process:
@@ -891,18 +895,18 @@ class PEFTTrainer:
         end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
         expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
         assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
-
+        
         if global_step >= end_step:
-            logger.info(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
-            logger.info("Ending training...")
+            self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
+            self.print_log("Ending training...")
             return
 
 
-        logger.info(f"Per step batch size (no grad acc): {train_bs_per_step}")
+        self.print_log(f"Per step batch size (no grad acc): {train_bs_per_step}")
         # NOTE: only loss computation will be affected by gradient accumulation
 
         train_bs = self.training_args.per_device_train_batch_size * self.training_args.gradient_accumulation_steps * self.num_processes
-        logger.info(f"Training batch size (considering grad acc): {train_bs}")
+        self.print_log(f"Training batch size (considering grad acc): {train_bs}")
 
         # TODO: add expected train bs assertion or automatic adjusting
 
@@ -914,10 +918,10 @@ class PEFTTrainer:
                 disable=not self.accelerator.is_local_main_process,
                 initial=global_step
             )
-            logger.info("Resume training from epoch %s, step %s, global_step %s", start_epoch, start_step, global_step)
+            self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
 
             self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
-            logger.info("skip first %s steps in train_dataloader",  start_step)
+            self.print_log(f"skip first {start_step} steps in train_dataloader")
         else:
             progress_bar = tqdm(
                 range(global_step, end_step), initial=global_step
@@ -927,7 +931,7 @@ class PEFTTrainer:
         logging_loss = 0
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
             if self.accelerator.is_local_main_process:
-                logger.info(f"------------new epoch: {epoch} global_step: {global_step}")
+                self.print_log(f"------------new epoch: {epoch} global_step: {global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
                 
@@ -937,8 +941,8 @@ class PEFTTrainer:
                         
                         self.train_state.update(
                             {
-                                "step": step,
                                 "epoch": epoch,
+                                "step": step,
                                 "global_step": global_step,
                             }
                         )
@@ -991,9 +995,11 @@ class PEFTTrainer:
                             step=global_step)
                     logging_loss = 0
                 best_metric_val = self.train_state.get("best_metric_val")
+            self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
             self.save_and_eval(global_step, best_metric_val)
+            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.train_state.get('best_metric_val')}")
             
 
         self.log({
@@ -1007,13 +1013,23 @@ class PEFTTrainer:
 
 
     def log(self, d, step):
-        logger.info(f"logging: {d}, step: {step}")
-        if self.training_args.is_cluster and self.accelerator.is_local_main_process:
-            print(f"logging: {d}, step: {step}")
+        """
+        print dictionary log and log to tensorboard/train state.
+        """
+        self.print_log(f"logging: {d}, step: {step}")
         self.accelerator.log(d,
                             step=step
         )
         self.train_state.update(d)
+    
+    def print_log(self, s):
+        """
+        print log under different training system.
+        """
+        logger.info(s)
+        if self.training_args.is_cluster and self.accelerator.is_local_main_process:
+            print(s)
+        
         
 
 
@@ -1051,7 +1067,7 @@ class PEFTTrainer:
         output_host = []
         label_host = []
         from tqdm import tqdm
-        logger.info("***** Running evaluation %s *****", mode)
+        self.print_log(f"***** Running evaluation {mode} *****")
         # it handles deepspeed and DDP
         model = accelerate.utils.extract_model_from_parallel(self.model)
         # print("extract model")
@@ -1711,7 +1727,7 @@ class PEFTTrainer:
         while not loaded:
             self.accelerator.wait_for_everyone()
             if os.path.exists(self.training_args.output_dir):
-                logger.info("load from existing state")
+                self.print_log("load from existing state")
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                 
 
@@ -1740,12 +1756,12 @@ class PEFTTrainer:
                     # remove the latest checkpoint
                     # output_dir might already has been removed
                     if latest_cp is not None and self.accelerator.is_local_main_process:
-                        logger.warn(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
+                        self.print_log(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
                         shutil.rmtree(latest_cp)
                     # still not loaded
                     continue
             else:
-                logger.info(f"no previous run found, create a new one at {self.training_args.output_dir}")
+                self.print_log(f"no previous run found, create a new one at {self.training_args.output_dir}")
                 os.makedirs(self.training_args.output_dir, exist_ok = True)
                 self.accelerator.init_trackers(
                         self.training_args.run_name,
