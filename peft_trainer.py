@@ -917,7 +917,8 @@ class PEFTTrainer:
                 range(global_step, end_step),
                 disable=not self.accelerator.is_local_main_process,
                 initial=global_step,
-                miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
+                # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
+                miniters=self.training_args.logging_steps
             )
             self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
 
@@ -927,7 +928,8 @@ class PEFTTrainer:
             progress_bar = tqdm(
                 range(global_step, end_step),
                 initial=global_step,
-                miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
+                # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
+                miniters=self.training_args.logging_steps
             )
 
         self.model.train()
@@ -1029,7 +1031,7 @@ class PEFTTrainer:
         print log under different training system.
         """
         logger.info(s)
-        if self.training_args.is_cluster and self.accelerator.is_local_main_process:
+        if self.training_args.is_cluster and self.accelerator.is_main_process:
             print(s)
         
         
@@ -1719,7 +1721,7 @@ class PEFTTrainer:
             if remove_old_cp:
                 remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
             self.train_state.save_to_json(checkpoint_folder_path_to_save)
-        end_time = time.time()
+
         print("Model saving time in seconds:", time.time() - start_time)
 
     def load_previous_run(self):

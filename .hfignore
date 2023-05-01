@@ -17,7 +17,7 @@ cache/*.lock
 build
 
 
-# adapter-transformers
+adapter-transformers
 adapter-transformers/examples/
 adapter-transformers/adapter_docs/
 adapter-transformers/notebooks/

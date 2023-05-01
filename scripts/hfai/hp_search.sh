@@ -39,7 +39,7 @@ else
     lr=5e-4
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
-    default_eval_bs=20
+    default_eval_bs=10
 fi
 
 
@@ -177,7 +177,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
         
 
         launch_prefix="hfai python hfai_accelerate.py  launch --config_file configs/hfai/default_config_ddp.yaml"
-        launch_suffix="--is_cluster -- --nodes 1 --no_inherit --name $expr_name"
+        launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
         if [ $script_mode == "dev" ]; then
             launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
