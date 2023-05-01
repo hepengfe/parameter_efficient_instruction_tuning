@@ -160,6 +160,9 @@ for ((i=0; i<${#search_seq[@]}; i++))
         elif [ $tuning_mode == "adapter" ]; then
             tuning_config="sz_${adapter_size}" # for adapter_peft
             tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${adapter_size} --learning_rate ${lr}"
+        elif [ $tuning_mode == "fine_tuning" ]; then
+            tuning_config="None"
+            tuning_args="--tuning_mode ${tuning_mode} --learning_rate ${lr}"
         else
             tuning_config="None"
         fi
@@ -171,7 +174,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
 
         
 
-        launch_prefix="hfai python hfai_accelerate.py  launch --config_file configs/hfai/default_config_ddp.yaml"
+        launch_prefix="hfai python hfai_accelerate.py  launch --config_file ${config_file}"
         launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
         if [ $script_mode == "dev" ]; then
