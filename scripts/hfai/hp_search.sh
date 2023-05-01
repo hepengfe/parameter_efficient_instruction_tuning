@@ -29,6 +29,8 @@ default_lora_modules="qv"
 # adapter
 default_adapter_size=64
 
+
+eval_bss=(20 20 20 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
 # two types of training mode
 # deepspeed lower save/eval interval
 if [ $tuning_mode == "fine_tuning" ]; then
@@ -36,11 +38,20 @@ if [ $tuning_mode == "fine_tuning" ]; then
     config_file="configs/hfai/default_config_deepspeed_hf.yaml"
     default_eval_step=5000
     default_eval_bs=15
-else
+elif [ $tuning_mode == "lora_peft" ]; then
     lr=5e-4
+    # lr=1e-4
+    config_file="configs/hfai/default_config_ddp.yaml"
+    default_eval_step=5000
+    default_eval_bs=20 # adapter < 15, lora < 20
+    eval_bss=(20 20 20 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
+elif [ $tuning_mode == "adapter" ]; then
+    lr=5e-4
+    # lr=1e-4
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     default_eval_bs=15 # adapter < 15, lora < 20
+    eval_bss=(15 15 10 5 1) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
 fi
 
 
@@ -50,7 +61,9 @@ lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
 lora_ranks=(64 128 256 512 1024)
 adapter_rf=(0.1 0.2 0.3 0.4 0.5)
 adapter_szs=(64 128 256 512 1024)
-eval_bss=(20 20 20 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
+
+
+
 data_folders=("default_train8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
 
 

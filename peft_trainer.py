@@ -245,6 +245,7 @@ class PEFTTrainer:
             self.print_log(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
 
         if not self.distributed_type == DistributedType.DEEPSPEED:
+            # DDP, keep parameters require_grad status
             # create AdamW optimizer
             self.optimizer = AdamW(
                 self.model.parameters(),
@@ -254,8 +255,9 @@ class PEFTTrainer:
             )
             self.scheduler = get_constant_schedule(self.optimizer)
         else:
-            # peft 
-            if self.model_args.tuning_mode not in ["fine_tuning" ,"adapter_peft"]:
+            # deepspeed
+            # adapter deepspeed
+            if self.model_args.tuning_mode not in ["fine_tuning" ,"lora_peft"]:
                 optimizer_grouped_parameters = [
                     {
                         "params": [p for p in self.model.parameters() if p.requires_grad],
@@ -263,7 +265,7 @@ class PEFTTrainer:
                     },
                     {
                         "params": [p for p in self.model.parameters() if not p.requires_grad],
-                        "lr": self.training_args.learning_rate
+                        "lr": 0
                     },
                 ]
                 for param in self.model.parameters():
@@ -273,6 +275,7 @@ class PEFTTrainer:
                     lr=self.training_args.learning_rate   
             )
             else:
+                # fine tuning, lora peft
                 self.optimizer = accelerate.utils.DummyOptim(
                     self.model.parameters(),
                     lr=self.training_args.learning_rate
@@ -1055,6 +1058,8 @@ class PEFTTrainer:
             raise NotImplementedError(
                 "mode must be either eval or test mode"
             )
+        self.model.eval()
+        model = accelerate.utils.extract_model_from_parallel(self.model)
         if mode == "eval":
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
@@ -1065,15 +1070,22 @@ class PEFTTrainer:
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
             print("load from existing state: ", best_cp_dir)
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-            self.accelerator.load_state(best_cp_dir)
-        self.model.eval()
+            try:
+                self.accelerator.load_state(best_cp_dir)
+            except Exception as e:
+                print(f"load state failed, try to load from model_path due to \n {e}")
+                model = AutoModelForSeq2SeqLM.from_pretrained(self.model_args.model_name_or_path)
+                # prepare model with dataloader (dataloader is already prepared tho)
+                # move model to device and possibly ddp or deepspeed
+                model, dataloader2eval = self.accelerator.prepare(model, dataloader2eval)
+
         input_host = []
         output_host = []
         label_host = []
         from tqdm import tqdm
         self.print_log(f"***** Running evaluation {mode} *****")
         # it handles deepspeed and DDP
-        model = accelerate.utils.extract_model_from_parallel(self.model)
+        
         # print("extract model")
         from copy import deepcopy
         if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
