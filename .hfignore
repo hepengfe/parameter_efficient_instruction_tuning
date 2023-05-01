@@ -18,13 +18,13 @@ build
 
 
 # adapter-transformers
-# adapter-transformers/examples/
-# adapter-transformers/adapter_docs/
-# adapter-transformers/notebooks/
-# adapter-transformers/tests*
-# adapter-transformers/tests*
-# adapter-transformers/.github*
-# adapter-transformers/docker
+adapter-transformers/examples/
+adapter-transformers/adapter_docs/
+adapter-transformers/notebooks/
+adapter-transformers/tests*
+adapter-transformers/tests*
+adapter-transformers/.github*
+adapter-transformers/docker
 
 
 model
