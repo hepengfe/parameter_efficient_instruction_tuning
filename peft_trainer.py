@@ -52,6 +52,8 @@ PEFT_MODULES=["prompt_tuning", "lora_peft"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
+from transformers import LlamaTokenizer
+from transformers import LlamaLMHeadModel
 
 import logging
 from accelerate.logging import get_logger
@@ -154,8 +156,10 @@ class PEFTTrainer:
         self.model_trainable_params = None
         self.recover_from = None
         
-        
-        self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
+        if "llama" in self.model_args.model_name_or_path.lower():
+            self.model_lm_head_weight = LlamaLMHeadModel.from_pretrained(self.potential_model_path).lm_head.weight
+        else:
+            self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
         
         if training_args.do_search_hyperparams:
             return
@@ -202,7 +206,7 @@ class PEFTTrainer:
                 raise NotImplementedError(f"self.distributed_type {self.distributed_type} is not implemented")
             self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
         else:
-            self.device = "cuda"
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = self.model.to(self.device)
 
         """
@@ -275,7 +279,7 @@ class PEFTTrainer:
                     lr=self.training_args.learning_rate   
             )
             else:
-                # fine tuning, lora peft
+                # fine tuning, lora adapter
                 self.optimizer = accelerate.utils.DummyOptim(
                     self.model.parameters(),
                     lr=self.training_args.learning_rate
@@ -303,7 +307,12 @@ class PEFTTrainer:
     def load_tokenzier(self):
 
         if os.path.exists(self.potential_model_path):
-            self.tokenizer = AutoTokenizer.from_pretrained(self.potential_model_path)
+            if "llama" in self.model_args.model_name_or_path.lower():
+                self.tokenizer = LlamaTokenizer.from_pretrained(
+                    self.potential_model_path
+                )
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(self.potential_model_path)
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name_or_path,
@@ -316,15 +325,16 @@ class PEFTTrainer:
             )
 
         if self.tokenizer.pad_token is None:
-            assert self.model_name_or_path == "gpt2", "Only gpt2 is expected not having pad tokens for now"
+            assert "gpt2" in self.model_name_or_path or "llama" in self.model_name_or_path, "Only gpt2 or llama is expected not having pad tokens for now"
             # gpt2 model
             self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-            m.resize_token_embeddings(len(self.tokenizer))
+            self.model.resize_token_embeddings(len(self.tokenizer))
         
         
         self.padding = "max_length" if self.data_args.pad_to_max_length else False
-        print('gpt2 requires padding to max length')
-        if "gpt2" in self.model_name_or_path:
+        
+        if "gpt2" in self.model_name_or_path or "llama" in self.model_name_or_path:
+            print('gpt2/llama requires padding to max length')
             self.padding = "max_length"
 
     def load_pretrained_model_for_peft(self):
@@ -344,9 +354,8 @@ class PEFTTrainer:
                 # if self.accelerator.is_main_process:
                 #     import pdb; pdb.set_trace()
                 #     print('')
-                    
                 # self.accelerator.wait_for_everyone()
-                
+
                 if os.path.exists(self.potential_model_path):
                     self.model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
                 else:
@@ -368,7 +377,12 @@ class PEFTTrainer:
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
-
+        elif "llama" in self.model_name_or_path.lower():
+            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+                self.model = LlamaLMHeadModel.from_pretrained(self.potential_model_path)
+            else:
+                raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
+            
 
             
         elif "roberta" in self.model_name_or_path:
@@ -471,7 +485,9 @@ class PEFTTrainer:
                 truncation=True,
             )
         if self.padding == "max_length" and self.data_args.ignore_pad_token_for_loss:
-            labels["input_ids"][labels["input_ids"]==0] = -100
+            pad_token_id = tokenizer.pad_token_id
+            labels["input_ids"][labels["input_ids"]==pad_token_id] = -100
+            
             
             # if encoder only model
             if self.model_args.model_arch == "encoder":
@@ -661,7 +677,7 @@ class PEFTTrainer:
         if self.data_args.dataset_name == "ni":
             dataset_dependent_data_collator = DataCollatorForNI(
                 self.tokenizer,
-                # model=self.model,
+                model=self.model,
                 padding="max_length" if self.data_args.pad_to_max_length else "longest",
                 max_source_length=self.data_args.max_source_length,
                 max_target_length=self.data_args.max_target_length,
@@ -971,6 +987,7 @@ class PEFTTrainer:
                 else:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
+
                     outputs = self.model(**inputs)
                     loss = outputs["loss"]
                     loss.backward()
