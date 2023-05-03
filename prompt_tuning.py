@@ -464,7 +464,7 @@ def main():
         eval_logger = logging.getLogger("compute_metrics.py")
         eval_logger.setLevel(logging.DEBUG)
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 160
+        training_args.dev_train_data_size = 10
         
         
         # training_args.save_steps = 6
@@ -472,14 +472,15 @@ def main():
         training_args.logging_steps=10
         # async eval and save
         training_args.save_steps = 30
-        training_args.eval_steps = 30
+        training_args.eval_steps = 10
         training_args.num_train_epochs = 10
         # # test eval bs
         # training_args.eval_steps = 1
         # training_args.save_steps = 1000 # no save needed actually
         training_args.per_device_eval_batch_size = 20
         # training_args.per_device_train_batch_size = 1
-
+        training_args.per_device_eval_batch_size = 1
+        training_args.per_device_train_batch_size = 1
 
     if training_args.do_search_hyperparams:
         peft_args.trainable_params_percentage = sorted([float(v) for v in peft_args.trainable_params_percentage.split(",")])

@@ -3,7 +3,7 @@ TRANSFORMERS_OFFLINE=1 python scripts/util/save_models.py
 To simulate cluster env, disable `cache/model` by rename it to `cache/model_`
 TODO: do we really need `cache/model`? If not, we can remove it.
 """
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer,AutoModelForCausalLM, GPT2LMHeadModel
 from transformers.adapters import AutoAdapterModel
 from peft import PeftModelForSeq2SeqLM
 import os
@@ -11,6 +11,7 @@ import os
 
 model_names = ("google/t5-small-lm-adapt", "google/t5-large-lm-adapt", "google/t5-xl-lm-adapt")
 
+model_names = ("gpt2", )
 
 # test llama
 # tokenizer = AutoTokenizer.from_pretrained("cache/saved_pretrained/facebook/llama-7b")
@@ -38,8 +39,10 @@ for m in model_names:
     # check if the model exists in the path
     # priority: 1. potential_model_path 2. cache_dir 3. download from huggingface
     
-
-    # model = AutoModelForSeq2SeqLM.from_pretrained(m, cache_dir=cache_dir)
+    if "gpt2" in m:
+        model = AutoModelForCausalLM.from_pretrained(m, cache_dir=cache_dir)
+    else:
+        model = AutoModelForSeq2SeqLM.from_pretrained(m, cache_dir=cache_dir)
     tokenizer =  AutoTokenizer.from_pretrained(m,
                                                use_fast=True,
                                                 return_tensors="pt",
@@ -50,7 +53,7 @@ for m in model_names:
 
     # AutoTokenizer.from_pretrained(os.path.join("cache/saved_pretrained", "gpt2"), max_length=1e5)
 
-    # model.save_pretrained(f"model/{m}")
+    model.save_pretrained(os.path.join(saved_pretrained_dir,m))
     tokenizer.save_pretrained(os.path.join(saved_pretrained_dir,m))
 
 

@@ -31,7 +31,7 @@ class DataCollatorForNI:
     text_only: bool=False
 
 
-    def __call__(self, batch, return_tensors=None):
+    def __call__(self, batch, eval_mode=False, return_tensors=None):
 
         if return_tensors is None:
             return_tensors = self.return_tensors
@@ -181,7 +181,6 @@ class DataCollatorForNI:
         if is_causal_lm and labels:
             sources = ["".join(sl) for sl in zip(sources, labels)]
 
-        
         # 2. prepare model inputs first
         if not is_causal_lm:
             if self.text_only:
@@ -230,44 +229,103 @@ class DataCollatorForNI:
                     label_mask = labels["attention_mask"].bool()
                     model_inputs["labels"] = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
         else:
-
             example_texts = []
-            for s, l in zip(sources, labels):
-                if not s.endswith((' ', '\n', '\t')) and not l.endswith((' ', '\n', '\t')):
-                    example_texts.append(s + " " + l)
-                else:
-                    example_texts.append(s + l)
-            # label length = source length
-            # prediction length = source length
-            tokenized_examples = self.tokenizer(
-                        example_texts,
-                        max_length=self.max_source_length, 
-                        # padding=self.padding, no padding for causal lm
-                        return_tensors=self.return_tensors, 
-                        truncation=True,
-                        # pad_to_multiple_of=self.pad_to_multiple_of
-                        )
+            tokenized_examples = []
+            self.tokenizer.padding_side = "left"
             
-            eos = torch.tensor([[self.tokenizer.eos_token_id]])
-            # add eos to end of completion
-            input_ids = torch.cat([tokenized_examples.input_ids, eos], dim=1)
-            labels = input_ids.clone()
+            # for s, l in zip(sources, labels):
+            #     if not s.endswith((' ', '\n', '\t')) and not l.endswith((' ', '\n', '\t')):
+            #         # example_texts.append(s + " " + l)
+            #         example_text = s + " " + l
+            #     else:
+            #         # example_texts.append(s + l)
+            #         example_text = s + l
             
-            tokenized_prompts = self.tokenizer(
-                        sources, 
-                        max_length=self.max_source_length, 
-                        # padding=self.padding, no padding for causal lm
-                        return_tensors=self.return_tensors, 
-                        truncation=True,
-                        # pad_to_multiple_of=self.pad_to_multiple_of
-                        )
+            #     # tokenize one by one
+            #     # pad to max length before aggregation
+            #     # attention mask wrong
+            #     example_text 
+                
+            #     # label length = source length
+            #     # prediction length = source length
+            #     tokenized_example = self.tokenizer(
+            #                 example_text,
+            #                 max_length=self.max_source_length, 
+            #                 # padding=self.padding, # no padding for causal lm
+            #                 return_tensors=self.return_tensors, 
+            #                 truncation=True,
+            #                 # pad_to_multiple_of=self.pad_to_multiple_of
+            #                 )
+                
+            #     eos = torch.tensor([[self.tokenizer.eos_token_id]])
+            #     # add eos to end of completion
+            #     input_ids = torch.cat([tokenized_example.input_ids, eos], dim=1)
+            #     labels = input_ids.clone()
+                
+            #     tokenized_prompts = self.tokenizer(
+            #                 sources, 
+            #                 max_length=self.max_source_length, 
+            #                 # padding=self.padding, # no padding for causal lm
+            #                 return_tensors=self.return_tensors, 
+            #                 truncation=True,
+            #                 # pad_to_multiple_of=self.pad_to_multiple_of
+            #                 )
 
-            labels[:, :tokenized_prompts.input_ids.shape[1]] = -100
-            attention_mask = torch.ones_like(input_ids)
+            #     labels[:, :tokenized_prompts.input_ids.shape[1]] = -100
+            #     attention_mask = torch.ones_like(input_ids)
+
+            for s, l in zip(sources, labels):
+                example_texts.append(s + "<sep>" + l)
+            tokenized_example = self.tokenizer(
+                        example_texts,
+                        max_length=self.max_source_length,
+                        padding="longest", # no padding for causal lm
+                        return_tensors=self.return_tensors, 
+                        truncation=True,
+                        pad_to_multiple_of=self.pad_to_multiple_of
+            )
+            input_ids = tokenized_example.input_ids
+            labels = input_ids.clone()
+
+            
+            seq_indices = torch.where(input_ids == self.tokenizer.sep_token_id)
+            # e.g. [ remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]
+            # input_ids [ <pad> <pad> remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]]
+            # set labels to -100 before sep token under training (padding during evaluation)
+            # (tensor([0, 1]), tensor([122, 113]))
+
+            # for bs_index, seq_index in enumerate(seq_indices[1]):
+            #     labels[bs_index, :seq_index] = -100
+            # mask out prompt in the example text
+            prompt_mask = torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1) > seq_indices[1].unsqueeze(1)
+            if eval_mode:
+                labels = labels.masked_fill(~prompt_mask, self.tokenizer.pad_token_id)
+            else:
+                labels = labels.masked_fill(~prompt_mask, -100)
+
+            
+            tokenized_example["labels"] = labels
+            
+            return tokenized_example
+            
+                
+                
+            
+            # add sep between prompts and labels
+            # indexing sep token  obtain (bs_index , seq_index)
+            # set labels to -100 before sep token
+            # set attention_mask to 0 before sep token
             
             if self.text_only:
                 raise NotImplementedError("text_only is not supported for causal LM")
             else:
+                # if eval_mode:
+                #     input_ids = input_ids.flatten()
+                #     labels = labels.flatten()
+                #     attention_mask = attention_mask.flatten()
+                
+                
+                torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
                 model_inputs["input_ids"] = input_ids
                 model_inputs["labels"] = labels
                 model_inputs["attention_mask"] = attention_mask

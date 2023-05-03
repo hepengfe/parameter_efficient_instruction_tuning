@@ -6,6 +6,7 @@ from torch.nn import CrossEntropyLoss
 import torch
 from transformers import (
     GPT2TokenizerFast,
+    GPT2LMHeadModel,
     AdamW,
     Adafactor,
     get_scheduler,
@@ -62,6 +63,7 @@ logging.basicConfig(level=logging.DEBUG)
 # logging.basicConfig(level=logging.INFO)
 
 logger = get_logger(__name__)
+
 
 
 class TrainingState:
@@ -156,9 +158,9 @@ class PEFTTrainer:
         self.model_trainable_params = None
         self.recover_from = None
         
-        if "llama" in self.model_args.model_name_or_path.lower():
-            self.model_lm_head_weight = LlamaLMHeadModel.from_pretrained(self.potential_model_path).lm_head.weight
-        else:
+        
+        
+        if self.model_args.model_arch != "decoder":
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
         
         if training_args.do_search_hyperparams:
@@ -184,7 +186,7 @@ class PEFTTrainer:
 
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
-  
+        
         
         # TODO: accelerator needs to load model and peft module first anyway
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
@@ -192,6 +194,19 @@ class PEFTTrainer:
 
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
+        # resize token embedding will set requires_grad back to True
+        # we need to set it back to False
+        if self.model_args.tuning_mode != "fine_tuning":
+            if "gpt2" in model_args.model_name_or_path:
+                self.model.transformer.wte.weight.requires_grad = False
+                self.model.transformer.wpe.weight.requires_grad = False
+                self.model.lm_head.weight.requires_grad = False
+            elif "llama" in model_args.model_name_or_path:
+                self.model.lm_head.weight.requires_grad = False
+                self.model.model.embed_tokens.weight.requires_grad = False
+        trainable_params_percent = self.check_trainable_parameters()
+        # self.print_log(f"lora rank {self.peft_args.lora_r} trainable_params_percent {trainable_params_percent}")
+        self.print_log(f"adapter size {self.peft_args.adapter_size} trainable_params_percent {trainable_params_percent}")
         self.load_optimizer_n_scheduler()
         self.build_dataloader()
         if self.use_distributed:
@@ -237,10 +252,9 @@ class PEFTTrainer:
         self.configure_n_load_peft_module() # always load model from scratch for accelerate
 
 
-    def load_optimizer_n_scheduler(self):
-        trainable_params_percent = self.check_trainable_parameters()
-        self.print_log(f"trainable_params: {trainable_params_percent}")
 
+    def load_optimizer_n_scheduler(self):
+        
 
         # lr should be scaled linearly with the number of processes
         if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
@@ -326,9 +340,16 @@ class PEFTTrainer:
 
         if self.tokenizer.pad_token is None:
             assert "gpt2" in self.model_name_or_path or "llama" in self.model_name_or_path, "Only gpt2 or llama is expected not having pad tokens for now"
+            # add <sep> token
+        
+            
             # gpt2 model
-            self.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+            self.tokenizer.add_special_tokens({
+                'pad_token': '[PAD]',
+                'sep_token': '<sep>'
+            })
             self.model.resize_token_embeddings(len(self.tokenizer))
+            
         
         
         self.padding = "max_length" if self.data_args.pad_to_max_length else False
@@ -382,9 +403,6 @@ class PEFTTrainer:
                 self.model = LlamaLMHeadModel.from_pretrained(self.potential_model_path)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
-            
-
-            
         elif "roberta" in self.model_name_or_path:
             self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
         elif "gpt2" in self.model_name_or_path or "bloom" in self.model_name_or_path or "opt" in self.model_name_or_path:
@@ -548,13 +566,17 @@ class PEFTTrainer:
             self.eval_dataset,
             shuffle=False,
             batch_size=self.training_args.per_device_eval_batch_size,
-            collate_fn=self.data_collator
+            # collate_fn=self.data_collator,
+            collate_fn=partial(self.data_collator, eval_mode=True)
         )
+        
+    
         self.test_dataloader = DataLoader(
             self.test_dataset,
             shuffle=False,
             batch_size=self.training_args.per_device_test_batch_size,
-            collate_fn=self.data_collator
+            # collate_fn=self.data_collator,
+            collate_fn=partial(self.data_collator, eval_mode=True)
         )
 
 
@@ -711,23 +733,26 @@ class PEFTTrainer:
             # add and activate adapter
             self.model.add_adapter(adapter_name, config = peft_config, overwrite_ok=reset_peft)
             self.model.train_adapter(adapter_name)
+
             
+            lm_head_adapter_name = f"lm_head-{adapter_name}"
             # trainer.model
             if self.model_args.model_arch == "encoder":
-                self.model.add_classification_head(f"lm_head-{adapter_name}", num_labels=2, overwrite_ok=reset_peft)
+                self.model.add_classification_head(lm_head_adapter_name, num_labels=2, overwrite_ok=reset_peft)
             elif self.model_args.model_arch == "encoder-decoder":
-                self.model.add_seq2seq_lm_head(f"lm_head-{adapter_name}", overwrite_ok=reset_peft)
-                self.model.heads[f"lm_head-{adapter_name}"][0].weight = self.model_lm_head_weight
-                self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = False
-                
-                
-                
-                # self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = True
+                self.model.add_seq2seq_lm_head(lm_head_adapter_name, overwrite_ok=reset_peft)
+                self.model.heads[lm_head_adapter_name][0].weight = self.model_lm_head_weight
+                self.model.heads[lm_head_adapter_name][0].weight.requires_grad = False
+            elif self.model_args.model_arch == "decoder":
+                pass
+                # since we don't fine tune causal lm head and inherit
+                # llama causal model directly, we don't need to add lm head
             else:
                 raise NotImplementedError(
                     f"Not implemented for model arch: {self.model_args.model_arch}"
                 )
-            self.model.set_active_adapters(self.model_args.tuning_mode)
+
+            self.model.set_active_adapters(adapter_name)
             # self.model.freeze_model(True)
             if self.model.active_adapters is None:
                 raise ValueError(
@@ -848,10 +873,18 @@ class PEFTTrainer:
             for n, p in self.model.named_parameters():
                 if p.requires_grad:
                     print(n,p.data.shape)
+        # translate trainable_params to human readable format
+        def human_readable_format(num, precision=3, suffixes=['', 'K', 'M', 'G', 'T', 'P']):
+            m = sum([abs(num/1000.0**x) >= 1 for x in range(1, len(suffixes))])
+            return f'{num/1000.0**m:.{precision}f}{suffixes[m]}'
+        trainable_ratio = trainable_params/self.model_trainable_params
+        trainable_params = human_readable_format(trainable_params)
+        
+        
         return {
             "trainable_params": trainable_params,
             "total_model_params": self.model_trainable_params,
-            "trainable_ratio": trainable_params/self.model_trainable_params
+            "trainable_ratio":trainable_ratio
         }
 
 
@@ -1106,28 +1139,29 @@ class PEFTTrainer:
         # print("extract model")
         from copy import deepcopy
         if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
-            logger.debug('check active adapter')
-            logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
-            logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
+            pass
+            # logger.debug('check active adapter')
+            # model.model.layers
+            # logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
+            # logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
             
             
         
         with torch.no_grad():
             progress_bar = tqdm(dataloader2eval, miniters=0 if not self.training_args.is_cluster else 500)
             for inputs in progress_bar:
-                labels = inputs.pop("labels")
-                # if distrubted data parallel object 
-                
                 if not self.use_distributed:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
-                
+                labels = inputs.pop("labels")
+                # if distrubted data parallel object 
 
                 if self.model_args.tuning_mode == "lora_peft": # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
                                         synced_gpus = True if self.use_distributed else False,
+                                        pad_token_id=self.tokenizer.eos_token_id if self.model_args.model_arch == "decoder" else self.tokenizer.pad_token_id,
                                         # synced_gpus = False,
                                         # pad_token_id=self.tokenizer.pad_token_id,
                     )
@@ -1135,6 +1169,7 @@ class PEFTTrainer:
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
                                             synced_gpus = True if self.use_distributed else False,
+                                            pad_token_id=self.tokenizer.eos_token_id if self.model_args.model_arch == "decoder" else self.tokenizer.pad_token_id,
                                             # synced_gpus = False,
                                             # pad_token_id=self.tokenizer.pad_token_id,
                     )
@@ -1150,7 +1185,13 @@ class PEFTTrainer:
                 outputs_text =  self.tokenizer.batch_decode(outputs)
                 outputs_text = [remove_special_token(t) for t in outputs_text]
                 output_host += outputs_text
+                
+                # labels[labels == self.tokenizer.mask_token_id] = self.tokenizer.pad_token_id
+                # labels[labels == -100] = self.tokenizer.pad_token_id
+                
                 label_host += self.tokenizer.batch_decode(labels)
+
+                
                 
 
         results = self.compute_metrics(
@@ -1455,57 +1496,25 @@ class PEFTTrainer:
 
         
         elif self.model_args.tuning_mode == "lora_adapter":
-            from peft import LoraConfig
-            # peft package
-            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
-            task_type = TaskType.SEQ_2_SEQ_LM
-            config = LoraConfig(
-                task_type=task_type,
-                inference_mode=False,
-                r=cur_lora_r,
-                lora_alpha=77,
-                lora_dropout=0.1,
-                # lora_modules
-                target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
-            )
-            get_peft_model(self.model, config)
 
-            
-            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            # print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-            # while self.peft_args.trainable_params_percentage and cur_trainable_params_percentage < self.peft_args.trainable_params_percentage:
-            #     cur_lora_r += 1
-            #     config = LoraConfig(
-            #         task_type=task_type,
-            #         inference_mode=False,
-            #         r=cur_lora_r,
-            #         lora_alpha=32,
-            #         lora_dropout=0.1,
-            #         target_modules=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
-            #     )
-            #     cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            #     print("cur_lora_r", cur_lora_r, "cur_trainable_params_percentage", cur_trainable_params_percentage)
-
-            
             from transformers.adapters import LoRAConfig
-            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            config = LoRAConfig(r=cur_lora_r,
-                                alpha=16,
-                                attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"]
+
+            config = LoRAConfig(r=self.peft_args.lora_r ,
+                                alpha=32,
+                                attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
+                                # mlp_lora=True,
+                                
                                 )
             self.load_peft_module(config)
 
         elif self.model_args.tuning_mode == "lora_peft":
             from peft import LoraConfig
-            # peft package
-            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
+
             task_type = TaskType.SEQ_2_SEQ_LM
             config = LoraConfig(
                 task_type=task_type,
                 inference_mode=False,
-                r=cur_lora_r,
+                r=self.peft_args.lora_r ,
                 lora_alpha=self.peft_args.lora_alpha,
                 lora_dropout=0.1,
                 # lora_modules
@@ -1807,6 +1816,7 @@ class PEFTTrainer:
         # assert  self.use_distributed is False, "search for hyperparameters doesn't need distributed training"
 
         self.load_pretrained_model_for_peft()
+
         
         # trainable parameters percent list
         # for loop linearly for each hyperparameter for the peft method
