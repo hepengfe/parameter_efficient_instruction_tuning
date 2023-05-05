@@ -1,8 +1,8 @@
 # bash scripts/hfai/hp_search.sh <tuning_method>  <hp_to_search> <script_mode>
 # bash scripts/hfai/hp_search.sh fine_tuning data_size cluster
-# bash scripts/hfai/hp_search.sh lora_peft lr dev_cmd
+# bash scripts/hfai/hp_search.sh lora_peft lr dev_cmd 1
 # bash scripts/hfai/hp_search.sh adapter adapter_size dev
-# bash scripts/hfai/hp_search.sh lora_peft lora_r dev_cmd
+# bash scripts/hfai/hp_search.sh lora_peft lora_r dev_cmd 0
 # bash scripts/hfai/hp_search.sh prefix_tuning  dev_cmd
 
 tuning_mode=$1
@@ -73,9 +73,10 @@ fi
 # hyper seq
 lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
 
-
+# (20 20 15 10 2) 
 lora_ranks=(64 128 256 512 1024)
 adapter_rf=(0.1 0.2 0.3 0.4 0.5)
+# (15 15 10 5 1)
 adapter_szs=(64 128 256 512 1024)
 
 
@@ -212,6 +213,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
         else
             tuning_config="None"
         fi
+
         # tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_steps ${warmup_steps}"
         tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_ratio ${warmup_ratio} --weight_decay ${weight_decay} --label_smoothing_factor ${label_smoothing_factor} --dropout_rate ${dropout_rate}"
 
@@ -220,10 +222,6 @@ for ((i=0; i<${#search_seq[@]}; i++))
         expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_weight_decay_${weight_decay}_dropout_rate_${dropout_rate}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_ratio_${warmup_ratio}
 
         expr_name=${expr_dir//\//_} # replace "/" with "_"
-        
-
-
-        
 
         launch_prefix="hfai python hfai_accelerate.py  launch --config_file ${config_file}"
         launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
@@ -232,6 +230,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
             launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
             launch_suffix="--dev_train"
         fi
+
         launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
 
         if [ $script_mode  == "dev_cmd" ];then

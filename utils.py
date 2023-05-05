@@ -10,7 +10,7 @@ def build_peft_config_name(model_args, peft_args, training_args):
     # peft config
     peft_config_name = ""
     if model_args.tuning_mode in ["lora", "lora_peft", "lora_adapter"]:
-        peft_config_name += "r_" + str(peft_args.lora_r)
+        peft_config_name += "r_" + str(peft_args.lora_r) + "_alpha_" + str(peft_args.lora_alpha)
         peft_config_name += "_module_" + str(peft_args.lora_modules)
     elif model_args.tuning_mode == "ia3":
         peft_config_name += "r_" + str(peft_args.lora_r)
@@ -42,13 +42,12 @@ def build_peft_config_name(model_args, peft_args, training_args):
     # lr
     peft_config_name += "_lr_" + str(training_args.learning_rate)
     # precision
-    peft_config_name += "_bf16_" + str(training_args.bf16)
+    # peft_config_name += "_bf16_" + str(training_args.bf16)
     
     # effective batch size
     peft_config_name += "_bs_" + str(training_args.per_device_train_batch_size)
     peft_config_name += "_grad_acc_" + str(training_args.gradient_accumulation_steps)
-    peft_config_name += "_accelerator_" + str(training_args.use_accelerate)
-    
+
     
     return peft_config_name
 

@@ -518,6 +518,10 @@ def main():
         training_args.per_device_eval_batch_size = 1
         training_args.per_device_train_batch_size = 1
         
+        # test warmup steps
+        # training_args.dev_train_data_size = 1000
+        # training_args.num_train_epochs = 4
+        
     if training_args.do_search_hyperparams:
         peft_args.trainable_params_percentage = sorted([float(v) for v in peft_args.trainable_params_percentage.split(",")])
         os.environ["WANDB_MODE"] = "disabled"
