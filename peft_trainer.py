@@ -1554,11 +1554,10 @@ class PEFTTrainer:
 
         
         elif self.model_args.tuning_mode == "lora_adapter":
-
             from transformers.adapters import LoRAConfig
 
             config = LoRAConfig(r=self.peft_args.lora_r ,
-                                alpha=32,
+                                alpha=self.peft_args.lora_alpha,
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
                                 # mlp_lora=True,
                                 

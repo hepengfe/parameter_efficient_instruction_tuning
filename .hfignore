@@ -8,9 +8,12 @@ __pycache__
 .git
 *.log
 cache/model_
-cache/saved_pretrained/
-cache/saved_pretrained/*.bin
+# cache/saved_pretrained/
+cache/saved_pretrained/google
+cache/saved_pretrained/gpt2
+# cache/saved_pretrained/*.bin
 # cache/saved_pretrained/*.json
+cache/ni_dataset
 cache/tmp
 cache/packages
 cache/*.lock

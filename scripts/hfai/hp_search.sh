@@ -3,6 +3,7 @@
 # bash scripts/hfai/hp_search.sh lora_peft lr dev_cmd
 # bash scripts/hfai/hp_search.sh adapter adapter_size dev
 # bash scripts/hfai/hp_search.sh lora_peft lora_r dev_cmd
+# bash scripts/hfai/hp_search.sh prefix_tuning  dev_cmd
 
 tuning_mode=$1
 hp_to_search=$2
@@ -45,14 +46,16 @@ if [ $tuning_mode == "fine_tuning" ]; then
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     lr=5e-4
     # lr=1e-4
+    lr=1e-3 # (should try higher lr)
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     default_eval_bs=20 # adapter < 15, lora < 20
     eval_bss=(20 20 15 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
     scheduler="linear"
 elif [ $tuning_mode == "adapter" ]; then
-    lr=5e-4
-    # lr=1e-4
+    # lr=5e-4
+    lr=1e-4 # best lr in size 64
+    # lr=1e-3 try higher for larger size
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     default_eval_bs=15 # adapter < 15, lora < 20
