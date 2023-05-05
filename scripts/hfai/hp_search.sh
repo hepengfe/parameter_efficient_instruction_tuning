@@ -34,7 +34,7 @@ default_scheduler="constant"
 
 # optimizer and scheduler
 default_warmup_steps=500
-default_warmup_ratio=0.1
+default_warmup_ratio=0.03
 default_label_smoothing_factor=0
 default_dropout_rate=0
 default_weight_decay=0

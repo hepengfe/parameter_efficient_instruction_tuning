@@ -584,7 +584,7 @@ class PEFTTrainer:
         # with gradient accumulation, per gradient update step is actually multiple steps
         self.end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
         self.warmup_steps = self.end_step * self.training_args.warmup_ratio
-        
+        self.print_log(f"total_step: {self.end_step}, warmup_steps: {self.warmup_steps}")
 
 
     
@@ -1565,7 +1565,7 @@ class PEFTTrainer:
                                 alpha=self.peft_args.lora_alpha,
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
                                 # mlp_lora=True,
-                                dropout=self.peft_args.dropout,
+                                dropout=self.peft_args.dropout_rate,
                                 )
             self.load_peft_module(config)
 
@@ -1578,7 +1578,7 @@ class PEFTTrainer:
                 inference_mode=False,
                 r=self.peft_args.lora_r ,
                 lora_alpha=self.peft_args.lora_alpha,
-                lora_dropout=self.peft_args.dropout,
+                lora_dropout=self.peft_args.dropout_rate,
                 # lora_modules
                 target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             )
@@ -1588,7 +1588,7 @@ class PEFTTrainer:
             from transformers.adapters import IA3Config
 
             config = IA3Config(
-                dropout=self.peft_args.dropout,
+                dropout=self.peft_args.dropout_rate,
             )
             self.load_peft_module(config)
 

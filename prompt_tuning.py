@@ -63,7 +63,7 @@ class PeftArguments:
         metadata={"help": "lore modules to be reparameterized."}
     )
     
-    dropout: float = field(
+    dropout_rate: float = field(
         default=0.0,
         metadata={"help": "dropout rate"}
     )
