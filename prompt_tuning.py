@@ -392,9 +392,16 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=0.0,
         metadata={ "help": "The label smoothing factor." },
     )
+    scheduler_type : str = field(
+        default="constant",
+        metadata={ "help": "The scheduler type." },
+    )
+    warmup_steps: int = field(
+        default=0,
+        metadata={ "help": "The warmup steps." },
+    )
     
 
-    
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -460,9 +467,6 @@ def main():
         training_args.per_device_eval_batch_size = 1
         training_args.dev_run_data_size = 16
         # model_args.tuning_mode = "fine_tuning"
-    
-    
-
 
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
@@ -506,7 +510,11 @@ def main():
     if training_args.dev_eval:
         # dev issues such as empty prediction (although it's mostly likely a generation issue)
         pass
-        
+
+    
+
+
+
 
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"

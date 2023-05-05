@@ -207,8 +207,12 @@ class PEFTTrainer:
         trainable_params_percent = self.check_trainable_parameters()
         # self.print_log(f"lora rank {self.peft_args.lora_r} trainable_params_percent {trainable_params_percent}")
         self.print_log(f"adapter size {self.peft_args.adapter_size} trainable_params_percent {trainable_params_percent}")
-        self.load_optimizer_n_scheduler()
+        self.end_step = -1
         self.build_dataloader()
+        assert self.end_step > 0
+        # some scheduler require num_training_steps which is depedent on len(dataset)
+        self.load_optimizer_n_scheduler()
+        
         if self.use_distributed:
             if self.distributed_type == DistributedType.DEEPSPEED:
                 # model prepare should be called with dataloader prepare in deepspeed mode
@@ -273,7 +277,12 @@ class PEFTTrainer:
                 eps=self.training_args.adam_epsilon,
                 weight_decay=self.training_args.weight_decay,
             )
-            self.scheduler = get_constant_schedule(self.optimizer)
+            self.scheduler = get_scheduler(
+                    name=self.training_args.scheduler_type,
+                    optimizer=self.optimizer,
+                    num_training_steps=self.end_step,
+                    num_warmup_steps=self.training_args.warmup_steps,
+            )
         else:
             # deepspeed
             # adapter deepspeed
@@ -295,15 +304,29 @@ class PEFTTrainer:
                     lr=self.training_args.learning_rate   
             )
             else:
+                
+                    
+                    
                 # fine tuning, lora adapter
                 self.optimizer = accelerate.utils.DummyOptim(
                     self.model.parameters(),
                     lr=self.training_args.learning_rate
                 )
+            
 
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
             self.print_log(f"Learning rate(lr) is set to {self.optimizer.lr}", )
             self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
+
+
+        # some test for different peft setup to align original paper setup
+        if "lora" in self.model_args.tuning_mode:
+            assert self.training_args.scheduler_type == "linear"
+            assert self.training_args.warmup_steps == 500
+            assert isinstance(self.scheduler, torch.optim.lr_scheduler.LambdaLR)
+
+            
+            
 
         # # self.optimizer = Adafactor(
         # #     self.model.parameters(),
@@ -521,6 +544,8 @@ class PEFTTrainer:
             # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
 
         return model_inputs
+
+
     def build_dataloader(self):
         self.load_data_collator()
         self.load_dataset()
@@ -549,6 +574,12 @@ class PEFTTrainer:
             assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
             assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
         self.load_dataloader()
+
+
+        train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
+        # with gradient accumulation, per gradient update step is actually multiple steps
+        self.end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        
 
 
     
@@ -906,9 +937,14 @@ class PEFTTrainer:
         assert self.training_args.num_train_epochs is not None, "num_train_epochs is not set"
         assert self.training_args.max_steps == -1, "max_steps is not supported yet, but got {}".format(self.training_args.max_steps)
 
+        train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
+        expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
+        assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
+
+
         # init run 
         global_step = 0
-        best_metric_val = 0
+        self.best_metric_val = 0
         start_epoch = 0
         start_step = 0
         loss = 0
@@ -926,7 +962,7 @@ class PEFTTrainer:
             start_epoch = self.train_state.get("epoch")
             start_step = self.train_state.get("step")
             global_step =  self.train_state.get("global_step")
-            best_metric_val = self.train_state.get("best_metric_val")
+            self.best_metric_val = self.train_state.get("best_metric_val")
         # if self.accelerator.is_main_process:
         #     import pdb; pdb.set_trace()
         #     print('check keys')
@@ -939,14 +975,9 @@ class PEFTTrainer:
         
         # NOTE: gradient accumulation step is not unrelated to the computation below
         
-        train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
 
-        # with gradient accumulation, per gradient update step is actually multiple steps
-        end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
-        expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
-        assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
         
-        if global_step >= end_step:
+        if global_step >= self.end_step:
             self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             self.print_log("Ending training...")
             return
@@ -964,7 +995,7 @@ class PEFTTrainer:
             self.accelerator.log(self.training_args.to_dict())
 
             progress_bar = tqdm(
-                range(global_step, end_step),
+                range(global_step, self.end_step),
                 disable=not self.accelerator.is_local_main_process,
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
@@ -976,7 +1007,7 @@ class PEFTTrainer:
             self.print_log(f"skip first {start_step} steps in train_dataloader")
         else:
             progress_bar = tqdm(
-                range(global_step, end_step),
+                range(global_step, self.end_step),
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
                 miniters=self.training_args.logging_steps
@@ -1057,7 +1088,7 @@ class PEFTTrainer:
                             step=global_step)
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
                     logging_loss = 0
-                best_metric_val = self.train_state.get("best_metric_val")
+                self.best_metric_val = self.train_state.get("best_metric_val")
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training

@@ -23,12 +23,16 @@ default_dataset="ni"
 
 # lora
 default_lora_r=64
-default_lora_alpha=32
+default_lora_alpha=$default_lora_r
 default_lora_modules="qv"
 
 # adapter
 default_adapter_size=64
+default_scheduler="constant"
 
+# optimizer and scheduler
+default_warmup_steps=500
+default_label_smoothing_factor=0
 
 eval_bss=(20 20 20 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
 # two types of training mode
@@ -38,13 +42,14 @@ if [ $tuning_mode == "fine_tuning" ]; then
     config_file="configs/hfai/default_config_deepspeed_hf.yaml"
     default_eval_step=5000
     default_eval_bs=15
-elif [ $tuning_mode == "lora_peft" ]; then
+elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     lr=5e-4
     # lr=1e-4
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     default_eval_bs=20 # adapter < 15, lora < 20
     eval_bss=(20 20 15 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
+    scheduler="linear"
 elif [ $tuning_mode == "adapter" ]; then
     lr=5e-4
     # lr=1e-4
@@ -58,6 +63,8 @@ fi
 
 # hyper seq
 lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
+label_smoothing_factors=(0 1e-1)
+
 lora_ranks=(64 128 256 512 1024)
 adapter_rf=(0.1 0.2 0.3 0.4 0.5)
 adapter_szs=(64 128 256 512 1024)
@@ -79,7 +86,7 @@ data_folders=("default_train8_val_50" "default_train_32_val_50" "default_train_6
 
 # set search seq and set other hyperparameter to default
 # TODO: generalize search seq condition, for example, lr -> search_seq=$lrs and make all other hyepers to be default 
-
+scheduler=$default_scheduler
 if [ $hp_to_search == "lr" ]; then
     search_seq=("${lrs[@]}")
     eval_bs=$default_eval_bs
@@ -87,10 +94,11 @@ elif [ $hp_to_search == "data_size" ]; then
     search_seq=("${data_folders[@]}")
     eval_bs=$default_eval_bs
 else
-    if [ $tuning_mode == "lora_peft" ]; then
+    if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
         if [ $hp_to_search == "lora_r" ]; then
             search_seq=("${lora_ranks[@]}")
             eval_bs=$default_eval_bs
+            scheduler="linear"
         else
             echo "Wrong input"
             exit 1
@@ -115,7 +123,7 @@ fi
 default_save_step=$((default_eval_step/5)) # 5000/5=1000
 defualt_logging_steps=$((default_eval_step/20)) # 5000/20=250
 
-if [ $script_mode == "cluster" ]; then
+if [ $script_mode == "hfai" ]; then
     hfai workspace push  --force --no_zip
 fi
 
@@ -128,6 +136,10 @@ for ((i=0; i<${#search_seq[@]}; i++))
         dataset=$default_dataset
         # training/evaluation
         eval_bs=$default_eval_bs
+        
+        # optimizer and scheduler
+        warmup_steps=$default_warmup_steps
+        
 
         # set default hp
         # peft config
@@ -156,7 +168,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
         fi
 
 
-
+        label_smoothing_factor=$default_label_smoothing_factor
         # expr name
         model_name=${default_model//\//_} # flatten "/" 
         # dataset/dataset_config/model/tuning_mode/tuning_config/lr
@@ -167,20 +179,23 @@ for ((i=0; i<${#search_seq[@]}; i++))
 
         # after hp are determined, set tuning_config
 
-        if [ $tuning_mode == "lora_peft" ]; then
+        if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
             tuning_config="r_${lora_r}_alpha_${lora_alpha}_modules_${lora_modules}" # for lora_peft
-            tuning_args="--tuning_mode ${tuning_mode} --lora_r ${lora_r} --lora_alpha ${lora_alpha} --learning_rate ${lr}"
+            tuning_args="--tuning_mode ${tuning_mode} --lora_r ${lora_r} --lora_alpha ${lora_alpha}"
         elif [ $tuning_mode == "adapter" ]; then
             tuning_config="sz_${adapter_size}" # for adapter_peft
-            tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${adapter_size} --learning_rate ${lr}"
+            tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${adapter_size} "
         elif [ $tuning_mode == "fine_tuning" ]; then
             tuning_config="None"
-            tuning_args="--tuning_mode ${tuning_mode} --learning_rate ${lr}"
+            tuning_args="--tuning_mode ${tuning_mode}"
         else
             tuning_config="None"
         fi
+        tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_steps ${warmup_steps}"
 
-        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_${label_smoothing}
+
+        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_steps_${warmup_steps}
+
         expr_name=${expr_dir//\//_} # replace "/" with "_"
         
 
@@ -202,7 +217,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
             echo "expr_dir: $expr_dir"
             echo "launch command: $launch_command"
             echo -e "\n\n"
-        elif [[ $script_mode == "cluster" || $script_mode == "dev" ]];then
+        elif [[ $script_mode == "hfai" || $script_mode == "dev" ]];then
             echo $launch_command
             eval $launch_command
         fi
