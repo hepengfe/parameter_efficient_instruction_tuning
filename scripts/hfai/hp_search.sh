@@ -213,11 +213,11 @@ for ((i=0; i<${#search_seq[@]}; i++))
             tuning_config="None"
         fi
         # tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_steps ${warmup_steps}"
-        tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_ratio ${warmup_ratio} --weight_decay ${weight_decay} --label_smoothing_factor ${label_smoothing_factor}"
+        tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_ratio ${warmup_ratio} --weight_decay ${weight_decay} --label_smoothing_factor ${label_smoothing_factor} --dropout_rate ${dropout_rate}"
 
 
         # expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_steps_${warmup_steps}
-        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_weight_decay_${weight_decay}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_ratio_${warmup_ratio}
+        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_weight_decay_${weight_decay}_dropout_rate_${dropout_rate}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_ratio_${warmup_ratio}
 
         expr_name=${expr_dir//\//_} # replace "/" with "_"
         

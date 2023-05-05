@@ -62,6 +62,11 @@ class PeftArguments:
         default="qv",
         metadata={"help": "lore modules to be reparameterized."}
     )
+    
+    dropout: float = field(
+        default=0.0,
+        metadata={"help": "dropout rate"}
+    )
 
     # adaptor
     adapter_size: int = field(

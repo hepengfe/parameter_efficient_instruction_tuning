@@ -1565,7 +1565,7 @@ class PEFTTrainer:
                                 alpha=self.peft_args.lora_alpha,
                                 attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
                                 # mlp_lora=True,
-                                
+                                dropout=self.peft_args.dropout,
                                 )
             self.load_peft_module(config)
 
@@ -1578,7 +1578,7 @@ class PEFTTrainer:
                 inference_mode=False,
                 r=self.peft_args.lora_r ,
                 lora_alpha=self.peft_args.lora_alpha,
-                lora_dropout=0.1,
+                lora_dropout=self.peft_args.dropout,
                 # lora_modules
                 target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
             )
@@ -1586,11 +1586,9 @@ class PEFTTrainer:
 
         elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config
-            cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
 
             config = IA3Config(
-                r = cur_lora_r,
+                dropout=self.peft_args.dropout,
             )
             self.load_peft_module(config)
 
