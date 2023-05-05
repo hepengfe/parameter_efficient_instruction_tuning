@@ -158,7 +158,9 @@ class PEFTTrainer:
         self.model_trainable_params = None
         self.recover_from = None
         
+        # init
         self.best_metric_val = - 1
+        self.warmup_steps = -1
         
         if self.model_args.model_arch != "decoder":
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
@@ -210,6 +212,7 @@ class PEFTTrainer:
         self.end_step = -1
         self.build_dataloader()
         assert self.end_step > 0
+        assert self.warmup_steps > 0
         # some scheduler require num_training_steps which is depedent on len(dataset)
         self.load_optimizer_n_scheduler()
         
@@ -281,20 +284,22 @@ class PEFTTrainer:
                     name=self.training_args.scheduler_type,
                     optimizer=self.optimizer,
                     num_training_steps=self.end_step,
-                    num_warmup_steps=self.training_args.warmup_steps,
+                    num_warmup_steps=self.warmup_steps,
             )
         else:
             # deepspeed
-            # adapter deepspeed
-            if self.model_args.tuning_mode not in ["fine_tuning" ,"lora_peft"]:
+            # lora adapter and other adapter methods
+            if self.model_args.tuning_mode not in ["fine_tuning"] + PEFT_MODULES:
                 optimizer_grouped_parameters = [
                     {
                         "params": [p for p in self.model.parameters() if p.requires_grad],
-                        "lr": self.training_args.learning_rate
+                        "lr": self.training_args.learning_rate,
+                        "weight_decay": self.training_args.weight_decay,
                     },
                     {
                         "params": [p for p in self.model.parameters() if not p.requires_grad],
-                        "lr": 0
+                        "lr": 0,
+                        "weight_decay": 0.0
                     },
                 ]
                 for param in self.model.parameters():
@@ -302,31 +307,30 @@ class PEFTTrainer:
                 self.optimizer = accelerate.utils.DummyOptim(
                     optimizer_grouped_parameters,
                     lr=self.training_args.learning_rate   
-            )
+                )
             else:
-                
-                    
-                    
-                # fine tuning, lora adapter
+                # fine tuning, peft package methods
                 self.optimizer = accelerate.utils.DummyOptim(
                     self.model.parameters(),
-                    lr=self.training_args.learning_rate
+                    lr=self.training_args.learning_rate,
+                    weight_decay=self.training_args.weight_decay,
                 )
-            
 
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
             self.print_log(f"Learning rate(lr) is set to {self.optimizer.lr}", )
-            self.scheduler = accelerate.utils.DummyScheduler(self.optimizer)
+            self.scheduler = accelerate.utils.DummyScheduler(
+                self.optimizer,
+                num_training_steps=self.end_step,
+                num_warmup_steps=self.warmup_steps,
+            )
 
 
         # some test for different peft setup to align original paper setup
         if "lora" in self.model_args.tuning_mode:
             assert self.training_args.scheduler_type == "linear"
-            assert self.training_args.warmup_steps == 500
+            # assert self.training_args.warmup_steps == 500
             assert isinstance(self.scheduler, torch.optim.lr_scheduler.LambdaLR)
 
-            
-            
 
         # # self.optimizer = Adafactor(
         # #     self.model.parameters(),
@@ -579,6 +583,7 @@ class PEFTTrainer:
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
         self.end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        self.warmup_steps = self.end_step * self.training_args.warmup_ratio
         
 
 

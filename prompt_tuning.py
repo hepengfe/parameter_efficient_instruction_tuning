@@ -367,11 +367,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=False,
         metadata={ "help": "Whether to run in dev mode." },
     )
-    
+
     dev_eval: bool = field(
         default=False,
     )
-    
+
     use_accelerate: bool = field(
         default=False,
         metadata={ "help": "Whether to use accelerate." },
@@ -382,25 +382,37 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default = False,
         metadata={ "help": "Whether to run on the cluster." },
     )
-    
+
     do_search_hyperparams: bool = field(
         default=False,
         metadata={ "help": "Whether to search hyperparameters." },
     )
-    
+
     label_smoothing_factor: float = field(
         default=0.0,
         metadata={ "help": "The label smoothing factor." },
     )
+
+    weight_decay: float = field(
+        default=0.0,
+        metadata={ "help": "The weight decay." },
+    )
+
     scheduler_type : str = field(
         default="constant",
         metadata={ "help": "The scheduler type." },
     )
-    warmup_steps: int = field(
-        default=0,
-        metadata={ "help": "The warmup steps." },
+
+    # warmup_steps: int = field(
+    #     default=0,
+    #     metadata={ "help": "The warmup steps." },
+    # )
+
+    warmup_ratio: float = field(
+        default=0.0,
+        metadata={ "help": "The warmup ratio." },
     )
-    
+
 
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))

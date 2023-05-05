@@ -8,6 +8,7 @@
 tuning_mode=$1
 hp_to_search=$2
 script_mode=$3
+training_setting=$4
 
 default_data_folder="default_train_707_val_50"
 
@@ -33,11 +34,15 @@ default_scheduler="constant"
 
 # optimizer and scheduler
 default_warmup_steps=500
+default_warmup_ratio=0.1
 default_label_smoothing_factor=0
-
+default_dropout_rate=0
+default_weight_decay=0
 eval_bss=(20 20 20 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
 # two types of training mode
 # deepspeed lower save/eval interval
+
+# tuning mode fixed setup
 if [ $tuning_mode == "fine_tuning" ]; then
     lr=1e-5
     config_file="configs/hfai/default_config_deepspeed_hf.yaml"
@@ -52,6 +57,7 @@ elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     default_eval_bs=20 # adapter < 15, lora < 20
     eval_bss=(20 20 15 10 2) # for peft_hp only, higher trainable params, lower eval bs for 40GB GPU.
     scheduler="linear"
+
 elif [ $tuning_mode == "adapter" ]; then
     # lr=5e-4
     lr=1e-4 # best lr in size 64
@@ -66,7 +72,7 @@ fi
 
 # hyper seq
 lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
-label_smoothing_factors=(0 1e-1)
+
 
 lora_ranks=(64 128 256 512 1024)
 adapter_rf=(0.1 0.2 0.3 0.4 0.5)
@@ -142,6 +148,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
         
         # optimizer and scheduler
         warmup_steps=$default_warmup_steps
+        warmup_ratio=$default_warmup_ratio
         
 
         # set default hp
@@ -171,7 +178,18 @@ for ((i=0; i<${#search_seq[@]}; i++))
         fi
 
 
-        label_smoothing_factor=$default_label_smoothing_factor
+        if [ $training_setting == "0" ]; then
+            label_smoothing_factor=$default_label_smoothing_factor
+            dropout_rate=$default_dropout_rate
+            weight_decay=$default_weight_decay
+        elif [ $training_setting == "1" ]; then
+            label_smoothing_factor=0.1
+            dropout_rate=0.1
+            weight_decay=0.01
+        else
+            echo "Wrong training setting"
+            exit 1
+        fi
         # expr name
         model_name=${default_model//\//_} # flatten "/" 
         # dataset/dataset_config/model/tuning_mode/tuning_config/lr
@@ -194,10 +212,12 @@ for ((i=0; i<${#search_seq[@]}; i++))
         else
             tuning_config="None"
         fi
-        tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_steps ${warmup_steps}"
+        # tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_steps ${warmup_steps}"
+        tuning_args+=" --learning_rate ${lr} --scheduler ${scheduler} --warmup_ratio ${warmup_ratio} --weight_decay ${weight_decay} --label_smoothing_factor ${label_smoothing_factor}"
 
 
-        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_steps_${warmup_steps}
+        # expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_steps_${warmup_steps}
+        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_weight_decay_${weight_decay}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_ratio_${warmup_ratio}
 
         expr_name=${expr_dir//\//_} # replace "/" with "_"
         
