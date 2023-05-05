@@ -1516,7 +1516,6 @@ class PEFTTrainer:
 
         
         elif self.model_args.tuning_mode == "lora_adapter":
-
             from transformers.adapters import LoRAConfig
 
             config = LoRAConfig(r=self.peft_args.lora_r ,
