@@ -158,7 +158,7 @@ class PEFTTrainer:
         self.model_trainable_params = None
         self.recover_from = None
         
-        
+        self.best_metric_val = - 1
         
         if self.model_args.model_arch != "decoder":
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
@@ -248,7 +248,9 @@ class PEFTTrainer:
 
 
     def load_model_n_peft_module(self, device="cuda"):
-        self.load_pretrained_model_for_peft()
+        self.model = self.load_pretrained_model()
+        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
+        assert self.model_trainable_params > 0, "Model has no trainable parameters"
         self.configure_n_load_peft_module() # always load model from scratch for accelerate
 
 
@@ -358,7 +360,7 @@ class PEFTTrainer:
             print('gpt2/llama requires padding to max length')
             self.padding = "max_length"
 
-    def load_pretrained_model_for_peft(self):
+    def load_pretrained_model(self, config=None):
         """
         1. Load model, tokenizer by model architecture and peft packages.
         2. load model from potential checkpoint/saved_pretrained model
@@ -378,49 +380,45 @@ class PEFTTrainer:
                 # self.accelerator.wait_for_everyone()
 
                 if os.path.exists(self.potential_model_path):
-                    self.model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
+                    model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
-                    self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir,)
+                    model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 if os.path.exists(self.potential_model_path):
-                    self.model = AutoAdapterModel.from_pretrained(self.potential_model_path)
+                    model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
                 else:
-                    self.model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
+                    model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
                 
                     
             elif self.model_args.tuning_mode in PEFT_MODULES:
                 # NOTE: this is not compatible if loading for the first time as
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
                 if os.path.exists(self.potential_model_path):
-                    self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
-                    self.model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
         elif "llama" in self.model_name_or_path.lower():
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
-                self.model = LlamaLMHeadModel.from_pretrained(self.potential_model_path)
+                model = LlamaLMHeadModel.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
         elif "roberta" in self.model_name_or_path:
-            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
+            model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
         elif "gpt2" in self.model_name_or_path or "bloom" in self.model_name_or_path or "opt" in self.model_name_or_path:
             from transformers import AutoModelForCausalLM
-            self.model = AutoModelForCausalLM.from_pretrained(
+            model = AutoModelForCausalLM.from_pretrained(
                 self.model_name_or_path,
                 # from_tf=bool(".ckpt" in self.model_name_or_path),
                 # config=m_config,
                 cache_dir=self.training_args.cache_dir,
-            )
+                config = config)
         else:
             raise NotImplementedError("Model not supported: " + self.model_name_or_path)
 
-
-        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-
-        assert self.model_trainable_params > 0, "Model has no trainable parameters"
-
+        return model
 
     def preprocess(self, examples, class_ids = [0,1], evaluation=False):
         prefix_prompt = ""
@@ -1015,7 +1013,7 @@ class PEFTTrainer:
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
-                        self.save_and_eval(global_step, best_metric_val)
+                        self.save_and_eval(global_step)
 
                 else:
                     for k in inputs:
@@ -1026,7 +1024,7 @@ class PEFTTrainer:
                     loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
-                    self.save_and_eval(global_step, best_metric_val)
+                    self.save_and_eval(global_step)
 
                 if self.training_args.is_cluster:
                     import hfai
@@ -1056,17 +1054,20 @@ class PEFTTrainer:
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
-            self.save_and_eval(global_step, best_metric_val)
-            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.train_state.get('best_metric_val')}")
+            self.save_and_eval(global_step)
+            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.best_metric_val}")
             
 
-        self.log({
-            "best_metric_val": best_metric_val
-        }, step=global_step)
-        # save per epoch / at the end of training
-        self.accelerator.save_state(
-            self.training_args.output_dir
+        self.log(
+        {
+            "best_metric_val": self.best_metric_val
+        }, step=global_step
         )
+        # save and eval per epoch / at the end of training
+        # self.accelerator.save_state(
+        #     self.training_args.output_dir
+        # )
+        self.save_and_eval(global_step)
         self.accelerator.end_training()
 
 
@@ -1114,17 +1115,36 @@ class PEFTTrainer:
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
         elif mode == "test":
-            best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+            # try to load best checkpoint
+
+            
             dataset2eval = self.test_dataset
             dataloader2eval = self.test_dataloader
-            assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
-            print("load from existing state: ", best_cp_dir)
+            
+            
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
             try:
+                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+                print("load from existing state: ", best_cp_dir)
+                assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
                 self.accelerator.load_state(best_cp_dir)
             except Exception as e:
                 print(f"load state failed, try to load from model_path due to \n {e}")
-                model = AutoModelForSeq2SeqLM.from_pretrained(self.model_args.model_name_or_path)
+                sharded_model_path = os.path.join(best_cp_dir, "save_pretrained")
+                config = AutoConfig.from_pretrained(sharded_model_path,
+                                                    local_files_only=True)
+                # reload tokenizer in this case
+                self.tokenizer = AutoTokenizer.from_pretrained(sharded_model_path,
+                                                local_files_only=True)
+
+                model = self.load_pretrained_model(sharded_model_path,
+                                                   config = config,
+                                                   local_files_only=True)
+                if hasattr(self.model, "load_adapter"):
+                    adapter_path = os.path.join(sharded_model_path, self.model_args.tuning_mode)
+                    model.load_adapter(adapter_path)
+                
+                # model = AutoModelForSeq2SeqLM.from_pretrained(self.model_args.model_name_or_path)
                 # prepare model with dataloader (dataloader is already prepared tho)
                 # move model to device and possibly ddp or deepspeed
                 model, dataloader2eval = self.accelerator.prepare(model, dataloader2eval)
@@ -1465,7 +1485,7 @@ class PEFTTrainer:
 
     def configure_n_load_peft_module(self):
         # model loading procedure:
-        # 1. load model from model_name_or_path    (self.load_pretrained_model_for_peft())
+        # 1. load model from model_name_or_path    (self.load_pretrained_model())
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
         if self.model_args.tuning_mode == "prompt_tuning":
             cur_prompt_len = 1
@@ -1699,7 +1719,7 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
-    def save_and_eval(self, global_step, best_metric_val):
+    def save_and_eval(self, global_step):
         """
         if global step satisfies condition, save and/or evaluate.
         """
@@ -1711,17 +1731,17 @@ class PEFTTrainer:
             results = self.evaluate(step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
-            if cur_metric_val > best_metric_val:
+            if cur_metric_val > self.best_metric_val:
                 self.save(global_step, save_best_checkpoint=True)
-                best_metric_val = cur_metric_val
+                self.best_metric_val = cur_metric_val
                 self.log(
                     {
-                        "best_metric_val": best_metric_val,
+                        "best_metric_val": self.best_metric_val,
                         "best_checkpoint_global_step": global_step,
                     },
                     step=global_step
                 )
-                self.print_log(f"best_metric_val: {best_metric_val}, best_checkpoint_global_step: {global_step}")
+                self.print_log(f"best_metric_val: {self.best_metric_val}, best_checkpoint_global_step: {global_step}")
 
 
 
@@ -1743,24 +1763,32 @@ class PEFTTrainer:
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         self.accelerator.save_state(checkpoint_folder_path_to_save)
 
+
+        # save sharded checkpoint into another model
+        sharded_model_path = os.path.join(checkpoint_folder_path_to_save, "save_pretrained")
         if save_best_checkpoint:
-            self.tokenizer.save_pretrained(checkpoint_folder_path_to_save)
             unwrapped_model = self.accelerator.unwrap_model(self.model)
+
+            if self.accelerator.is_main_process:
+                self.tokenizer.save_pretrained(sharded_model_path)
             if self.model_args.tuning_mode == "fine_tuning":
-                unwrapped_model.save_pretrained(checkpoint_folder_path_to_save,
+                unwrapped_model.save_pretrained(sharded_model_path,
                                                 is_main_process=self.accelerator.is_main_process, save_function=self.accelerator.save, state_dict=self.accelerator.get_state_dict(unwrapped_model))
             else:
                 # PEFT
-                state_dict = self.accelerator.get_state_dict(self.model)
                 if self.accelerator.is_main_process:
-                    unwrapped_model.save_pretrained(checkpoint_folder_path_to_save, state_dict=state_dict)
+                    state_dict = self.accelerator.get_state_dict(self.model)
+                    unwrapped_model.save_pretrained(sharded_model_path, state_dict=state_dict)
+                    # adapter pacakge
+                    if hasattr(unwrapped_model, "save_all_adapters"):
+                        unwrapped_model.save_all_adapters(sharded_model_path)
 
         if self.accelerator.is_main_process:
             if remove_old_cp:
                 remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
             self.train_state.save_to_json(checkpoint_folder_path_to_save)
-
-        print("Model saving time in seconds:", time.time() - start_time)
+        
+            print("Model saving time in seconds:", time.time() - start_time)
 
     def load_previous_run(self):
         loaded = False
@@ -1815,7 +1843,7 @@ class PEFTTrainer:
     def search_for_hyperperameters(self):
         # assert  self.use_distributed is False, "search for hyperparameters doesn't need distributed training"
 
-        self.load_pretrained_model_for_peft()
+        self.model = self.load_pretrained_model()
 
         
         # trainable parameters percent list

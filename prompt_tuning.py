@@ -34,7 +34,7 @@ class ModelArguments:
     )
 
     tuning_mode: str = field(
-        default="lora",
+        default="adapter",
         metadata={"help": "tuning mode, either fine tuning or peft"}
     )
 
@@ -402,7 +402,8 @@ def main():
         os.environ['HF_DATASETS_CACHE'] = "cache"
         os.environ["WANDB_MODE"] = "offline"
         # logging_dir
-        training_args.logging_dir = os.path.join("/ceph-jd/pub/jupyter/wangyizhong/notebooks/", training_args.logging_dir)  
+        training_args.logging_dir = os.path.join(
+            "/ceph-jd/pub/jupyter/wangyizhong/notebooks/", training_args.logging_dir)  
         logging.getLogger().setLevel(logging.ERROR) # set all logging to error to prevent error message in warnings
     else:
         training_args.logging_dir = os.path.join("./logs", training_args.logging_dir)
@@ -463,6 +464,7 @@ def main():
         os.environ["WANDB_MODE"] = "disabled"
         eval_logger = logging.getLogger("compute_metrics.py")
         eval_logger.setLevel(logging.DEBUG)
+        training_args.learning_rate = 0.01
         # try to adjust train/eval bs during dev run
         training_args.dev_train_data_size = 10
         
@@ -471,9 +473,9 @@ def main():
         # training_args.eval_steps = 5
         training_args.logging_steps=10
         # async eval and save
-        training_args.save_steps = 30
-        training_args.eval_steps = 10
-        training_args.num_train_epochs = 10
+        training_args.save_steps = 300
+        training_args.eval_steps = 30
+        training_args.num_train_epochs = 2
         # # test eval bs
         # training_args.eval_steps = 1
         # training_args.save_steps = 1000 # no save needed actually
@@ -481,7 +483,15 @@ def main():
         # training_args.per_device_train_batch_size = 1
         training_args.per_device_eval_batch_size = 1
         training_args.per_device_train_batch_size = 1
-
+        
+        # test save
+        training_args.num_train_epochs = 1
+        training_args.dev_train_data_size = 12 # number of gpus
+        training_args.save_steps = 4
+        training_args.eval_steps = 4
+        training_args.per_device_eval_batch_size = 1
+        training_args.per_device_train_batch_size = 1
+        
     if training_args.do_search_hyperparams:
         peft_args.trainable_params_percentage = sorted([float(v) for v in peft_args.trainable_params_percentage.split(",")])
         os.environ["WANDB_MODE"] = "disabled"
