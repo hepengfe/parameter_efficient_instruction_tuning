@@ -180,7 +180,7 @@ for ((i=0; i<${#search_seq[@]}; i++))
             tuning_config="None"
         fi
 
-        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}
+        expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_${label_smoothing}
         expr_name=${expr_dir//\//_} # replace "/" with "_"
         
 

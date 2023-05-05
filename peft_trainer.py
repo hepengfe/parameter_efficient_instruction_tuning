@@ -46,7 +46,7 @@ import shutil
 from util.compute_metrics import compute_metrics, compute_grouped_metrics
 from accelerate.utils import DistributedType
 import time
-
+from transformers.trainer_pt_utils import LabelSmoother
 # modules use two pacakges 
 ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
 PEFT_MODULES=["prompt_tuning", "lora_peft"]
@@ -182,7 +182,7 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
-        
+        self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
 
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
@@ -984,12 +984,15 @@ class PEFTTrainer:
 
         self.model.train()
         logging_loss = 0
+        
+
         for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
             if self.accelerator.is_local_main_process:
                 self.print_log(f"------------new epoch: {epoch} global_step: {global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
-                
+                if self.label_smoother is not None and "labels" in inputs:
+                    labels = inputs.pop("labels")
                 if self.use_distributed:
                     # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
@@ -1001,10 +1004,14 @@ class PEFTTrainer:
                                 "global_step": global_step,
                             }
                         )
+                        
+                        if self.label_smoother is None:
+                            outputs = self.model(**inputs)
+                            loss = outputs["loss"]
+                        else:
+                            outputs = self.model(**inputs)
+                            loss = self.label_smoother(outputs, labels)
 
-                        # move inputs to device
-                        outputs = self.model(**inputs)
-                        loss = outputs["loss"]
                         # log before backward
                         self.accelerator.backward(loss) # it does gradient acc internally
                         

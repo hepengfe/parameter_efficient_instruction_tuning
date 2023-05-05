@@ -388,6 +388,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to search hyperparameters." },
     )
     
+    label_smoothing_factor: float = field(
+        default=0.0,
+        metadata={ "help": "The label smoothing factor." },
+    )
+    
 
     
 def main():
