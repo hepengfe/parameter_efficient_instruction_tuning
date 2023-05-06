@@ -22,9 +22,9 @@ default_lora_r=$LORA_RANK
 default_lora_alpha=$default_lora_r
 default_lora_modules="qv"
 
-# adapter
-default_adapter_size=64
-default_scheduler="constant"
+
+
+default_scheduler="linear"
 
 # optimizer and scheduler
 default_warmup_ratio=0.03
@@ -35,9 +35,9 @@ default_warmup_ratio=0.03
 
 
 declare -A lora_rank2bs
+declare -A adapter_size2bs
 lora_rank2bs=(["8"]=20 ["32"]=20 ["64"]=20 ["128"]=20 ["256"]=15 ["512"]=10)
-eval_bs=${lora_rank2bs[$LORA_RANK]}
-# adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
+adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
 
 
 scheduler=$default_scheduler
@@ -50,10 +50,12 @@ elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     scheduler="linear"
-
+    eval_bs=${lora_rank2bs[$LORA_RANK]}
 elif [ $tuning_mode == "adapter" ]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
+    eval_bs=${adapter_size2bs[$ADAPATER_SIZE]}
+    scheduler="linear"
 fi
 
 
@@ -84,8 +86,7 @@ lora_r=$default_lora_r
 lora_alpha=$default_lora_alpha
 lora_modules=$default_lora_modules
 
-# adapter
-adapter_size=$default_adapter_size
+
 
 
 
@@ -103,8 +104,8 @@ if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     tuning_config="r_${lora_r}_alpha_${lora_alpha}_modules_${lora_modules}" # for lora_peft
     tuning_args="--tuning_mode ${tuning_mode} --lora_r ${lora_r} --lora_alpha ${lora_alpha}"
 elif [ $tuning_mode == "adapter" ]; then
-    tuning_config="sz_${adapter_size}" # for adapter_peft
-    tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${adapter_size} "
+    tuning_config="sz_${ADAPATER_SIZE}" # for adapter_peft
+    tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${ADAPATER_SIZE} "
 elif [ $tuning_mode == "fine_tuning" ]; then
     tuning_config="None"
     tuning_args="--tuning_mode ${tuning_mode}"
