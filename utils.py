@@ -11,25 +11,25 @@ def build_peft_config_name(model_args, peft_args, training_args):
     peft_config_name = ""
     if model_args.tuning_mode in ["lora", "lora_peft", "lora_adapter"]:
         peft_config_name += "r_" + str(peft_args.lora_r) + "_alpha_" + str(peft_args.lora_alpha)
-        peft_config_name += "_module_" + str(peft_args.lora_modules)
+        peft_config_name += "module_" + str(peft_args.lora_modules)
     elif model_args.tuning_mode == "ia3":
         peft_config_name += "r_" + str(peft_args.lora_r)
     elif model_args.tuning_mode == "prompt_tuning":
-        peft_config_name +=  "_prompt_len_{}" + str(peft_args.num_soft_tokens)
+        peft_config_name +=  "prompt_len_{}" + str(peft_args.num_soft_tokens)
     elif model_args.tuning_mode == "prefix_tuning":
-        peft_config_name += "prefix_len_" + str(peft_args.prefix_len)
+        peft_config_name += "prefix_len_" + str(peft_args.prefix_len) + "_bottleneck_size_" + str(peft_args.bottleneck_size)
     elif model_args.tuning_mode == "layer_tuning":
         peft_config_name += "layer_name_" + str(peft_args.layer_name)
     elif model_args.tuning_mode == "bitfit":
         peft_config_name += "bias_name_" + str(peft_args.bias_name)
     elif model_args.tuning_mode == "adapter":
-        peft_config_name += "_adapter_size_" + str(peft_args.adapter_size)
+        peft_config_name += "adapter_size_" + str(peft_args.adapter_size)
     elif model_args.tuning_mode == "compactor":
         peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
         # phm_dimension
-        peft_config_name += "_phm_dimension_" + str(peft_args.phm_dimension)
+        peft_config_name += "phm_dimension_" + str(peft_args.phm_dimension)
     elif model_args.tuning_mode == "parallel_adapter":
-        peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"
+        peft_config_name +=f"reduction_factor_{peft_args.reduction_factor:.4f}"
     elif model_args.tuning_mode == "fine_tuning":
         pass
     elif model_args.tuning_mode == "pelt":

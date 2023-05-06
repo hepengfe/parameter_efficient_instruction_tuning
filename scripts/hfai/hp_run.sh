@@ -46,6 +46,7 @@ scheduler=$default_scheduler
 if [ $tuning_mode == "fine_tuning" ]; then
     config_file="configs/hfai/default_config_deepspeed_hf.yaml"
     default_eval_step=5000
+    scheduler="constant"
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
@@ -55,6 +56,11 @@ elif [ $tuning_mode == "adapter" ]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     eval_bs=${adapter_size2bs[$ADAPATER_SIZE]}
+    scheduler="linear"
+elif [ $tuning_mode == "prefix_tuning" ]; then
+    config_file="configs/hfai/default_config_ddp.yaml"
+    default_eval_step=5000
+    eval_bs=10
     scheduler="linear"
 fi
 
@@ -109,8 +115,12 @@ elif [ $tuning_mode == "adapter" ]; then
 elif [ $tuning_mode == "fine_tuning" ]; then
     tuning_config="None"
     tuning_args="--tuning_mode ${tuning_mode}"
+elif [ $tuning_mode == "prefix_tuning" ]; then
+    tuning_config="prefix_len_${PREFIX_LEN}_bottleneck_size_${BOTTLENECK_SIZE}"
+    tuning_args="--tuning_mode ${tuning_mode} --prefix_len ${PREFIX_LEN} --bottleneck_size ${BOTTLENECK_SIZE} "
 else
-    tuning_config="None"
+    echo "tuning_mode ${tuning_mode} is not supported"
+    exit 1
 fi
 
 tuning_args+=" --learning_rate ${LR} --scheduler ${scheduler} --warmup_ratio ${default_warmup_ratio} --weight_decay ${WEIGHT_DECAY} --label_smoothing_factor ${LABEL_SMOOTHING_FACTOR} --dropout_rate ${DROPOUT_RATE}"

@@ -1552,7 +1552,7 @@ class PEFTTrainer:
                         bottleneck_size=self.peft_args.bottleneck_size,
                         encoder_prefix=True,
                         cross_prefix=True,
-                        dropout_rate=self.peft_args.dropout_rate,
+                        dropout=self.peft_args.dropout_rate,
             )
             self.load_peft_module(config)
 
