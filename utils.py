@@ -15,7 +15,7 @@ def build_peft_config_name(model_args, peft_args, training_args):
     elif model_args.tuning_mode == "ia3":
         peft_config_name += "r_" + str(peft_args.lora_r)
     elif model_args.tuning_mode == "prompt_tuning":
-        peft_config_name +=  "prompt_len_{}" + str(peft_args.num_soft_tokens)
+        peft_config_name +=  "prompt_len_" + str(peft_args.prompt_len)
     elif model_args.tuning_mode == "prefix_tuning":
         peft_config_name += "prefix_len_" + str(peft_args.prefix_len) + "_bottleneck_size_" + str(peft_args.bottleneck_size)
     elif model_args.tuning_mode == "layer_tuning":

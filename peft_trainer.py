@@ -1219,7 +1219,7 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
-                if self.model_args.tuning_mode == "lora_peft": # temp PEFT lora implementation
+                if self.model_args.tuning_mode == "lora_peft" or self.model_args.tuning_mode == "prompt_tuning": # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
@@ -1530,12 +1530,13 @@ class PEFTTrainer:
         # model loading procedure:
         # 1. load model from model_name_or_path    (self.load_pretrained_model())
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
+        task_type = TaskType.SEQ_2_SEQ_LM
         if self.model_args.tuning_mode == "prompt_tuning":
-            cur_prompt_len = 1
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.num_soft_tokens > 0, "either prompt_len or trainable_params_percentage should be set"
+
+            
             config = PromptTuningConfig(
                 task_type=task_type,
-                num_virtual_tokens=cur_prompt_len,
+                num_virtual_tokens=self.peft_args.prompt_len,
                 inference_mode=False,
                 device= self.peft_args.module_device,
                 # prompt_tuning_init="TEXT",
@@ -1570,8 +1571,6 @@ class PEFTTrainer:
 
         elif self.model_args.tuning_mode == "lora_peft":
             from peft import LoraConfig
-
-            task_type = TaskType.SEQ_2_SEQ_LM
             config = LoraConfig(
                 task_type=task_type,
                 inference_mode=False,

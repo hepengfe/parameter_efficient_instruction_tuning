@@ -62,6 +62,14 @@ elif [ $tuning_mode == "prefix_tuning" ]; then
     default_eval_step=5000
     eval_bs=10
     scheduler="linear"
+elif [ $tuning_mode == "prompt_tuning" ]; then
+    config_file="configs/hfai/default_config_ddp.yaml"
+    default_eval_step=5000
+    eval_bs=20
+    scheduler="linear"
+else
+    echo "tuning_mode ${tuning_mode} is not supported"
+    exit 1
 fi
 
 
@@ -118,6 +126,9 @@ elif [ $tuning_mode == "fine_tuning" ]; then
 elif [ $tuning_mode == "prefix_tuning" ]; then
     tuning_config="prefix_len_${PREFIX_LEN}_bottleneck_size_${BOTTLENECK_SIZE}"
     tuning_args="--tuning_mode ${tuning_mode} --prefix_len ${PREFIX_LEN} --bottleneck_size ${BOTTLENECK_SIZE} "
+elif [ $tuning_mode == "prompt_tuning" ]; then
+    tuning_config="prompt_len_${PROMPT_LEN}"
+    tuning_args="--tuning_mode ${tuning_mode} --prompt_len ${PROMPT_LEN}"
 else
     echo "tuning_mode ${tuning_mode} is not supported"
     exit 1
