@@ -1547,14 +1547,13 @@ class PEFTTrainer:
         elif self.model_args.tuning_mode == "prefix_tuning":
             from transformers.adapters import PrefixTuningConfig
             # from peft import PrefixTuningConfig
-            
-            cur_prefix_len = 1 if self.peft_args.prefix_len is None else self.peft_args.prefix_len
-            bottleneck_size = 576
-            assert self.peft_args.trainable_params_percentage is not None or self.peft_args.prefix_len > 0, "either prefix_len or trainable_params_percentage should be set"
-
-            config = PrefixTuningConfig(prefix_length=cur_prefix_len,       bottleneck_size=bottleneck_size,
-                                        encoder_prefix=True,
-                                        cross_prefix=True)
+            config = PrefixTuningConfig(
+                        prefix_length=self.peft_args.prefix_len,        
+                        bottleneck_size=self.peft_args.bottleneck_size,
+                        encoder_prefix=True,
+                        cross_prefix=True,
+                        dropout_rate=self.peft_args.dropout_rate,
+            )
             self.load_peft_module(config)
 
         

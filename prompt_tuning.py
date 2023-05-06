@@ -96,6 +96,11 @@ class PeftArguments:
         default=None,
         metadata={"help": "prefix length"}
     )
+    
+    bottleneck_size: int = field(
+        default=0,
+        metadata={"help": "bottleneck size"}
+    )
 
     # bitfit
     bias_name: str = field(
