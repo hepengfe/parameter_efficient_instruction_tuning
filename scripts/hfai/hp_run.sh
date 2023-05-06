@@ -10,10 +10,6 @@ script_mode=$2
 
 
 default_data_folder="default_train_707_val_50"
-
-
-# train_data_size/peft_method/peft_hp/lr 
-
 default_model="google/t5-xl-lm-adapt"
 default_dataset="ni"
 
@@ -170,4 +166,3 @@ elif [[ $script_mode == "hfai" || $script_mode == "dev" ]];then
     echo $launch_command
     eval $launch_command
 fi
-

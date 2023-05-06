@@ -22,6 +22,5 @@ for lr in "${lrs[@]}"; do
 done
 
 
-
 # bash scripts/hfai/hp_search.sh lora_adapter lr dev_cmd 0
 # bash scripts/hfai/hp_search.sh lora_adapter lr dev_cmd 1
