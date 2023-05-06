@@ -18,8 +18,6 @@ default_model="google/t5-xl-lm-adapt"
 default_dataset="ni"
 
 # lora
-default_lora_r=$LORA_RANK
-default_lora_alpha=$default_lora_r
 default_lora_modules="qv"
 
 
@@ -67,6 +65,11 @@ elif [ $tuning_mode == "prompt_tuning" ]; then
     default_eval_step=5000
     eval_bs=20
     scheduler="linear"
+elif [ $tuning_mode == "ia3" ]; then
+    config_file="configs/hfai/default_config_ddp.yaml"
+    default_eval_step=5000
+    eval_bs=20
+    scheduler="linear"
 else
     echo "tuning_mode ${tuning_mode} is not supported"
     exit 1
@@ -96,8 +99,7 @@ dataset=$default_dataset
 # set default hp
 # peft config
 # lora
-lora_r=$default_lora_r
-lora_alpha=$default_lora_alpha
+
 lora_modules=$default_lora_modules
 
 
@@ -115,8 +117,8 @@ model_name=${default_model//\//_} # flatten "/"
 # after hp are determined, set tuning_config
 
 if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
-    tuning_config="r_${lora_r}_alpha_${lora_alpha}_modules_${lora_modules}" # for lora_peft
-    tuning_args="--tuning_mode ${tuning_mode} --lora_r ${lora_r} --lora_alpha ${lora_alpha}"
+    tuning_config="r_${LORA_RANK}_alpha_${LORA_RANK}_modules_${lora_modules}" # for lora_peft
+    tuning_args="--tuning_mode ${tuning_mode} --lora_r ${LORA_RANK} --lora_alpha ${LORA_RANK}"
 elif [ $tuning_mode == "adapter" ]; then
     tuning_config="sz_${ADAPATER_SIZE}" # for adapter_peft
     tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${ADAPATER_SIZE} "
@@ -129,6 +131,9 @@ elif [ $tuning_mode == "prefix_tuning" ]; then
 elif [ $tuning_mode == "prompt_tuning" ]; then
     tuning_config="prompt_len_${PROMPT_LEN}"
     tuning_args="--tuning_mode ${tuning_mode} --prompt_len ${PROMPT_LEN}"
+elif [ $tuning_mode == "ia3" ]; then
+    tuning_config="None"
+    tuning_args="--tuning_mode ${tuning_mode}"
 else
     echo "tuning_mode ${tuning_mode} is not supported"
     exit 1
