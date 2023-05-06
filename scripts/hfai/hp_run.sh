@@ -36,8 +36,8 @@ default_warmup_ratio=0.03
 
 declare -A lora_rank2bs
 declare -A adapter_size2bs
-lora_rank2bs=(["8"]=20 ["32"]=20 ["64"]=20 ["128"]=20 ["256"]=15 ["512"]=10)
 adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
+lora_rank2bs=(["8"]=20 ["32"]=20 ["64"]=20 ["128"]=15 ["256"]=10 ["512"]=5)
 
 
 scheduler=$default_scheduler
