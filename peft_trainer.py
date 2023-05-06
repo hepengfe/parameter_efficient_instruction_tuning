@@ -53,8 +53,8 @@ PEFT_MODULES=["prompt_tuning", "lora_peft"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
-from transformers import LlamaTokenizer
-from transformers import LlamaLMHeadModel
+# from transformers import LlamaTokenizer
+# from transformers import LlamaLMHeadModel
 
 import logging
 from accelerate.logging import get_logger

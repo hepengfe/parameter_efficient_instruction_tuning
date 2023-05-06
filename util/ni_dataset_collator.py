@@ -5,7 +5,7 @@ from transformers.data.data_collator import *
 from transformers import (
     # OPTPreTrainedModel,
     GPT2PreTrainedModel,
-    LlamaPreTrainedModel
+    # LlamaPreTrainedModel
 )
 logger = logging.getLogger(__name__)
 import numpy as np
@@ -174,7 +174,8 @@ class DataCollatorForNI:
         # import pdb; pdb.set_trace()
         # print('')
         
-        is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
+        # is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
+        is_causal_lm = False
         # import pdb; pdb.set_trace()
         # print('')
         

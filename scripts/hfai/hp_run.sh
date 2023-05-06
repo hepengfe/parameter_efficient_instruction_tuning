@@ -2,12 +2,8 @@
 # 2. hp will have default values in this script 
 # 3. 
 
-# bash scripts/hfai/hp_search.sh <tuning_method>  <hp_to_search> <script_mode>
-# bash scripts/hfai/hp_search.sh fine_tuning data_size cluster
-# bash scripts/hfai/hp_search.sh lora_peft lr dev_cmd
-# bash scripts/hfai/hp_search.sh adapter adapter_size dev
-# bash scripts/hfai/hp_search.sh lora_peft lora_r dev_cmd
-# bash scripts/hfai/hp_search.sh prefix_tuning  dev_cmd
+# bash scripts/hfai/hp_search.sh <tuning_method>  <script_mode>
+
 
 tuning_mode=$1
 script_mode=$2
@@ -22,7 +18,7 @@ default_model="google/t5-xl-lm-adapt"
 default_dataset="ni"
 
 # lora
-default_lora_r=64
+default_lora_r=$LORA_RANK
 default_lora_alpha=$default_lora_r
 default_lora_modules="qv"
 
@@ -120,7 +116,7 @@ tuning_args+=" --learning_rate ${LR} --scheduler ${scheduler} --warmup_ratio ${d
 
 
 # expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_steps_${warmup_steps}
-expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_weight_decay_${WEIGHT_DECAY}_dropout_rate_${DROPOUT_RATE}_label_smoothing_factor_${LABEL_SMOOTHING_FACTOR}_scheduler_${scheduler}_warmup_ratio_${default_warmup_ratio}
+expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${LR}_weight_decay_${WEIGHT_DECAY}_dropout_rate_${DROPOUT_RATE}_label_smoothing_factor_${LABEL_SMOOTHING_FACTOR}_scheduler_${scheduler}_warmup_ratio_${default_warmup_ratio}
 
 expr_name=${expr_dir//\//_} # replace "/" with "_"
 
