@@ -27,13 +27,17 @@ default_warmup_ratio=0.03
 # deepspeed lower save/eval interval
 
 
-
+declare -A model_name2path
 declare -A lora_rank2bs
 declare -A adapter_size2bs
 adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
 lora_rank2bs=(["8"]=20 ["32"]=20 ["64"]=20 ["128"]=15 ["256"]=10 ["512"]=5)
+model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["llama"]="facebook/llama-7b")
+model_name2arch=(["t5"]="encoder-decoder" ["opt"]="decoder" ["llama"]="decoder")
 
 
+model=${model_name2path[$MODEL_NAME]}
+model_arch=${model_name2arch[$MODEL_NAME]}
 scheduler=$default_scheduler
 
 # tuning mode fixed setup
@@ -154,7 +158,7 @@ if [ $script_mode == "dev" ]; then
     launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
     launch_suffix="--dev_train"
 fi
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model} --model_arch ${model_arch} --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
 
 if [ $script_mode  == "dev_cmd" ];then
     echo "---------------cmd $CMD_INDEX-----------------"

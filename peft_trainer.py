@@ -53,12 +53,13 @@ PEFT_MODULES=["prompt_tuning", "lora_peft"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
-# from transformers import LlamaTokenizer
-# from transformers import LlamaLMHeadModel
+from transformers import LlamaTokenizer
+from transformers import LlamaLMHeadModel
 
 import logging
 from accelerate.logging import get_logger
 import accelerate
+
 logging.basicConfig(level=logging.DEBUG)
 # logging.basicConfig(level=logging.INFO)
 
@@ -184,8 +185,9 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
-        self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
 
+        self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
+        assert self.label_smoother is None
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
         
@@ -540,7 +542,7 @@ class PEFTTrainer:
             else:
                 # model_inputs["label"] = labels["input_ids"]
                 model_inputs["labels"] = labels["input_ids"]
-            
+
         if evaluation:
             label_name = "label" if self.data_args.dataset_name not in ["trec"] else "coarse_label"
             label_class_ids = [l for l in examples[label_name] if l in class_ids]
@@ -604,7 +606,6 @@ class PEFTTrainer:
             collate_fn=partial(self.data_collator, eval_mode=True)
         )
         
-    
         self.test_dataloader = DataLoader(
             self.test_dataset,
             shuffle=False,
@@ -637,7 +638,6 @@ class PEFTTrainer:
                 download_mode = "reuse_dataset_if_exists" if not self.data_args.overwrite_cache else "force_redownload",
             )
 
-
             if self.training_args.dev_run:
                 
                 raw_datasets["train"] = raw_datasets["train"].select(range(self.training_args.dev_run_data_size))
@@ -648,7 +648,6 @@ class PEFTTrainer:
                 raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["validation"] = raw_datasets["train"]
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
-
 
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
@@ -1159,8 +1158,8 @@ class PEFTTrainer:
             dataloader2eval = self.eval_dataloader
         elif mode == "test":
             # try to load best checkpoint
-
             
+            # free memory in test mode 
             dataset2eval = self.test_dataset
             dataloader2eval = self.test_dataloader
             
@@ -1172,17 +1171,21 @@ class PEFTTrainer:
                 assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
                 self.accelerator.load_state(best_cp_dir)
             except Exception as e:
+                self.accelerator.clear()
+                # sleep 5 seconds
+                time.sleep(5) # wait for oom processes to be killed in case of oom
                 print(f"load state failed, try to load from model_path due to \n {e}")
                 sharded_model_path = os.path.join(best_cp_dir, "save_pretrained")
-                config = AutoConfig.from_pretrained(sharded_model_path,
-                                                    local_files_only=True)
+                config = AutoConfig.from_pretrained(sharded_model_path)
                 # reload tokenizer in this case
-                self.tokenizer = AutoTokenizer.from_pretrained(sharded_model_path,
-                                                local_files_only=True)
+                if "llama" in self.model_args.model_name_or_path.lower():
+                    self.tokenizer = LlamaTokenizer.from_pretrained(
+                        self.potential_model_path
+                    )
+                else:
+                    self.tokenizer = AutoTokenizer.from_pretrained(sharded_model_path)
 
-                model = self.load_pretrained_model(sharded_model_path,
-                                                   config = config,
-                                                   local_files_only=True)
+                model = self.load_pretrained_model(config)
                 if hasattr(self.model, "load_adapter"):
                     adapter_path = os.path.join(sharded_model_path, self.model_args.tuning_mode)
                     model.load_adapter(adapter_path)

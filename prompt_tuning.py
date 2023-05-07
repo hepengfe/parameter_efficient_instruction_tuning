@@ -489,6 +489,13 @@ def main():
         training_args.per_device_eval_batch_size = 1
         training_args.dev_run_data_size = 16
         # model_args.tuning_mode = "fine_tuning"
+        
+        # debug high validation rougeL
+        training_args.per_device_train_batch_size = 1
+        training_args.per_device_eval_batch_size = 10
+        training_args.per_device_test_batch_size = 10
+        training_args.dev_run_data_size = 120
+
 
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing

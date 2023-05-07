@@ -5,7 +5,7 @@ from transformers.data.data_collator import *
 from transformers import (
     # OPTPreTrainedModel,
     GPT2PreTrainedModel,
-    # LlamaPreTrainedModel
+    LlamaPreTrainedModel
 )
 logger = logging.getLogger(__name__)
 import numpy as np
@@ -147,40 +147,10 @@ class DataCollatorForNI:
 
         model_inputs = {}
         
-
-        # 1. prepare labels first in str format
-        if "output" in batch[0]["Instance"] and batch[0]["Instance"]["output"]:
-            # Randomly select one reference if multiple are provided.
-            labels = [random.choice(ex["Instance"]["output"]) for ex in batch]
-            # if self.text_only:
-            #     model_inputs["labels"] = labels
-            # else:
-            #     with self.tokenizer.as_target_tokenizer():
-            #         labels = self.tokenizer(
-            #             labels,
-            #             max_length=self.max_target_length,
-            #             padding=self.padding,
-            #             return_tensors=self.return_tensors,
-            #             truncation=True,
-            #             pad_to_multiple_of=self.pad_to_multiple_of
-            #         )
-            #     label_mask = labels["attention_mask"].bool()
-            #     model_inputs["labels"] = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
-        else:
-            labels = None
-            # model_inputs["labels"] = None
+        is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
         
-        # is_causal_lm = False
-        # import pdb; pdb.set_trace()
-        # print('')
-        
-        # is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
-        is_causal_lm = False
-        # import pdb; pdb.set_trace()
-        # print('')
-        
-        if is_causal_lm and labels:
-            sources = ["".join(sl) for sl in zip(sources, labels)]
+        # if is_causal_lm and labels:
+        #     sources = ["".join(sl) for sl in zip(sources, labels)]
 
         # 2. prepare model inputs first
         if not is_causal_lm:
@@ -193,34 +163,19 @@ class DataCollatorForNI:
                         padding=self.padding,
                         return_tensors=self.return_tensors, 
                         truncation=True,
-                        pad_to_multiple_of=self.pad_to_multiple_of)
-                # if is_causal_lm:
-                #     model_inputs = self.tokenizer(
-                #         sources,
-                #         max_length=self.max_source_length,
-                #         padding=self.padding,
-                #         return_tensors=self.return_tensors, 
-                #         truncation=True,
-                #         pad_to_multiple_of=self.pad_to_multiple_of,
-                #         return_overflowing_tokens=True,
-                #         return_length=True)
-                # else:
-                #     model_inputs = self.tokenizer(
-                #         sources, 
-                #         max_length=self.max_source_length, 
-                #         padding=self.padding,
-                #         return_tensors=self.return_tensors, 
-                #         truncation=True,
-                #         pad_to_multiple_of=self.pad_to_multiple_of)
+                        pad_to_multiple_of=self.pad_to_multiple_of
+                )
 
-            # 3. prepare model labels second
-            if labels:
+            # 1. prepare labels first in str format
+            if "output" in batch[0]["Instance"] and batch[0]["Instance"]["output"]:
+                # Randomly select one reference if multiple are provided.
+                text_labels = [random.choice(ex["Instance"]["output"]) for ex in batch]
                 if self.text_only:
-                    model_inputs["labels"] = labels
+                    model_inputs["labels"] = text_labels
                 else:
                     with self.tokenizer.as_target_tokenizer():
                         labels = self.tokenizer(
-                            labels,
+                            text_labels,
                             max_length=self.max_target_length,
                             padding=self.padding,
                             return_tensors=self.return_tensors,
@@ -229,51 +184,28 @@ class DataCollatorForNI:
                         )
                     label_mask = labels["attention_mask"].bool()
                     model_inputs["labels"] = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
+            else:
+                model_inputs["labels"] = None
+
+
+            # the following code is useful if label smoothing is used
+            # it causes label leakage in eval mode
+            # one way is to build decoder input ids only in train mode
+            
+            # if self.model is not None and not self.text_only and hasattr(self.model, "prepare_decoder_input_ids_from_labels"):
+            #     decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=model_inputs["labels"])
+            #     model_inputs["decoder_input_ids"] = decoder_input_ids
+
+            return model_inputs
+    
         else:
+            print("debugging, no causal lm for now")
+            exit()
+            if labels:
+                sources = ["".join(sl) for sl in zip(sources, labels)]
             example_texts = []
             tokenized_examples = []
             self.tokenizer.padding_side = "left"
-            
-            # for s, l in zip(sources, labels):
-            #     if not s.endswith((' ', '\n', '\t')) and not l.endswith((' ', '\n', '\t')):
-            #         # example_texts.append(s + " " + l)
-            #         example_text = s + " " + l
-            #     else:
-            #         # example_texts.append(s + l)
-            #         example_text = s + l
-            
-            #     # tokenize one by one
-            #     # pad to max length before aggregation
-            #     # attention mask wrong
-            #     example_text 
-                
-            #     # label length = source length
-            #     # prediction length = source length
-            #     tokenized_example = self.tokenizer(
-            #                 example_text,
-            #                 max_length=self.max_source_length, 
-            #                 # padding=self.padding, # no padding for causal lm
-            #                 return_tensors=self.return_tensors, 
-            #                 truncation=True,
-            #                 # pad_to_multiple_of=self.pad_to_multiple_of
-            #                 )
-                
-            #     eos = torch.tensor([[self.tokenizer.eos_token_id]])
-            #     # add eos to end of completion
-            #     input_ids = torch.cat([tokenized_example.input_ids, eos], dim=1)
-            #     labels = input_ids.clone()
-                
-            #     tokenized_prompts = self.tokenizer(
-            #                 sources, 
-            #                 max_length=self.max_source_length, 
-            #                 # padding=self.padding, # no padding for causal lm
-            #                 return_tensors=self.return_tensors, 
-            #                 truncation=True,
-            #                 # pad_to_multiple_of=self.pad_to_multiple_of
-            #                 )
-
-            #     labels[:, :tokenized_prompts.input_ids.shape[1]] = -100
-            #     attention_mask = torch.ones_like(input_ids)
 
             for s, l in zip(sources, labels):
                 example_texts.append(s + "<sep>" + l)
@@ -311,37 +243,5 @@ class DataCollatorForNI:
             
                 
                 
-            
-            # add sep between prompts and labels
-            # indexing sep token  obtain (bs_index , seq_index)
-            # set labels to -100 before sep token
-            # set attention_mask to 0 before sep token
-            
-            if self.text_only:
-                raise NotImplementedError("text_only is not supported for causal LM")
-            else:
-                # if eval_mode:
-                #     input_ids = input_ids.flatten()
-                #     labels = labels.flatten()
-                #     attention_mask = attention_mask.flatten()
-                
-                
-                torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id)
-                model_inputs["input_ids"] = input_ids
-                model_inputs["labels"] = labels
-                model_inputs["attention_mask"] = attention_mask
-            # return causal_lm inputs ahead
-            return model_inputs
 
-        # prepare decoder_input_ids
-        if self.model is not None and not self.text_only and hasattr(self.model, "prepare_decoder_input_ids_from_labels"):
-            decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=model_inputs["labels"])
-            model_inputs["decoder_input_ids"] = decoder_input_ids
-            # elif hasattr(self.model, "prepare_inputs_for_generation"): # GPT or OPT model
-            #     # TODO: delete this
-                
-            #     model_inputs["inputs"] +=\
-            #          f" Output: {model_inputs.pop('labels')}"
-
-        # return model_inputs, extra_model_inputs
-        return model_inputs
+        
