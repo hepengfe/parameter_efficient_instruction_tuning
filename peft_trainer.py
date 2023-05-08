@@ -256,7 +256,7 @@ class PEFTTrainer:
 
 
 
-    def load_model_n_peft_module(self, device="cuda"):
+    def load_model_n_peft_module(self):
         self.model = self.load_pretrained_model()
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
         assert self.model_trainable_params > 0, "Model has no trainable parameters"
@@ -402,12 +402,6 @@ class PEFTTrainer:
 
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
-                # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-                # if self.accelerator.is_main_process:
-                #     import pdb; pdb.set_trace()
-                #     print('')
-                # self.accelerator.wait_for_everyone()
-
                 if os.path.exists(self.potential_model_path):
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
