@@ -146,7 +146,28 @@ class DataCollatorForNI:
                 sources.append(self.tokenizer.decode(tokenized_source[:self.max_source_length], skip_special_tokens=True))
 
         model_inputs = {}
-        
+        # 1. prepare labels first in str format
+        if "output" in batch[0]["Instance"] and batch[0]["Instance"]["output"]:
+            # Randomly select one reference if multiple are provided.
+            text_labels = [random.choice(ex["Instance"]["output"]) for ex in batch]
+            if self.text_only:
+                labels = text_labels
+            else:
+                with self.tokenizer.as_target_tokenizer():
+                    labels = self.tokenizer(
+                        text_labels,
+                        max_length=self.max_target_length,
+                        padding=self.padding,
+                        return_tensors=self.return_tensors,
+                        truncation=True,
+                        pad_to_multiple_of=self.pad_to_multiple_of
+                    )
+                label_mask = labels["attention_mask"].bool()
+                labels = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
+        else:
+            text_labels = []
+            labels = None
+    
         is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
         
         # if is_causal_lm and labels:
@@ -154,6 +175,7 @@ class DataCollatorForNI:
 
         # 2. prepare model inputs first
         if not is_causal_lm:
+            model_inputs["labels"] = labels
             if self.text_only:
                 model_inputs = {"inputs": sources}
             else:
@@ -166,26 +188,7 @@ class DataCollatorForNI:
                         pad_to_multiple_of=self.pad_to_multiple_of
                 )
 
-            # 1. prepare labels first in str format
-            if "output" in batch[0]["Instance"] and batch[0]["Instance"]["output"]:
-                # Randomly select one reference if multiple are provided.
-                text_labels = [random.choice(ex["Instance"]["output"]) for ex in batch]
-                if self.text_only:
-                    model_inputs["labels"] = text_labels
-                else:
-                    with self.tokenizer.as_target_tokenizer():
-                        labels = self.tokenizer(
-                            text_labels,
-                            max_length=self.max_target_length,
-                            padding=self.padding,
-                            return_tensors=self.return_tensors,
-                            truncation=True,
-                            pad_to_multiple_of=self.pad_to_multiple_of
-                        )
-                    label_mask = labels["attention_mask"].bool()
-                    model_inputs["labels"] = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
-            else:
-                model_inputs["labels"] = None
+
 
 
             # the following code is useful if label smoothing is used
@@ -199,42 +202,53 @@ class DataCollatorForNI:
             return model_inputs
     
         else:
-            print("debugging, no causal lm for now")
-            exit()
-            if labels:
-                sources = ["".join(sl) for sl in zip(sources, labels)]
             example_texts = []
-            tokenized_examples = []
             self.tokenizer.padding_side = "left"
+            assert len(sources) == len(text_labels), f"len(sources) = {len(sources)}, len(text_labels) = {len(text_labels)}"
+ 
+            for s, l in zip(sources, text_labels):
+                if not eval_mode:
+                    example_texts.append(s + "</SEP>" + l)
+                else:
+                    example_texts.append(s)
 
-            for s, l in zip(sources, labels):
-                example_texts.append(s + "<sep>" + l)
             tokenized_example = self.tokenizer(
-                        example_texts,
-                        max_length=self.max_source_length,
-                        padding="longest", # no padding for causal lm
-                        return_tensors=self.return_tensors, 
-                        truncation=True,
-                        pad_to_multiple_of=self.pad_to_multiple_of
+                example_texts,
+                max_length=self.max_source_length,
+                padding="longest", # no padding for causal lm
+                return_tensors=self.return_tensors, 
+                truncation=True,
+                pad_to_multiple_of=self.pad_to_multiple_of
             )
             input_ids = tokenized_example.input_ids
-            labels = input_ids.clone()
-
             
-            seq_indices = torch.where(input_ids == self.tokenizer.sep_token_id)
-            # e.g. [ remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]
-            # input_ids [ <pad> <pad> remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]]
-            # set labels to -100 before sep token under training (padding during evaluation)
-            # (tensor([0, 1]), tensor([122, 113]))
 
-            # for bs_index, seq_index in enumerate(seq_indices[1]):
-            #     labels[bs_index, :seq_index] = -100
-            # mask out prompt in the example text
-            prompt_mask = torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1) > seq_indices[1].unsqueeze(1)
-            if eval_mode:
-                labels = labels.masked_fill(~prompt_mask, self.tokenizer.pad_token_id)
-            else:
+            # print("input_ids.shape at where ", input_ids.shape)
+            # print("input_ids == self.tokenizer.sep_token_id: ", input_ids == self.tokenizer.sep_token_id)
+            if not eval_mode:
+                labels = input_ids.clone()
+                seq_indices = torch.where(input_ids == self.tokenizer.sep_token_id)
+                assert len(seq_indices[1]) == len(text_labels), f"number of <\sep> is more than expected in the text. len(seq_indices[1]) = {len(seq_indices[1])}, len(text_labels) = {len(text_labels)}"
+                
+                
+                # e.g. [ remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]
+                # input_ids [ <pad> <pad> remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]]
+                # set labels to -100 before sep token under training (padding during evaluation)
+                # (tensor([0, 1]), tensor([122, 113]))
+
+                # for bs_index, seq_index in enumerate(seq_indices[1]):
+                #     labels[bs_index, :seq_index] = -100
+                # mask out prompt in the example text
+                
+                # print("input_ids.shape: ", input_ids.shape)
+                # print("seq_indices shape: ", seq_indices[0].shape, seq_indices[1].shape)
+                # print("torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1): ", torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1).shape)
+                # print("seq_indices[1].unsqueeze(1): ", seq_indices[1].unsqueeze(1).shape)
+                prompt_mask = torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1) > seq_indices[1].unsqueeze(1)
                 labels = labels.masked_fill(~prompt_mask, -100)
+            else:
+                # labels = labels.masked_fill(~prompt_mask, self.tokenizer.pad_token_id)
+                labels = self.tokenizer(text_labels, return_tensors="pt", padding="longest", truncation=True, max_length=self.max_target_length)["input_ids"]
 
             
             tokenized_example["labels"] = labels

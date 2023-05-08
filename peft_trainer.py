@@ -376,8 +376,8 @@ class PEFTTrainer:
             
             # gpt2 model
             self.tokenizer.add_special_tokens({
-                'pad_token': '[PAD]',
-                'sep_token': '<sep>'
+                'pad_token': '</PAD>',
+                'sep_token': '</SEP>'
             })
             self.model.resize_token_embeddings(len(self.tokenizer))
             
@@ -639,7 +639,6 @@ class PEFTTrainer:
             )
 
             if self.training_args.dev_run:
-                
                 raw_datasets["train"] = raw_datasets["train"].select(range(self.training_args.dev_run_data_size))
                 raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_run_data_size))
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_run_data_size))
@@ -1163,7 +1162,6 @@ class PEFTTrainer:
             dataset2eval = self.test_dataset
             dataloader2eval = self.test_dataloader
             
-            
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
             try:
                 best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
@@ -1232,6 +1230,8 @@ class PEFTTrainer:
                                         # pad_token_id=self.tokenizer.pad_token_id,
                     )
                 else:
+                    # self.tokenizer.batch_decode(labels)
+                    # self.tokenizer.batch_decode(inputs.input_ids)
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
                                             synced_gpus = True if self.use_distributed else False,
