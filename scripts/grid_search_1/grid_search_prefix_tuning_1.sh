@@ -1,6 +1,4 @@
-# bash scripts/hfai/hp_search.sh lora_adapter lora_r hfai 0
-# bash scripts/hfai/hp_search.sh lora_adapter lora_r hfai 1
-# bash scripts/hfai/hp_search.sh lora_adapter lr hfai 0
+# bash scripts/grid_search_1/grid_search_prefix_tuning_1.sh dev_cmd t5
 TRAINING_SETTINGS=(0 1)
 # LORA_RANKS=(8 32 64 128 256 512)
 
