@@ -14,7 +14,7 @@ from typing import Optional, List
 from utils import flatten, build_peft_config_name
 import logging
 from logging import getLogger
-
+from utils import remove_old_checkpoints
 logger = getLogger(__name__)
 
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
@@ -314,7 +314,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     # )
 
     checkpoint_save_total_limit: Optional[int] = field(
-        default=2, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
+        default=1, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
     )
     
     best_checkpoint_save_total_limit:  Optional[int] = field(
@@ -629,6 +629,9 @@ def main():
    
     if training_args.do_train:
         trainer.train() # train from scratch
+        # remove all step checkpoints after training is finished
+        remove_old_checkpoints(training_args.output_dir, num_to_keep=0)
+
         trainer.evaluate("test")
         logger.info(f"check the results in {training_args.output_dir}")
         logger.info("*** Training finished ***")
