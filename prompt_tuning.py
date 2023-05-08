@@ -489,11 +489,11 @@ def main():
         # test overfitting
         training_args.logging_steps = 10
         # async eval and save
+        training_args.num_train_epochs = 5
         training_args.save_steps = 300
-        training_args.eval_steps = 30
+        training_args.eval_steps = 100
         training_args.per_device_eval_batch_size = 20
         # training_args.per_device_train_batch_size = 1
-        training_args.per_device_eval_batch_size = 10
         training_args.per_device_train_batch_size = 1
         
         # test save

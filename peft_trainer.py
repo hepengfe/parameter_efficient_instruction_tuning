@@ -413,10 +413,15 @@ class PEFTTrainer:
                 else:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+                
                 if os.path.exists(self.potential_model_path):
-                    model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
-                    model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                # if os.path.exists(self.potential_model_path):
+                #     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                # else:
+                #     model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
                 
                     
             elif self.model_args.tuning_mode in PEFT_MODULES:
@@ -791,6 +796,7 @@ class PEFTTrainer:
                     "Expected a model with an active adapter setup."
                     "If you want to fully finetune the model use the Trainer class."
                 )
+
             
         elif self.model_args.tuning_mode == "bitfit":
             # if self.model_args.model_arch == "encoder":
@@ -1025,8 +1031,7 @@ class PEFTTrainer:
                 self.print_log(f"------------new epoch: {epoch} global_step: {global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
-                if self.label_smoother is not None and "labels" in inputs:
-                    labels = inputs.pop("labels")
+
                 if self.use_distributed:
                     # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
@@ -1043,6 +1048,7 @@ class PEFTTrainer:
                             outputs = self.model(**inputs)
                             loss = outputs["loss"]
                         else:
+                            labels = inputs.pop("labels")
                             outputs = self.model(**inputs)
                             loss = self.label_smoother(outputs, labels)
 

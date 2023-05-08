@@ -167,13 +167,13 @@ class DataCollatorForNI:
         else:
             text_labels = []
             labels = None
+
     
         # is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
         is_causal_lm = False
 
         # 2. prepare model inputs first
         if not is_causal_lm:
-            model_inputs["labels"] = labels
             if self.text_only:
                 model_inputs = {"inputs": sources}
             else:
@@ -185,6 +185,7 @@ class DataCollatorForNI:
                         truncation=True,
                         pad_to_multiple_of=self.pad_to_multiple_of
                 )
+            model_inputs["labels"] = labels
 
 
 
