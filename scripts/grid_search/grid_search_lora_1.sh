@@ -1,4 +1,5 @@
-# bash scripts/grid_search/grid_search_lora_1.sh <script_mode>
+# bash scripts/grid_search/grid_search_lora_1.sh <script_mode> <model_abbr>
+# bash scripts/grid_search/grid_search_lora_1.sh dev t5
 TRAINING_SETTINGS=(0 1)
 LORA_RANKS=(8 32 64 128 256 512)
 # DATA_FOLDERS=("default_train8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
