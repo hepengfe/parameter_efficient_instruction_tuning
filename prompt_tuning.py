@@ -497,12 +497,12 @@ def main():
         training_args.per_device_train_batch_size = 1
         
         # test save
-        # training_args.num_train_epochs = 1
-        # training_args.dev_train_data_size = 12 # number of gpus
-        # training_args.save_steps = 4
-        # training_args.eval_steps = 4
-        # training_args.per_device_eval_batch_size = 2
-        # training_args.per_device_train_batch_size = 2
+        training_args.num_train_epochs = 1
+        training_args.dev_train_data_size = 12 # number of gpus
+        training_args.save_steps = 4
+        training_args.eval_steps = 4
+        training_args.per_device_eval_batch_size = 1
+        training_args.per_device_train_batch_size = 1
         
         # test warmup steps
         # training_args.dev_train_data_size = 1000
