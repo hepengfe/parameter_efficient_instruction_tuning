@@ -314,11 +314,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     # )
 
     checkpoint_save_total_limit: Optional[int] = field(
-        default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
+        default=2, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
     )
     
     best_checkpoint_save_total_limit:  Optional[int] = field(
-        default=2, metadata={"help": "The maximum total amount of best checkpoints to save."}
+        default=1, metadata={"help": "The maximum total amount of best checkpoints to save."}
     )
 
     max_steps: Optional[int] = field(
