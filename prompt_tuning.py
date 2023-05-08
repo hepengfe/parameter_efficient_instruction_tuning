@@ -446,31 +446,11 @@ def main():
     if training_args.dev_run:
         # no adjustable variables
         os.environ["WANDB_MODE"] = "disabled"
-        training_args.dev_run_data_size = 600
-
-        # adjustable variables
-
-        # model_args.model_name_or_path="google/t5-small-lm-adapt"
-        # training_args.num_train_epochs = 5
-        # training_args.eval_steps = 10 # test save instead of eval
-        # training_args.save_steps = 10 
-        
-        # training_args.per_device_train_batch_size = 4
-        # training_args.per_device_eval_batch_size = 2
-        # training_args.per_device_test_batch_size = 2
-        # # RTX 3090
-        # training_args.per_device_train_batch_size = 2
-        # training_args.per_device_eval_batch_size = 70
-        # training_args.per_device_test_batch_size = 2
-        # model_args.model_name_or_path="google/t5-small-lm-adapt"
-        training_args.num_train_epochs = 5
-        training_args.eval_steps = 100 # test save instead of eval
-        training_args.save_steps = 100
-        training_args.dev_run_data_size = 210
-        training_args.per_device_train_batch_size = 4
-        training_args.per_device_eval_batch_size = 2
-        training_args.per_device_test_batch_size = 2
-        # RTX 3090
+        training_args.dev_run_data_size = 200
+                # # debug logging
+        training_args.save_steps = 30
+        training_args.eval_steps = 30
+        training_args.num_train_epochs = 4
 
         # adapter
         training_args.per_device_train_batch_size = 2
@@ -479,16 +459,21 @@ def main():
 
         # fine_tuning
         training_args.per_device_train_batch_size = 1
-        training_args.per_device_eval_batch_size = 35 # can be increased for offload
+        training_args.per_device_eval_batch_size = 10 # can be increased for offload
         training_args.per_device_test_batch_size = 2
 
 
-        # debug logging
-        training_args.save_steps = 10
-        training_args.eval_steps = 10
-        training_args.per_device_eval_batch_size = 1
-        training_args.dev_run_data_size = 16
-        # model_args.tuning_mode = "fine_tuning"
+
+        # training_args.per_device_eval_batch_size = 1
+        # training_args.dev_run_data_size = 16
+        # # model_args.tuning_mode = "fine_tuning"
+        
+        # # debug high validation rougeL
+        # training_args.per_device_train_batch_size = 1
+        # training_args.per_device_eval_batch_size = 2
+        # training_args.per_device_test_batch_size = 10
+        # training_args.dev_run_data_size = 40
+
 
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
@@ -497,31 +482,27 @@ def main():
         eval_logger.setLevel(logging.DEBUG)
         training_args.learning_rate = 0.01
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 10
+        training_args.dev_train_data_size = 60
+
         
-        
-        # training_args.save_steps = 6
-        # training_args.eval_steps = 5
-        training_args.logging_steps=10
+
+        # test overfitting
+        training_args.logging_steps = 10
         # async eval and save
         training_args.save_steps = 300
         training_args.eval_steps = 30
-        training_args.num_train_epochs = 2
-        # # test eval bs
-        # training_args.eval_steps = 1
-        # training_args.save_steps = 1000 # no save needed actually
         training_args.per_device_eval_batch_size = 20
         # training_args.per_device_train_batch_size = 1
-        training_args.per_device_eval_batch_size = 1
+        training_args.per_device_eval_batch_size = 10
         training_args.per_device_train_batch_size = 1
         
         # test save
-        training_args.num_train_epochs = 1
-        training_args.dev_train_data_size = 12 # number of gpus
-        training_args.save_steps = 4
-        training_args.eval_steps = 4
-        training_args.per_device_eval_batch_size = 1
-        training_args.per_device_train_batch_size = 1
+        # training_args.num_train_epochs = 1
+        # training_args.dev_train_data_size = 12 # number of gpus
+        # training_args.save_steps = 4
+        # training_args.eval_steps = 4
+        # training_args.per_device_eval_batch_size = 2
+        # training_args.per_device_train_batch_size = 2
         
         # test warmup steps
         # training_args.dev_train_data_size = 1000
