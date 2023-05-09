@@ -72,6 +72,26 @@ def remove_old_checkpoints(output_dir, num_to_keep=1):
     if len(checkpoint_dirs) <= num_to_keep:
         return
     checkpoint_dirs = sorted(checkpoint_dirs, key=lambda x: int(x.split('-')[1]))
-    for d in checkpoint_dirs[:-num_to_keep]:
+    if num_to_keep == 0:
+        logger.info(f"Removing all old checkpoints in {output_dir}")
+        checkpoint_dirs_to_remove = checkpoint_dirs
+    else:
+        logger.info(f"Removing {len(checkpoint_dirs) - num_to_keep} old checkpoints in {output_dir}")
+        checkpoint_dirs_to_remove = checkpoint_dirs[:-num_to_keep]
+    for d in checkpoint_dirs_to_remove:
         logger.info(f"Removing old checkpoint {os.path.join(output_dir, d)}")
         shutil.rmtree(os.path.join(output_dir, d))
+
+def remove_files_and_folders_other_than(output_dir, file_or_folder_name):
+    files = os.listdir(output_dir)
+    for f in files:
+        if f != file_or_folder_name:
+            if os.path.isfile(os.path.join(output_dir, f)):
+                os.remove(os.path.join(output_dir, f))
+            else:
+                shutil.rmtree(os.path.join(output_dir, f))
+    # resume training -> check latest checkpoint
+    # if latest checkpoint exists -> load it and continue training
+    # training is finished but no eval -> load latest checkpoint and do eval
+    # how to signaling that training is finished in a minimal storage way? 
+    # keep latest step checkpoint's train_state file

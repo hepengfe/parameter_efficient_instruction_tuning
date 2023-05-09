@@ -629,9 +629,6 @@ def main():
    
     if training_args.do_train:
         trainer.train() # train from scratch
-        # remove all step checkpoints after training is finished
-        remove_old_checkpoints(training_args.output_dir, num_to_keep=0)
-
         trainer.evaluate("test")
         logger.info(f"check the results in {training_args.output_dir}")
         logger.info("*** Training finished ***")

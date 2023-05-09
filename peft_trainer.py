@@ -36,7 +36,7 @@ from util.ni_dataset_collator import DataCollatorForNI
 from copy import deepcopy
 import datetime
 from peft import PeftModelForSeq2SeqLM
-from utils import get_latest_checkpoint, remove_old_checkpoints
+from utils import get_latest_checkpoint, remove_old_checkpoints, remove_files_and_folders_other_than
 import json
 import math
 from accelerate import Accelerator
@@ -59,6 +59,7 @@ LATEST_CP_FOLDER_NAME="latest_checkpoint"
 import logging
 from accelerate.logging import get_logger
 import accelerate
+
 
 logging.basicConfig(level=logging.DEBUG)
 # logging.basicConfig(level=logging.INFO)
@@ -1110,7 +1111,12 @@ class PEFTTrainer:
         # )
         self.save_and_eval(global_step)
         self.accelerator.end_training()
-
+        # remove all step checkpoints after training is finished
+        if self.accelerator.is_main_process:
+            # only keep lastest checkpoint's train_state.json file
+            remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
 
     def log(self, d, step):
         """
@@ -1800,6 +1806,9 @@ class PEFTTrainer:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir, "best_checkpoint")
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         else:
+            # in case we don't want checkpoints in separate sub-folders
+            # checkpoint_dir_path = self.training_args.output_dir
+            # checkpoint_folder_path_to_save = self.training_args.output_dir
             checkpoint_dir_path = os.path.join(self.training_args.output_dir)
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         self.accelerator.save_state(checkpoint_folder_path_to_save)
@@ -1849,15 +1858,28 @@ class PEFTTrainer:
 
                 # try to load the latest checkpoint
                 try:
-                    self.accelerator.load_state(latest_cp)
-                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
+                    self.train_state.load_from_json(latest_cp)
                     self.accelerator.init_trackers(
                         self.training_args.run_name,
                         config=self.train_state.state_dict,
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                     )
+                    start_epoch = self.train_state.get("epoch")
+                    start_step = self.train_state.get("step")
+                    global_step =  self.train_state.get("global_step")
+                    
+                    # if training is finished, then only load the state
+                    # because the model checkpoint is already removed
+                    if global_step >= self.end_step:
+                        self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
+                        self.print_log("Only train state is loaded...")
+                        return True
+                    
+                    self.accelerator.load_state(latest_cp)
+                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
+                    
 
-                    self.train_state.load_from_json(latest_cp)
+                    
                     loaded = True
                 except Exception as e:
                     # it can be state dict file corrupted or model checkpoint corrupted
