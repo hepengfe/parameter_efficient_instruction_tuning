@@ -84,7 +84,8 @@ class TrainingState:
             "global_step": global_step,
             "loss": loss,
             "best_metric_val":best_metric_val,
-            "eval_metric":eval_metric
+            "eval_metric":eval_metric,
+            "test_eval_finished": False,
         }
         self.file_name = "training_state.json"
 
@@ -163,6 +164,7 @@ class PEFTTrainer:
         # init
         self.best_metric_val = - 1
         self.warmup_steps = -1
+        self.test_eval_finished = False
         
         if self.model_args.model_arch != "decoder":
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
@@ -966,6 +968,7 @@ class PEFTTrainer:
             start_epoch = self.train_state.get("epoch")
             start_step = self.train_state.get("step")
             global_step =  self.train_state.get("global_step")
+            self.test_eval_finished = self.train_state.get("test_eval_finished")
             self.best_metric_val = self.train_state.get("best_metric_val")
         # if self.accelerator.is_main_process:
         #     import pdb; pdb.set_trace()
@@ -1162,7 +1165,10 @@ class PEFTTrainer:
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
         elif mode == "test":
-            # try to load best checkpoint
+            # NOTE: test evaluation is done, finish
+            if self.test_eval_finished:
+                self.print_log("test evaluation is done, finish...")
+                return
             
             # free memory in test mode 
             dataset2eval = self.test_dataset
@@ -1275,6 +1281,11 @@ class PEFTTrainer:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
         self.log(results_with_mode, step=step)
+        if mode == "test":
+            self.train_state.update({"test_eval_finished": True})
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            self.train_state.save_to_json(latest_cp)
+            
         return results_with_mode
 
     
