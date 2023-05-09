@@ -22,7 +22,7 @@ for prompt_len in "${PROMPT_LENS[@]}"; do
         export LR=$lr
         export CMD_INDEX=$i
         export MODEL_NAME=$model_name
-        bash scripts/hfai/hp_run.sh prompt_tuning $script_mode
+        bash scripts/hfai/hp_run.sh prompt_tuning $script_mode &
         ((i++))
         if [ $script_mode == "dev" ];then
             break

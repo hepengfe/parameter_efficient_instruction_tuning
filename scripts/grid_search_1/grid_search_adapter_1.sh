@@ -21,7 +21,7 @@ for lr in "${lrs[@]}"; do
         export ADAPATER_SIZE=$adapter_size
         export CMD_INDEX=$i
         export MODEL_NAME=$model_name
-        bash scripts/hfai/hp_run.sh adapter $script_mode
+        bash scripts/hfai/hp_run.sh adapter $script_mode &
         ((i++))
         if [ $script_mode == "dev" ];then
             break

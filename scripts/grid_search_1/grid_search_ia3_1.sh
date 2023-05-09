@@ -16,7 +16,7 @@ for lr in "${lrs[@]}"; do
     export LR=$lr
     export CMD_INDEX=$i
     export MODEL_NAME=$model_name
-    bash scripts/hfai/hp_run.sh ia3 $script_mode
+    bash scripts/hfai/hp_run.sh ia3 $script_mode &
     ((i++))
     if [ $script_mode == "dev" ];then
         break

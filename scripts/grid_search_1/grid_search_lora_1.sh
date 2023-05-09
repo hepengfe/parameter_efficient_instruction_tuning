@@ -19,7 +19,7 @@ for lr in "${lrs[@]}"; do
         export LORA_RANK=$lora_r
         export CMD_INDEX=$i
         export MODEL_NAME=$model_name
-        bash scripts/hfai/hp_run.sh lora_adapter $script_mode
+        bash scripts/hfai/hp_run.sh lora_adapter $script_mode &
         ((i++))
         if [ $script_mode == "dev" ];then
             break
