@@ -83,6 +83,7 @@ class TrainingState:
             "step": 0,
             "global_step": global_step,
             "loss": loss,
+            "best_metric_step":-1,
             "best_metric_val":best_metric_val,
             "eval_metric":eval_metric,
             "test_eval_finished": False,
@@ -284,7 +285,7 @@ class PEFTTrainer:
             self.optimizer = AdamW(
                 self.model.parameters(),
                 lr=self.training_args.learning_rate,
-                eps=self.training_args.adam_epsilon,
+                # eps=self.training_args.adam_epsilon,
                 weight_decay=self.training_args.weight_decay,
             )
             # Create the learning rate scheduler.
@@ -424,14 +425,14 @@ class PEFTTrainer:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 
-                if os.path.exists(self.potential_model_path):
-                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
-                else:
-                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
                 # if os.path.exists(self.potential_model_path):
-                #     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 # else:
-                #     model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
+                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                if os.path.exists(self.potential_model_path):
+                    model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                else:
+                    model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
                 
                     
             elif self.model_args.tuning_mode in PEFT_MODULES:
@@ -967,6 +968,7 @@ class PEFTTrainer:
         # init run 
         global_step = 0
         self.best_metric_val = 0
+        best_metric_step=-1
         start_epoch = 0
         start_step = 0
         loss = 0
@@ -986,6 +988,7 @@ class PEFTTrainer:
             global_step =  self.train_state.get("global_step")
             self.test_eval_finished = self.train_state.get("test_eval_finished")
             self.best_metric_val = self.train_state.get("best_metric_val")
+            best_metric_step=self.train_state.get("best_metric_step")
         # if self.accelerator.is_main_process:
         #     import pdb; pdb.set_trace()
         #     print('check keys')
@@ -1113,27 +1116,24 @@ class PEFTTrainer:
                             "train/lr": self.scheduler.get_last_lr()[0],
                             },
                             step=global_step)
-                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
-                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]}")
+                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps} at {global_step} steps")
+                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]} at {global_step} steps")
                     logging_loss = 0
                 self.best_metric_val = self.train_state.get("best_metric_val")
+                best_metric_step = self.train_state.get("best_metric_step")
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
             self.save_and_eval(global_step, force=True)
-            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.best_metric_val}")
+            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_step: {best_metric_step}, best_metric_val {self.best_metric_val}")
             self.print_log(f"steps per epoch: {global_step/(epoch+1)}")
         
+        # log best metric val at final step for easy comparison
         self.log(
         {
             "best_metric_val": self.best_metric_val
         }, step=global_step
         )
-        # save and eval per epoch / at the end of training
-        # self.accelerator.save_state(
-        #     self.training_args.output_dir
-        # )
-        self.save_and_eval(global_step, force=True)
         self.accelerator.end_training()
         # remove all step checkpoints after training is finished
         if self.accelerator.is_main_process:
@@ -1141,6 +1141,9 @@ class PEFTTrainer:
             remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
             remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
+        # wait for last eval saving and old checkpoint removal
+        self.accelerator.wait_for_everyone()
+
 
     def log(self, d, step):
         """
@@ -1191,6 +1194,7 @@ class PEFTTrainer:
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
         elif mode == "test":
+            torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
             if self.test_eval_finished:
                 self.print_log("test evaluation is done, finish...")
@@ -1206,6 +1210,9 @@ class PEFTTrainer:
                 print("load from existing state: ", best_cp_dir)
                 assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
                 self.accelerator.load_state(best_cp_dir)
+                del self.optimizer
+                del self.scheduler
+                torch.cuda.empty_cache()
             except Exception as e:
                 self.accelerator.clear()
                 # sleep 5 seconds
@@ -1823,11 +1830,11 @@ class PEFTTrainer:
                 self.log(
                     {
                         "best_metric_val": self.best_metric_val,
-                        "best_checkpoint_global_step": global_step,
+                        "best_metric_step": global_step,
                     },
                     step=global_step
                 )
-                self.print_log(f"best_metric_val: {self.best_metric_val}, best_checkpoint_global_step: {global_step}")
+                self.print_log(f"best_metric_val: {self.best_metric_val}, new best_metric_step: {global_step}")
                 # save model and state
                 self.save(global_step, save_best_checkpoint=True)
 
