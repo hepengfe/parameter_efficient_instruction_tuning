@@ -516,7 +516,7 @@ def main():
         training_args.dev_train_data_size = 100
         training_args.save_steps = 20
         training_args.eval_steps = 20
-        training_args.num_train_epochs = 4
+        training_args.num_train_epochs = 20
         training_args.per_device_train_batch_size = 2
         training_args.per_device_eval_batch_size = 10 # can be increased for offload
         training_args.per_device_test_batch_size = 10

@@ -216,9 +216,9 @@ class PEFTTrainer:
         trainable_params_percent = self.check_trainable_parameters()
         # self.print_log(f"lora rank {self.peft_args.lora_r} trainable_params_percent {trainable_params_percent}")
         self.print_log(f"adapter size {self.peft_args.adapter_size} trainable_params_percent {trainable_params_percent}")
-        self.end_step = -1
+        self.total_step = -1
         self.build_dataloader()
-        assert self.end_step > 0
+        assert self.total_step > 0
         assert self.warmup_steps > 0
         # some scheduler require num_training_steps which is depedent on len(dataset)
         self.load_optimizer_n_scheduler()
@@ -287,12 +287,22 @@ class PEFTTrainer:
                 eps=self.training_args.adam_epsilon,
                 weight_decay=self.training_args.weight_decay,
             )
+            # Create the learning rate scheduler.
+            # Note: the current accelerator.step() calls the .step() of the real scheduler for the `num_processes` times. This is because they assume 
+            # the user initialize the scheduler with the entire training set. In the case of data parallel training, each process only
+            # sees a subset (1/num_processes) of the training set. So each time the process needs to update the lr multiple times so that the total 
+            # number of updates in the end matches the num_training_steps here.
+            # Here we need to set the num_training_steps to either using the entire training set (when epochs is specified) or we need to multiply the 
+            # num_training_steps by num_processes so that the total number of updates matches the num_training_steps.
+
             self.scheduler = get_scheduler(
                     name=self.training_args.scheduler_type,
                     optimizer=self.optimizer,
-                    num_training_steps=self.end_step,
-                    num_warmup_steps=self.warmup_steps,
+                    num_training_steps=self.num_training_steps_for_scheduler,
+                    num_warmup_steps=self.warmup_steps_for_scheduler
             )
+
+            
         else:
             # deepspeed
             # lora adapter and other adapter methods
@@ -325,9 +335,10 @@ class PEFTTrainer:
 
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
             self.print_log(f"Learning rate(lr) is set to {self.optimizer.lr}", )
+
             self.scheduler = accelerate.utils.DummyScheduler(
                 self.optimizer,
-                num_training_steps=self.end_step,
+                num_training_steps=self.total_step,
                 num_warmup_steps=self.warmup_steps,
             )
 
@@ -588,9 +599,12 @@ class PEFTTrainer:
 
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
-        self.end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
-        self.warmup_steps = self.end_step * self.training_args.warmup_ratio
-        self.print_log(f"total_step: {self.end_step}, warmup_steps: {self.warmup_steps}")
+        self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}")
+        self.warmup_steps = self.total_step * self.training_args.warmup_ratio
+        self.num_training_steps_for_scheduler = self.total_step * self.accelerator.num_processes
+        self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
+        
 
 
     
@@ -986,7 +1000,7 @@ class PEFTTrainer:
         
 
         
-        if global_step >= self.end_step:
+        if global_step >= self.total_step:
             self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             self.print_log("Ending training...")
             return
@@ -1004,19 +1018,20 @@ class PEFTTrainer:
             self.accelerator.log(self.training_args.to_dict())
 
             progress_bar = tqdm(
-                range(global_step, self.end_step),
+                range(global_step, self.total_step),
                 disable=not self.accelerator.is_local_main_process or self.training_args.is_cluster,
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
                 miniters=self.training_args.logging_steps,
             )
-            self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
+            if global_step > 0:
+                self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
 
-            self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
-            self.print_log(f"skip first {start_step} steps in train_dataloader")
+                self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
+                self.print_log(f"skip first {start_step} steps in train_dataloader")
         else:
             progress_bar = tqdm(
-                range(global_step, self.end_step),
+                range(global_step, self.total_step),
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
                 miniters=self.training_args.logging_steps,
@@ -1027,7 +1042,7 @@ class PEFTTrainer:
         logging_loss = 0
         
 
-        for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
+        for epoch in range(start_epoch, self.training_args.num_train_epochs):
             if self.accelerator.is_local_main_process:
                 self.print_log(f"------------new epoch: {epoch} global_step: {global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
@@ -1044,7 +1059,6 @@ class PEFTTrainer:
                                 "global_step": global_step,
                             }
                         )
-                        
                         if self.label_smoother is None:
                             outputs = self.model(**inputs)
                             loss = outputs["loss"]
@@ -1091,12 +1105,16 @@ class PEFTTrainer:
                 global_step += 1
                 progress_bar.update(1)
                 logging_loss += loss.item()
+                
+                # logging
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
+                            "train/lr": self.scheduler.get_last_lr()[0],
                             },
                             step=global_step)
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
+                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]}")
                     logging_loss = 0
                 self.best_metric_val = self.train_state.get("best_metric_val")
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
@@ -1104,8 +1122,8 @@ class PEFTTrainer:
             # guarantee to have a best checkpoint folder at the end of training
             self.save_and_eval(global_step, force=True)
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.best_metric_val}")
-            
-
+            self.print_log(f"steps per epoch: {global_step/(epoch+1)}")
+        
         self.log(
         {
             "best_metric_val": self.best_metric_val
@@ -1893,7 +1911,7 @@ class PEFTTrainer:
                     
                     # if training is finished, then only load the state
                     # because the model checkpoint is already removed
-                    if global_step >= self.end_step:
+                    if global_step >= self.total_step:
                         self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
                         self.print_log("Only train state is loaded...")
                         return True
