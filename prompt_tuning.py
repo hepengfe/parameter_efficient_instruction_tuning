@@ -446,7 +446,7 @@ def main():
     if training_args.dev_run:
         # no adjustable variables
         os.environ["WANDB_MODE"] = "disabled"
-        training_args.dev_run_data_size = 200
+        training_args.dev_run_data_size = 2000
                 # # debug logging
         training_args.save_steps = 30
         training_args.eval_steps = 30
@@ -474,6 +474,15 @@ def main():
         # training_args.per_device_test_batch_size = 10
         # training_args.dev_run_data_size = 40
 
+        # test evaluation
+        training_args.dev_run_data_size = 500
+        training_args.save_steps = 50
+        training_args.eval_steps = 50
+        training_args.num_train_epochs = 4
+        training_args.per_device_train_batch_size = 2
+        training_args.per_device_eval_batch_size = 10 # can be increased for offload
+        training_args.per_device_test_batch_size = 10
+        
 
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
@@ -503,7 +512,14 @@ def main():
         training_args.eval_steps = 4
         training_args.per_device_eval_batch_size = 1
         training_args.per_device_train_batch_size = 1
-        
+        # test evaluation
+        training_args.dev_train_data_size = 100
+        training_args.save_steps = 20
+        training_args.eval_steps = 20
+        training_args.num_train_epochs = 4
+        training_args.per_device_train_batch_size = 2
+        training_args.per_device_eval_batch_size = 10 # can be increased for offload
+        training_args.per_device_test_batch_size = 10
         # test warmup steps
         # training_args.dev_train_data_size = 1000
         # training_args.num_train_epochs = 4

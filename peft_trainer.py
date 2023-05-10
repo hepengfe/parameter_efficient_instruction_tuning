@@ -1228,8 +1228,7 @@ class PEFTTrainer:
             # logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
             # logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
             
-            
-        
+
         with torch.no_grad():
             progress_bar = tqdm(dataloader2eval, miniters=0 if not self.training_args.is_cluster else 500)
             for inputs in progress_bar:
@@ -1276,9 +1275,6 @@ class PEFTTrainer:
                 
                 label_host += self.tokenizer.batch_decode(labels)
 
-                
-                
-
         results = self.compute_metrics(
                 (output_host, label_host),
                 dataset2eval
@@ -1292,10 +1288,10 @@ class PEFTTrainer:
             self.train_state.update({"test_eval_finished": True})
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
             self.train_state.save_to_json(latest_cp)
-            
+
         return results_with_mode
 
-    
+
     def compute_metrics(self, eval_preds, eval_dataset, is_pred_logits = False, model_idx = 0, metrics = {}):
         preds, labels = eval_preds
         if isinstance(preds, tuple):
@@ -1796,6 +1792,7 @@ class PEFTTrainer:
             results = self.evaluate(step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
+            self.print_log(f"current metric_val: {cur_metric_val},  global_step: {global_step}")
             if cur_metric_val > self.best_metric_val:
                 self.best_metric_val = cur_metric_val
                 # log before save
