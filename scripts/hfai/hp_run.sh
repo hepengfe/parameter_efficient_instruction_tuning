@@ -84,7 +84,7 @@ fi
 default_save_step=$((default_eval_step/5)) # 5000/5=1000
 defualt_logging_steps=$((default_eval_step/20)) # 5000/20=250
 
-if [ $script_mode == "hfai" ]; then
+if [[ $script_mode == "hfai" || $script_mode == "hfai_rm" ]]; then
     hfai workspace push  --force --no_zip
 fi
 
@@ -158,15 +158,19 @@ if [ $script_mode == "dev" ]; then
     launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
     launch_suffix="--dev_train"
 fi
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model} --model_arch ${model_arch} --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
+spcecial_arg=""
+if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
+    spcecial_arg="--overwrite_output_dir"
+fi
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model} --model_arch ${model_arch} --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
 
-if [ $script_mode  == "dev_cmd" ];then
+if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"
     echo "expr_name: $expr_name"
     echo "expr_dir: $expr_dir"
     echo "launch command: $launch_command"
     echo -e "\n\n"
-elif [[ $script_mode == "hfai" || $script_mode == "dev" ]];then
+elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" ]];then
     echo $launch_command
     eval $launch_command
 fi

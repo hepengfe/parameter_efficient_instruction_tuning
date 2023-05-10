@@ -603,10 +603,13 @@ def main():
     if not training_args.output_dir:
         training_args.output_dir = output_dir
     
-    if training_args.overwrite_output_dir and os.path.exists(training_args.output_dir):
-        shutil.rmtree(training_args.output_dir, ignore_errors=True)
-        shutil.rmtree(training_args.logging_dir, ignore_errors=True)
-        
+    if training_args.overwrite_output_dir:
+        if os.path.exists(training_args.output_dir):
+            shutil.rmtree(training_args.output_dir, ignore_errors=True)
+            print(f"Removed output_dir: {training_args.output_dir}")
+        if os.path.exists(training_args.logging_dir):
+            shutil.rmtree(training_args.logging_dir, ignore_errors=True)
+            print(f"Removed logging_dir: {training_args.logging_dir}")
         # --overwrite_output_dir in cluster should be used for only one time
         if training_args.is_cluster:
             exit()

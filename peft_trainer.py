@@ -96,6 +96,8 @@ class TrainingState:
         else:
             if hasattr(self, k):
                 return getattr(self,k)
+            elif k == "test_eval_finished": # temp fix
+                return False
             else:
                 raise ValueError(
                     f"{k} cannot be found in train state"
@@ -1135,8 +1137,13 @@ class PEFTTrainer:
         print log under different training system.
         """
         logger.info(s)
-        if self.training_args.is_cluster and self.accelerator.is_main_process:
+        if self.training_args.is_cluster:
+            import hfai
+            if hfai.distributed.get_rank() == 0:
+                print(s)
+        elif self.accelerator.is_main_process:
             print(s)
+            
         
         
 
@@ -1790,8 +1797,8 @@ class PEFTTrainer:
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
             if cur_metric_val > self.best_metric_val:
-                self.save(global_step, save_best_checkpoint=True)
                 self.best_metric_val = cur_metric_val
+                # log before save
                 self.log(
                     {
                         "best_metric_val": self.best_metric_val,
@@ -1800,6 +1807,8 @@ class PEFTTrainer:
                     step=global_step
                 )
                 self.print_log(f"best_metric_val: {self.best_metric_val}, best_checkpoint_global_step: {global_step}")
+                # save model and state
+                self.save(global_step, save_best_checkpoint=True)
 
 
 
