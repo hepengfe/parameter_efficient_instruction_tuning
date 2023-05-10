@@ -1873,13 +1873,12 @@ class PEFTTrainer:
                     # adapter pacakge
                     if hasattr(unwrapped_model, "save_all_adapters"):
                         unwrapped_model.save_all_adapters(sharded_model_path)
-            # save new train state only if it is best checkpoint
-            if self.accelerator.is_main_process:
-                if remove_old_cp:
-                    remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
-                self.train_state.save_to_json(checkpoint_folder_path_to_save)
-            
-                print("Model saving time in seconds:", time.time() - start_time)
+        # save new train state only if it is best checkpoint     
+        if self.accelerator.is_main_process:
+            self.train_state.save_to_json(checkpoint_folder_path_to_save)
+            print("Model saving time in seconds:", time.time() - start_time)
+            if remove_old_cp:
+                remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
 
     def load_previous_run(self):
         loaded = False
