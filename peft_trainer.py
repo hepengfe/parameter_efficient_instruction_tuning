@@ -601,8 +601,9 @@ class PEFTTrainer:
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
         self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
-        self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}")
         self.warmup_steps = self.total_step * self.training_args.warmup_ratio
+        self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}")
+        
         self.num_training_steps_for_scheduler = self.total_step * self.accelerator.num_processes
         self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
         
