@@ -1005,10 +1005,10 @@ class PEFTTrainer:
 
             progress_bar = tqdm(
                 range(global_step, self.end_step),
-                disable=not self.accelerator.is_local_main_process,
+                disable=not self.accelerator.is_local_main_process or self.training_args.is_cluster,
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
-                miniters=self.training_args.logging_steps
+                miniters=self.training_args.logging_steps,
             )
             self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
 
@@ -1019,7 +1019,8 @@ class PEFTTrainer:
                 range(global_step, self.end_step),
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
-                miniters=self.training_args.logging_steps
+                miniters=self.training_args.logging_steps,
+                disable=self.training_args.is_cluster
             )
 
         self.model.train()
@@ -1101,7 +1102,7 @@ class PEFTTrainer:
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
-            self.save_and_eval(global_step)
+            self.save_and_eval(global_step, force=True)
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.best_metric_val}")
             
 
@@ -1114,7 +1115,7 @@ class PEFTTrainer:
         # self.accelerator.save_state(
         #     self.training_args.output_dir
         # )
-        self.save_and_eval(global_step)
+        self.save_and_eval(global_step, force=True)
         self.accelerator.end_training()
         # remove all step checkpoints after training is finished
         if self.accelerator.is_main_process:
@@ -1230,7 +1231,9 @@ class PEFTTrainer:
             
 
         with torch.no_grad():
-            progress_bar = tqdm(dataloader2eval, miniters=0 if not self.training_args.is_cluster else 500)
+            progress_bar = tqdm(dataloader2eval,
+                                miniters=0 if not self.training_args.is_cluster else 500,
+                                disable=self.training_args.is_cluster)
             for inputs in progress_bar:
                 if not self.use_distributed:
                     for k in inputs:
@@ -1288,7 +1291,8 @@ class PEFTTrainer:
             self.train_state.update({"test_eval_finished": True})
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
             self.train_state.save_to_json(latest_cp)
-
+            self.print_log("Finished test dataset evaluation...")
+            
         return results_with_mode
 
 
@@ -1780,15 +1784,17 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
-    def save_and_eval(self, global_step):
+    def save_and_eval(self, global_step, force=False):
         """
         if global step satisfies condition, save and/or evaluate.
+
+        force is used in end of training or after each epoch.
         """
-        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0:
+        if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0):
             self.save(global_step)
 
         
-        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+        if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0):
             results = self.evaluate(step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
@@ -1849,13 +1855,13 @@ class PEFTTrainer:
                     # adapter pacakge
                     if hasattr(unwrapped_model, "save_all_adapters"):
                         unwrapped_model.save_all_adapters(sharded_model_path)
-
-        if self.accelerator.is_main_process:
-            if remove_old_cp:
-                remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
-            self.train_state.save_to_json(checkpoint_folder_path_to_save)
-        
-            print("Model saving time in seconds:", time.time() - start_time)
+            # save new train state only if it is best checkpoint
+            if self.accelerator.is_main_process:
+                if remove_old_cp:
+                    remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
+                self.train_state.save_to_json(checkpoint_folder_path_to_save)
+            
+                print("Model saving time in seconds:", time.time() - start_time)
 
     def load_previous_run(self):
         loaded = False
