@@ -4,7 +4,7 @@ import string
 from transformers.data.data_collator import *
 from transformers import (
     # OPTPreTrainedModel,
-    # GPT2PreTrainedModel,
+    GPT2PreTrainedModel,
     # LlamaPreTrainedModel
 )
 logger = logging.getLogger(__name__)
