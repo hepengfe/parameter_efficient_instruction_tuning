@@ -671,11 +671,15 @@ class PEFTTrainer:
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_run_data_size))
 
             elif self.training_args.dev_train:
-                # raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
-                # raw_datasets["validation"] = raw_datasets["train"]
+                raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
+                raw_datasets["validation"] = raw_datasets["train"]
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
-                raw_datasets["train"] =  raw_datasets["test"]
-                raw_datasets["validation"] = raw_datasets["test"]
+            elif self.training_args.dev_test:
+                # test compute metrics are same for validation and test as
+                # test evaluation load model from checkpoint and run on test dataset
+                raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_test_data_size))
+                raw_datasets["validation"] = raw_datasets["train"]
+                raw_datasets["test"] = raw_datasets["train"]
 
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
@@ -1157,7 +1161,8 @@ class PEFTTrainer:
 
     def log(self, d, step):
         """
-        print dictionary log and log to tensorboard/train state.
+        log to tensorboard/train state.
+        but it doesn't save train state as train state could be saved to diff dirs.
         """
         self.accelerator.log(d,
                             step=step
@@ -1330,6 +1335,8 @@ class PEFTTrainer:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
         self.log(results_with_mode, step=step)
+        self.train_state.save_to_json(get_latest_checkpoint(self.training_args.output_dir))
+
         if mode == "test":
             self.train_state.update({"test_eval_finished": True})
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
@@ -1370,9 +1377,10 @@ class PEFTTrainer:
             categories_split = ["_".join(it[0].lower().split()) for it in eval_dataset["Categories_split"]]
             result_per_category_split = compute_grouped_metrics(predictions=decoded_preds, references=references, groups=categories_split) # by category + split, evaluate the category on dev and test separately
 
-            
             result.update(result_per_category)
             result.update(result_per_category_split)
+            
+            
             prediction_lens = [np.count_nonzero(pred != self.tokenizer.pad_token_id) for pred in preds]
             result["gen_len"] = np.mean(prediction_lens)
             result = {k: round(v, 4) for k, v in result.items()}

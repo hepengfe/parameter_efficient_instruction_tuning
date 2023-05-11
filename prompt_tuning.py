@@ -382,6 +382,12 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=False,
     )
 
+    dev_test: bool = field(
+        default=False,
+        metadata={ "help": "Whether to run in test mode which check evaluation on test dataset" },
+    )
+
+
     use_accelerate: bool = field(
         default=False,
         metadata={ "help": "Whether to use accelerate." },
@@ -510,21 +516,21 @@ def main():
         # test overfitting
         training_args.logging_steps = 10
         # async eval and save
-        training_args.num_train_epochs = 5
-        training_args.save_steps = 300
-        training_args.eval_steps = 100
-        training_args.dev_train_data_size = 30
-        training_args.per_device_eval_batch_size = 1
-        # training_args.per_device_train_batch_size = 1
-        training_args.per_device_train_batch_size = 1
+        # training_args.num_train_epochs = 5
+        # training_args.save_steps = 300
+        # training_args.eval_steps = 100
+        # training_args.dev_train_data_size = 30
+        # training_args.per_device_eval_batch_size = 1
+        # # training_args.per_device_train_batch_size = 1
+        # training_args.per_device_train_batch_size = 2
         
-        # test save and test eval OOM
-        # training_args.num_train_epochs = 1
-        # training_args.dev_train_data_size = 12 # number of gpus
-        # training_args.save_steps = 4
-        # training_args.eval_steps = 4
-        # training_args.per_device_eval_batch_size = 2
-        # training_args.per_device_train_batch_size = 1
+        
+        training_args.num_train_epochs = 1
+        training_args.dev_train_data_size = 30 # number of gpus
+        training_args.save_steps = 4
+        training_args.eval_steps = 4
+        training_args.per_device_eval_batch_size = 4
+        training_args.per_device_train_batch_size = 1
         
         # test evaluation
         # training_args.dev_train_data_size = 100
@@ -534,6 +540,17 @@ def main():
         # training_args.per_device_train_batch_size = 2
         # training_args.per_device_eval_batch_size = 10 # can be increased for offload
         # training_args.per_device_test_batch_size = 10
+
+
+    if training_args.dev_test:
+        # test save and test eval OOM, also whether eval and test results are same
+        # save at 4, 8, 10(epoch) steps
+        training_args.num_train_epochs = 1
+        training_args.dev_test_data_size = 30 # number of gpus
+        training_args.save_steps = 4
+        training_args.eval_steps = 4
+        training_args.per_device_eval_batch_size = 4
+        training_args.per_device_train_batch_size = 1
 
         
     if training_args.do_search_hyperparams:
