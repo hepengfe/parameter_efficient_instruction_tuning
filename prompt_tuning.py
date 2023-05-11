@@ -513,7 +513,7 @@ def main():
         training_args.num_train_epochs = 5
         training_args.save_steps = 300
         training_args.eval_steps = 100
-        training_args.dev_train_data_size = 300
+        training_args.dev_train_data_size = 30
         training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
         training_args.per_device_train_batch_size = 1

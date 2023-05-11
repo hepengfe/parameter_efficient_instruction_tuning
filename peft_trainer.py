@@ -1213,7 +1213,7 @@ class PEFTTrainer:
             # free memory in test mode 
             dataset2eval = self.test_dataset
             dataloader2eval = self.test_dataloader
-            
+            best_cp_dir = None
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
             try:
                 best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
@@ -1228,6 +1228,9 @@ class PEFTTrainer:
                 # sleep 5 seconds
                 time.sleep(5) # wait for oom processes to be killed in case of oom
                 print(f"load state failed, try to load from model_path due to \n {e}")
+                if best_cp_dir is None:
+                    print("No best checkpoint found, exiting")
+                    exit()
                 sharded_model_path = os.path.join(best_cp_dir, "save_pretrained")
                 config = AutoConfig.from_pretrained(sharded_model_path)
                 # reload tokenizer in this case
