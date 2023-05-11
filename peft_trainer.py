@@ -425,14 +425,14 @@ class PEFTTrainer:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 
-                # if os.path.exists(self.potential_model_path):
-                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
-                # else:
-                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
                 if os.path.exists(self.potential_model_path):
-                    model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
-                    model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                # if os.path.exists(self.potential_model_path):
+                #     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                # else:
+                #     model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
                 
                     
             elif self.model_args.tuning_mode in PEFT_MODULES:
