@@ -5,7 +5,7 @@ from transformers.data.data_collator import *
 from transformers import (
     # OPTPreTrainedModel,
     GPT2PreTrainedModel,
-    LlamaPreTrainedModel
+    # LlamaPreTrainedModel
 )
 logger = logging.getLogger(__name__)
 import numpy as np
@@ -167,11 +167,10 @@ class DataCollatorForNI:
         else:
             text_labels = []
             labels = None
+
     
-        is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
-        
-        # if is_causal_lm and labels:
-        #     sources = ["".join(sl) for sl in zip(sources, labels)]
+        # is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
+        is_causal_lm = False
 
         # 2. prepare model inputs first
         if not is_causal_lm:

@@ -36,7 +36,7 @@ from util.ni_dataset_collator import DataCollatorForNI
 from copy import deepcopy
 import datetime
 from peft import PeftModelForSeq2SeqLM
-from utils import get_latest_checkpoint, remove_old_checkpoints
+from utils import get_latest_checkpoint, remove_old_checkpoints, remove_files_and_folders_other_than
 import json
 import math
 from accelerate import Accelerator
@@ -53,12 +53,13 @@ PEFT_MODULES=["prompt_tuning", "lora_peft"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
-from transformers import LlamaTokenizer
-from transformers import LlamaLMHeadModel
+# from transformers import LlamaTokenizer
+# from transformers import LlamaLMHeadModel
 
 import logging
 from accelerate.logging import get_logger
 import accelerate
+
 
 logging.basicConfig(level=logging.DEBUG)
 # logging.basicConfig(level=logging.INFO)
@@ -82,8 +83,10 @@ class TrainingState:
             "step": 0,
             "global_step": global_step,
             "loss": loss,
+            "best_metric_step":-1,
             "best_metric_val":best_metric_val,
-            "eval_metric":eval_metric
+            "eval_metric":eval_metric,
+            "test_eval_finished": False,
         }
         self.file_name = "training_state.json"
 
@@ -94,6 +97,8 @@ class TrainingState:
         else:
             if hasattr(self, k):
                 return getattr(self,k)
+            elif k == "test_eval_finished": # temp fix
+                return False
             else:
                 raise ValueError(
                     f"{k} cannot be found in train state"
@@ -162,6 +167,7 @@ class PEFTTrainer:
         # init
         self.best_metric_val = - 1
         self.warmup_steps = -1
+        self.test_eval_finished = False
         
         if self.model_args.model_arch != "decoder":
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
@@ -212,9 +218,9 @@ class PEFTTrainer:
         trainable_params_percent = self.check_trainable_parameters()
         # self.print_log(f"lora rank {self.peft_args.lora_r} trainable_params_percent {trainable_params_percent}")
         self.print_log(f"adapter size {self.peft_args.adapter_size} trainable_params_percent {trainable_params_percent}")
-        self.end_step = -1
+        self.total_step = -1
         self.build_dataloader()
-        assert self.end_step > 0
+        assert self.total_step > 0
         assert self.warmup_steps > 0
         # some scheduler require num_training_steps which is depedent on len(dataset)
         self.load_optimizer_n_scheduler()
@@ -257,7 +263,7 @@ class PEFTTrainer:
 
 
 
-    def load_model_n_peft_module(self, device="cuda"):
+    def load_model_n_peft_module(self):
         self.model = self.load_pretrained_model()
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
         assert self.model_trainable_params > 0, "Model has no trainable parameters"
@@ -280,15 +286,25 @@ class PEFTTrainer:
             self.optimizer = AdamW(
                 self.model.parameters(),
                 lr=self.training_args.learning_rate,
-                eps=self.training_args.adam_epsilon,
+                # eps=self.training_args.adam_epsilon,
                 weight_decay=self.training_args.weight_decay,
             )
+            # Create the learning rate scheduler.
+            # Note: the current accelerator.step() calls the .step() of the real scheduler for the `num_processes` times. This is because they assume 
+            # the user initialize the scheduler with the entire training set. In the case of data parallel training, each process only
+            # sees a subset (1/num_processes) of the training set. So each time the process needs to update the lr multiple times so that the total 
+            # number of updates in the end matches the num_training_steps here.
+            # Here we need to set the num_training_steps to either using the entire training set (when epochs is specified) or we need to multiply the 
+            # num_training_steps by num_processes so that the total number of updates matches the num_training_steps.
+
             self.scheduler = get_scheduler(
                     name=self.training_args.scheduler_type,
                     optimizer=self.optimizer,
-                    num_training_steps=self.end_step,
-                    num_warmup_steps=self.warmup_steps,
+                    num_training_steps=self.num_training_steps_for_scheduler,
+                    num_warmup_steps=self.warmup_steps_for_scheduler
             )
+
+            
         else:
             # deepspeed
             # lora adapter and other adapter methods
@@ -321,9 +337,10 @@ class PEFTTrainer:
 
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
             self.print_log(f"Learning rate(lr) is set to {self.optimizer.lr}", )
+
             self.scheduler = accelerate.utils.DummyScheduler(
                 self.optimizer,
-                num_training_steps=self.end_step,
+                num_training_steps=self.total_step,
                 num_warmup_steps=self.warmup_steps,
             )
 
@@ -407,21 +424,20 @@ class PEFTTrainer:
 
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
-                # trainer not compactiable with AdapterTrainer yet due to forward function not returning loss
-                # if self.accelerator.is_main_process:
-                #     import pdb; pdb.set_trace()
-                #     print('')
-                # self.accelerator.wait_for_everyone()
-
                 if os.path.exists(self.potential_model_path):
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+                
                 if os.path.exists(self.potential_model_path):
-                    model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
-                    model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
+                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                # if os.path.exists(self.potential_model_path):
+                #     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                # else:
+                #     model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
                 
                     
             elif self.model_args.tuning_mode in PEFT_MODULES:
@@ -590,9 +606,13 @@ class PEFTTrainer:
 
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
-        self.end_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
-        self.warmup_steps = self.end_step * self.training_args.warmup_ratio
-        self.print_log(f"total_step: {self.end_step}, warmup_steps: {self.warmup_steps}")
+        self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        self.warmup_steps = self.total_step * self.training_args.warmup_ratio
+        self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}")
+        
+        self.num_training_steps_for_scheduler = self.total_step * self.accelerator.num_processes
+        self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
+        
 
 
     
@@ -798,6 +818,7 @@ class PEFTTrainer:
                     "Expected a model with an active adapter setup."
                     "If you want to fully finetune the model use the Trainer class."
                 )
+
             
         elif self.model_args.tuning_mode == "bitfit":
             # if self.model_args.model_arch == "encoder":
@@ -955,6 +976,7 @@ class PEFTTrainer:
         # init run 
         global_step = 0
         self.best_metric_val = 0
+        best_metric_step=-1
         start_epoch = 0
         start_step = 0
         loss = 0
@@ -972,7 +994,9 @@ class PEFTTrainer:
             start_epoch = self.train_state.get("epoch")
             start_step = self.train_state.get("step")
             global_step =  self.train_state.get("global_step")
+            self.test_eval_finished = self.train_state.get("test_eval_finished")
             self.best_metric_val = self.train_state.get("best_metric_val")
+            best_metric_step=self.train_state.get("best_metric_step")
         # if self.accelerator.is_main_process:
         #     import pdb; pdb.set_trace()
         #     print('check keys')
@@ -987,7 +1011,7 @@ class PEFTTrainer:
         
 
         
-        if global_step >= self.end_step:
+        if global_step >= self.total_step:
             self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
             self.print_log("Ending training...")
             return
@@ -1005,35 +1029,36 @@ class PEFTTrainer:
             self.accelerator.log(self.training_args.to_dict())
 
             progress_bar = tqdm(
-                range(global_step, self.end_step),
-                disable=not self.accelerator.is_local_main_process,
+                range(global_step, self.total_step),
+                disable=not self.accelerator.is_local_main_process or self.training_args.is_cluster,
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
-                miniters=self.training_args.logging_steps
+                miniters=self.training_args.logging_steps,
             )
-            self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
+            if global_step > 0:
+                self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
 
-            self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
-            self.print_log(f"skip first {start_step} steps in train_dataloader")
+                self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
+                self.print_log(f"skip first {start_step} steps in train_dataloader")
         else:
             progress_bar = tqdm(
-                range(global_step, self.end_step),
+                range(global_step, self.total_step),
                 initial=global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
-                miniters=self.training_args.logging_steps
+                miniters=self.training_args.logging_steps,
+                disable=self.training_args.is_cluster
             )
 
         self.model.train()
         logging_loss = 0
         
 
-        for epoch in range(start_epoch, self.training_args.num_train_epochs+1):
+        for epoch in range(start_epoch, self.training_args.num_train_epochs):
             if self.accelerator.is_local_main_process:
                 self.print_log(f"------------new epoch: {epoch} global_step: {global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
-                if self.label_smoother is not None and "labels" in inputs:
-                    labels = inputs.pop("labels")
+
                 if self.use_distributed:
                     # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
@@ -1045,11 +1070,11 @@ class PEFTTrainer:
                                 "global_step": global_step,
                             }
                         )
-                        
                         if self.label_smoother is None:
                             outputs = self.model(**inputs)
                             loss = outputs["loss"]
                         else:
+                            labels = inputs.pop("labels")
                             outputs = self.model(**inputs)
                             loss = self.label_smoother(outputs, labels)
 
@@ -1091,32 +1116,41 @@ class PEFTTrainer:
                 global_step += 1
                 progress_bar.update(1)
                 logging_loss += loss.item()
+                
+                # logging
                 if global_step != 0 and global_step % self.training_args.logging_steps == 0:
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
+                            "train/lr": self.scheduler.get_last_lr()[0],
                             },
                             step=global_step)
-                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
+                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps} at {global_step} steps")
+                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]} at {global_step} steps")
                     logging_loss = 0
                 self.best_metric_val = self.train_state.get("best_metric_val")
+                best_metric_step = self.train_state.get("best_metric_step")
             self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
-            self.save_and_eval(global_step)
-            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_val {self.best_metric_val}")
-            
-
+            self.save_and_eval(global_step, force=True)
+            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_step: {best_metric_step}, best_metric_val {self.best_metric_val}")
+            self.print_log(f"steps per epoch: {global_step/(epoch+1)}")
+        
+        # log best metric val at final step for easy comparison
         self.log(
         {
             "best_metric_val": self.best_metric_val
         }, step=global_step
         )
-        # save and eval per epoch / at the end of training
-        # self.accelerator.save_state(
-        #     self.training_args.output_dir
-        # )
-        self.save_and_eval(global_step)
         self.accelerator.end_training()
+        # remove all step checkpoints after training is finished
+        if self.accelerator.is_main_process:
+            # only keep lastest checkpoint's train_state.json file
+            remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
+        # wait for last eval saving and old checkpoint removal
+        self.accelerator.wait_for_everyone()
 
 
     def log(self, d, step):
@@ -1133,8 +1167,13 @@ class PEFTTrainer:
         print log under different training system.
         """
         logger.info(s)
-        if self.training_args.is_cluster and self.accelerator.is_main_process:
+        if self.training_args.is_cluster:
+            import hfai
+            if hfai.distributed.get_rank() == 0:
+                print(s)
+        elif self.accelerator.is_main_process:
             print(s)
+            
         
         
 
@@ -1163,7 +1202,11 @@ class PEFTTrainer:
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
         elif mode == "test":
-            # try to load best checkpoint
+            torch.cuda.empty_cache()
+            # NOTE: test evaluation is done, finish
+            if self.test_eval_finished:
+                self.print_log("test evaluation is done, finish...")
+                return
             
             # free memory in test mode 
             dataset2eval = self.test_dataset
@@ -1175,6 +1218,9 @@ class PEFTTrainer:
                 print("load from existing state: ", best_cp_dir)
                 assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
                 self.accelerator.load_state(best_cp_dir)
+                del self.optimizer
+                del self.scheduler
+                torch.cuda.empty_cache()
             except Exception as e:
                 self.accelerator.clear()
                 # sleep 5 seconds
@@ -1220,10 +1266,11 @@ class PEFTTrainer:
             # logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
             # logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
             
-            
-        
+
         with torch.no_grad():
-            progress_bar = tqdm(dataloader2eval, miniters=0 if not self.training_args.is_cluster else 500)
+            progress_bar = tqdm(dataloader2eval,
+                                miniters=0 if not self.training_args.is_cluster else 500,
+                                disable=self.training_args.is_cluster)
             for inputs in progress_bar:
                 if not self.use_distributed:
                     for k in inputs:
@@ -1269,9 +1316,6 @@ class PEFTTrainer:
                 
                 label_host += self.tokenizer.batch_decode(labels)
 
-                
-                
-
         results = self.compute_metrics(
                 (output_host, label_host),
                 dataset2eval
@@ -1281,9 +1325,15 @@ class PEFTTrainer:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
         self.log(results_with_mode, step=step)
+        if mode == "test":
+            self.train_state.update({"test_eval_finished": True})
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            self.train_state.save_to_json(latest_cp)
+            self.print_log("Finished test dataset evaluation...")
+            
         return results_with_mode
 
-    
+
     def compute_metrics(self, eval_preds, eval_dataset, is_pred_logits = False, model_idx = 0, metrics = {}):
         preds, labels = eval_preds
         if isinstance(preds, tuple):
@@ -1772,29 +1822,34 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
-    def save_and_eval(self, global_step):
+    def save_and_eval(self, global_step, force=False):
         """
         if global step satisfies condition, save and/or evaluate.
+
+        force is used in end of training or after each epoch.
         """
-        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0:
+        if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0):
             self.save(global_step)
 
         
-        if (global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0:
+        if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0):
             results = self.evaluate(step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
+            self.print_log(f"current metric_val: {cur_metric_val},  global_step: {global_step}")
             if cur_metric_val > self.best_metric_val:
-                self.save(global_step, save_best_checkpoint=True)
                 self.best_metric_val = cur_metric_val
+                # log before save
                 self.log(
                     {
                         "best_metric_val": self.best_metric_val,
-                        "best_checkpoint_global_step": global_step,
+                        "best_metric_step": global_step,
                     },
                     step=global_step
                 )
-                self.print_log(f"best_metric_val: {self.best_metric_val}, best_checkpoint_global_step: {global_step}")
+                self.print_log(f"best_metric_val: {self.best_metric_val}, new best_metric_step: {global_step}")
+                # save model and state
+                self.save(global_step, save_best_checkpoint=True)
 
 
 
@@ -1812,6 +1867,9 @@ class PEFTTrainer:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir, "best_checkpoint")
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         else:
+            # in case we don't want checkpoints in separate sub-folders
+            # checkpoint_dir_path = self.training_args.output_dir
+            # checkpoint_folder_path_to_save = self.training_args.output_dir
             checkpoint_dir_path = os.path.join(self.training_args.output_dir)
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         self.accelerator.save_state(checkpoint_folder_path_to_save)
@@ -1835,13 +1893,12 @@ class PEFTTrainer:
                     # adapter pacakge
                     if hasattr(unwrapped_model, "save_all_adapters"):
                         unwrapped_model.save_all_adapters(sharded_model_path)
-
+        # save new train state only if it is best checkpoint     
         if self.accelerator.is_main_process:
+            self.train_state.save_to_json(checkpoint_folder_path_to_save)
+            print("Model saving time in seconds:", time.time() - start_time)
             if remove_old_cp:
                 remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
-            self.train_state.save_to_json(checkpoint_folder_path_to_save)
-        
-            print("Model saving time in seconds:", time.time() - start_time)
 
     def load_previous_run(self):
         loaded = False
@@ -1861,15 +1918,28 @@ class PEFTTrainer:
 
                 # try to load the latest checkpoint
                 try:
-                    self.accelerator.load_state(latest_cp)
-                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
+                    self.train_state.load_from_json(latest_cp)
                     self.accelerator.init_trackers(
                         self.training_args.run_name,
                         config=self.train_state.state_dict,
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                     )
+                    start_epoch = self.train_state.get("epoch")
+                    start_step = self.train_state.get("step")
+                    global_step =  self.train_state.get("global_step")
+                    
+                    # if training is finished, then only load the state
+                    # because the model checkpoint is already removed
+                    if global_step >= self.total_step:
+                        self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
+                        self.print_log("Only train state is loaded...")
+                        return True
+                    
+                    self.accelerator.load_state(latest_cp)
+                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
+                    
 
-                    self.train_state.load_from_json(latest_cp)
+                    
                     loaded = True
                 except Exception as e:
                     # it can be state dict file corrupted or model checkpoint corrupted
