@@ -30,14 +30,17 @@ default_warmup_ratio=0.03
 declare -A model_name2path
 declare -A lora_rank2bs
 declare -A adapter_size2bs
+
 adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
-model_name2arch=(["t5"]="encoder-decoder" ["opt"]="decoder" ["llama"]="decoder" ["gpt2"]="decoder")
+
 model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
 lora_rank2bs=(["8"]=15 ["32"]=15 ["64"]=15 ["128"]=15 ["256"]=10 ["512"]=5)
 
 
 model=${model_name2path[$MODEL_NAME]}
-model_arch=${model_name2arch[$MODEL_NAME]}
+
+
+
 scheduler=$default_scheduler
 
 # tuning mode fixed setup
@@ -162,7 +165,7 @@ spcecial_arg=""
 if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
     spcecial_arg="--overwrite_output_dir"
 fi
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model} --model_arch ${model_arch} --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"

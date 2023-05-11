@@ -28,8 +28,8 @@ class ModelArguments:
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
 
-    model_arch: str = field(
-        default="encoder-decoder",
+    model_arch: Optional[str] = field(
+        default=None,
         metadata={"help": "model architecture"}
     )
 
@@ -423,11 +423,23 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "The warmup ratio." },
     )
 
-
+ENCODER_DECODER_MODEL_NAMES = ["t5"]
+DECODER_MODEL_NAMES = ["opt", "llama", "gpt2"]
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
+
+    if any([m in model_args.model_name_or_path for m in ENCODER_DECODER_MODEL_NAMES]):
+        model_args.model_arch = "encoder-decoder"
+        print(f"model {model_args.model_name_or_path} is encoder-decoder")
+    elif any([m in model_args.model_name_or_path for m in DECODER_MODEL_NAMES]):
+        model_args.model_arch = "decoder"
+        print(f"model {model_args.model_name_or_path} is decoder")
+    else:
+        if model_args.model_arch is None:
+            raise ValueError(f"model name or path {model_args.model_name_or_path} is not categorized into encoder-decoder or decoder. If it's model path, please specify model_arch.")
+
     
     
     if training_args.is_cluster:
@@ -501,17 +513,18 @@ def main():
         training_args.num_train_epochs = 5
         training_args.save_steps = 300
         training_args.eval_steps = 100
-        training_args.per_device_eval_batch_size = 20
+        training_args.dev_train_data_size = 300
+        training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
         training_args.per_device_train_batch_size = 1
         
         # test save and test eval OOM
-        training_args.num_train_epochs = 1
-        training_args.dev_train_data_size = 12 # number of gpus
-        training_args.save_steps = 4
-        training_args.eval_steps = 4
-        training_args.per_device_eval_batch_size = 1
-        training_args.per_device_train_batch_size = 1
+        # training_args.num_train_epochs = 1
+        # training_args.dev_train_data_size = 12 # number of gpus
+        # training_args.save_steps = 4
+        # training_args.eval_steps = 4
+        # training_args.per_device_eval_batch_size = 2
+        # training_args.per_device_train_batch_size = 1
         
         # test evaluation
         # training_args.dev_train_data_size = 100

@@ -53,8 +53,8 @@ PEFT_MODULES=["prompt_tuning", "lora_peft"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
-# from transformers import LlamaTokenizer
-# from transformers import LlamaLMHeadModel
+from transformers import LlamaTokenizer
+from transformers import LlamaLMHeadModel
 
 import logging
 from accelerate.logging import get_logger
@@ -430,14 +430,15 @@ class PEFTTrainer:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 
-                if os.path.exists(self.potential_model_path):
-                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
-                else:
-                    model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
                 # if os.path.exists(self.potential_model_path):
-                #     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 # else:
-                #     model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
+                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                # adapter model + seq2seq lm head (replace lm head with original t5-lm head weights)
+                if os.path.exists(self.potential_model_path):
+                    model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
+                else:
+                    model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
                 
                     
             elif self.model_args.tuning_mode in PEFT_MODULES:
@@ -670,10 +671,11 @@ class PEFTTrainer:
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_run_data_size))
 
             elif self.training_args.dev_train:
-                raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
-                raw_datasets["validation"] = raw_datasets["train"]
+                # raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
+                # raw_datasets["validation"] = raw_datasets["train"]
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
-
+                raw_datasets["train"] =  raw_datasets["test"]
+                raw_datasets["validation"] = raw_datasets["test"]
 
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
