@@ -68,7 +68,7 @@ elif [ $tuning_mode == "prompt_tuning" ]; then
     default_eval_step=5000
     eval_bs=6
     scheduler="linear"
-elif [ $tuning_mode == "ia3" ]; then
+elif [[ $tuning_mode == "ia3" || $tuning_mode == "bitfit" ]]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
     eval_bs=20
@@ -134,7 +134,7 @@ elif [ $tuning_mode == "prefix_tuning" ]; then
 elif [ $tuning_mode == "prompt_tuning" ]; then
     tuning_config="prompt_len_${PROMPT_LEN}"
     tuning_args="--tuning_mode ${tuning_mode} --prompt_len ${PROMPT_LEN}"
-elif [ $tuning_mode == "ia3" ]; then
+elif [[ $tuning_mode == "ia3" || $tuning_mode == "bitfit" ]]; then
     tuning_config="None"
     tuning_args="--tuning_mode ${tuning_mode}"
 else

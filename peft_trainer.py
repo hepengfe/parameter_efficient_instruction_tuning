@@ -87,6 +87,9 @@ class TrainingState:
             "best_metric_val":best_metric_val,
             "eval_metric":eval_metric,
             "test_eval_finished": False,
+            "trainable_params": 0,
+            "total_model_params": 0,
+            "trainable_ratio": 0,
         }
         self.file_name = "training_state.json"
 
@@ -97,8 +100,6 @@ class TrainingState:
         else:
             if hasattr(self, k):
                 return getattr(self,k)
-            elif k == "test_eval_finished": # temp fix
-                return False
             else:
                 raise ValueError(
                     f"{k} cannot be found in train state"
@@ -165,8 +166,13 @@ class PEFTTrainer:
         self.recover_from = None
         
         # init
-        self.best_metric_val = - 1
+        self.best_metric_val = -1
+        self.best_metric_step = -1
         self.warmup_steps = -1
+        
+        self.start_epoch = 0
+        self.start_step = 0
+        self.global_step = 0
         self.test_eval_finished = False
         
         if self.model_args.model_arch != "decoder":
@@ -216,8 +222,7 @@ class PEFTTrainer:
                 self.model.lm_head.weight.requires_grad = False
                 self.model.model.embed_tokens.weight.requires_grad = False
         trainable_params_percent = self.check_trainable_parameters()
-        # self.print_log(f"lora rank {self.peft_args.lora_r} trainable_params_percent {trainable_params_percent}")
-        self.print_log(f"adapter size {self.peft_args.adapter_size} trainable_params_percent {trainable_params_percent}")
+
         self.total_step = -1
         self.build_dataloader()
         assert self.total_step > 0
@@ -946,12 +951,16 @@ class PEFTTrainer:
         trainable_ratio = trainable_params/self.model_trainable_params
         trainable_params = human_readable_format(trainable_params)
         
-        
-        return {
+        trainable_state = {
             "trainable_params": trainable_params,
             "total_model_params": self.model_trainable_params,
             "trainable_ratio":trainable_ratio
         }
+        self.train_state.update(
+            trainable_state
+        )
+        self.print_log(trainable_state)
+        return trainable_state
 
 
 
@@ -979,30 +988,20 @@ class PEFTTrainer:
         assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
 
 
-        # init run 
-        global_step = 0
-        self.best_metric_val = 0
-        best_metric_step=-1
-        start_epoch = 0
-        start_step = 0
+
         loss = 0
-        self.train_state = TrainingState(
-            self.training_args.to_dict(),
-            eval_metric = self.training_args.eval_metric
-        )
-
-
 
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
-        loaded = self.load_previous_run()
-        if loaded:
-            start_epoch = self.train_state.get("epoch")
-            start_step = self.train_state.get("step")
-            global_step =  self.train_state.get("global_step")
-            self.test_eval_finished = self.train_state.get("test_eval_finished")
-            self.best_metric_val = self.train_state.get("best_metric_val")
-            best_metric_step=self.train_state.get("best_metric_step")
+        self.load_previous_run()
+        # if loaded:
+        #     start_epoch = self.train_state.get("epoch")
+        #     start_step = self.train_state.get("step")
+        #     global_step =  self.train_state.get("global_step")
+        #     self.test_eval_finished = self.train_state.get("test_eval_finished")
+        #     self.best_metric_val = self.train_state.get("best_metric_val")
+        #     best_metric_step=self.train_state.get("best_metric_step")
+
         # if self.accelerator.is_main_process:
         #     import pdb; pdb.set_trace()
         #     print('check keys')
@@ -1014,11 +1013,10 @@ class PEFTTrainer:
         # self.accelerator.wait_for_everyone()
         
         # NOTE: gradient accumulation step is not unrelated to the computation below
-        
 
         
-        if global_step >= self.total_step:
-            self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
+        if self.global_step >= self.total_step:
+            self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
             self.print_log("Ending training...")
             return
 
@@ -1035,21 +1033,21 @@ class PEFTTrainer:
             self.accelerator.log(self.training_args.to_dict())
 
             progress_bar = tqdm(
-                range(global_step, self.total_step),
+                range(self.global_step, self.total_step),
                 disable=not self.accelerator.is_local_main_process or self.training_args.is_cluster,
-                initial=global_step,
+                initial=self.global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
                 miniters=self.training_args.logging_steps,
             )
-            if global_step > 0:
-                self.print_log(f"Resume training from epoch {start_epoch}, step {start_step}, global_step {global_step}")
+            if self.global_step > 0:
+                self.print_log(f"Resume training from epoch {self.start_epoch}, step {self.start_step}, global_step {self.global_step}")
 
-                self.accelerator.skip_first_batches(self.train_dataloader,  start_step)
-                self.print_log(f"skip first {start_step} steps in train_dataloader")
+                self.accelerator.skip_first_batches(self.train_dataloader,  self.start_step)
+                self.print_log(f"skip first {self.start_step} steps in train_dataloader")
         else:
             progress_bar = tqdm(
-                range(global_step, self.total_step),
-                initial=global_step,
+                range(self.global_step, self.total_step),
+                initial=self.global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
                 miniters=self.training_args.logging_steps,
                 disable=self.training_args.is_cluster
@@ -1059,10 +1057,10 @@ class PEFTTrainer:
         logging_loss = 0
         
 
-        for epoch in range(start_epoch, self.training_args.num_train_epochs):
+        for epoch in range(self.start_epoch, self.training_args.num_train_epochs):
             if self.accelerator.is_local_main_process:
-                self.print_log(f"------------new epoch: {epoch} global_step: {global_step}")
-            for step, inputs in enumerate(self.train_dataloader, start=start_step):
+                self.print_log(f"------------new epoch: {epoch} global_step: {self.global_step}")
+            for step, inputs in enumerate(self.train_dataloader, start=self.start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
 
                 if self.use_distributed:
@@ -1073,7 +1071,7 @@ class PEFTTrainer:
                             {
                                 "epoch": epoch,
                                 "step": step,
-                                "global_step": global_step,
+                                "global_step": self.global_step,
                             }
                         )
                         if self.label_smoother is None:
@@ -1092,7 +1090,7 @@ class PEFTTrainer:
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
-                        self.save_and_eval(global_step)
+                        self.save_and_eval(self.global_step)
 
                 else:
                     for k in inputs:
@@ -1103,50 +1101,49 @@ class PEFTTrainer:
                     loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
-                    self.save_and_eval(global_step)
+                    self.save_and_eval(self.global_step)
 
                 if self.training_args.is_cluster:
                     import hfai
                     # cluster pre-interrupt saving
                     if hfai.distributed.get_rank() == 0 and self.accelerator.is_local_main_process: # 获取当前节点序号。在0号节点的0号进程上接收集群调度信息
                         if hfai.client.receive_suspend_command(): 
-                            self.print_log(f"Received suspend command, saving model at {global_step} steps")
-                            self.save(global_step)
-                            self.print_log(f"Model checkpoint at {global_step} steps is saved. Going suspend...")
+                            self.print_log(f"Received suspend command, saving model at {self.global_step} steps")
+                            self.save(self.global_step)
+                            self.print_log(f"Model checkpoint at {self.global_step} steps is saved. Going suspend...")
                             hfai.client.go_suspend()
                             
 
 
 
                 # log each backward step (not grad acc step)
-                global_step += 1
+                self.global_step += 1
                 progress_bar.update(1)
                 logging_loss += loss.item()
                 
                 # logging
-                if global_step != 0 and global_step % self.training_args.logging_steps == 0:
+                if self.global_step != 0 and self.global_step % self.training_args.logging_steps == 0:
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             "train/lr": self.scheduler.get_last_lr()[0],
-                            },
-                            step=global_step)
-                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps} at {global_step} steps")
-                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]} at {global_step} steps")
+                            })
+                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps} at {self.global_step} steps")
+                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]} at {self.global_step} steps")
                     logging_loss = 0
                 self.best_metric_val = self.train_state.get("best_metric_val")
                 best_metric_step = self.train_state.get("best_metric_step")
-            self.print_log(f"epoch {epoch} finished, global_step {global_step}, evaluating...")
+            self.print_log(f"epoch {epoch} finished, global_step {self.global_step}, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
-            self.save_and_eval(global_step, force=True)
-            self.print_log(f"epoch {epoch} finished, global_step {global_step}, best_metric_step: {best_metric_step}, best_metric_val {self.best_metric_val}")
-            self.print_log(f"steps per epoch: {global_step/(epoch+1)}")
+            self.save_and_eval(self.global_step, force=True)
+            self.print_log(f"epoch {epoch} finished, global_step {self.global_step}, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
+            self.print_log(f"steps per epoch: {self.global_step/(epoch+1)}")
         
         # log best metric val at final step for easy comparison
         self.log(
         {
             "best_metric_val": self.best_metric_val
-        }, step=global_step
+        }
         )
         self.accelerator.end_training()
         # remove all step checkpoints after training is finished
@@ -1159,13 +1156,13 @@ class PEFTTrainer:
         self.accelerator.wait_for_everyone()
 
 
-    def log(self, d, step):
+    def log(self, d):
         """
         log to tensorboard/train state.
         but it doesn't save train state as train state could be saved to diff dirs.
         """
         self.accelerator.log(d,
-                            step=step
+                            step=self.global_step
         )
         self.train_state.update(d)
     
@@ -1173,13 +1170,13 @@ class PEFTTrainer:
         """
         print log under different training system.
         """
-        logger.info(s)
+        
         if self.training_args.is_cluster:
             import hfai
             if hfai.distributed.get_rank() == 0:
-                print(s)
+                print(f"gloabl_step {self.global_step}: {s}")
         elif self.accelerator.is_main_process:
-            print(s)
+            logger.info(s)
             
         
         
@@ -1334,7 +1331,7 @@ class PEFTTrainer:
         for k in results:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
-        self.log(results_with_mode, step=step)
+        self.log(results_with_mode)
         self.train_state.save_to_json(get_latest_checkpoint(self.training_args.output_dir))
 
         if mode == "test":
@@ -1680,9 +1677,7 @@ class PEFTTrainer:
             else:
                 config = CompacterConfig(reduction_factor=cur_reduction_factor,
                                             phm_dim=self.peft_args.phm_dimension )
-
             self.load_peft_module(config)
-
         elif self.model_args.tuning_mode == "parallel_adapter":
             from transformers.adapters import ParallelConfig
             config = ParallelConfig(reduction_factor= self.peft_args.reduction_factor)
@@ -1698,140 +1693,6 @@ class PEFTTrainer:
         elif self.model_args.tuning_mode == "fine_tuning":
             # no converting needed
             pass
-        elif self.model_args.tuning_mode == "lm_head_tuning":
-            for param in self.model.parameters():
-                param.requires_grad = False
-            # lm head takes almost 10% paramaters
-            for name, module in self.model.named_modules():
-                if "lm_head" in name:
-                    module.weight.requires_grad = True
-        elif self.model_args.tuning_mode == "layer_tuning":
-            
-            for param in self.model.parameters():
-                param.requires_grad = False
-            
-            layers = []
-            # NOTE: we only fine-tune attention weights for now
-            if self.peft_args.layer_name == "first_encoder_layer":
-                layers.append(self.model.encoder.block[0].layer[0])
-            elif self.peft_args.layer_name == "last_encoder_layer":
-                layers.append(self.model.encoder.block[-1].layer[0])
-            elif self.peft_args.layer_name == "first_decoder_layer":
-                layers.append(self.model.decoder.block[0].layer[0])
-            elif self.peft_args.layer_name == "last_decoder_layer":
-                layers.append(self.model.decoder.block[-1].layer[0])
-            elif self.peft_args.layer_name == "custom":
-                # all decoder layer
-                modules = self.model.decoder.block
-                for m in modules:
-                    layers.append(m.layer[0])
-            elif self.peft_args.layer_name == "custom2":
-                # all decoder layer
-                modules = self.model.decoder.block
-                for m in modules:
-                    layers.append(m.layer[0])
-            else:
-                raise NotImplementedError(f"layer_name {self.peft_args.layer_name} is not implemented")
-            
-            for l in layers:
-                for name, module in l.named_modules():
-                    # if "selfattention" in name.lower():
-                    if hasattr(module, "weight"):
-                        module.weight.requires_grad = True
-                        print("activate gradient for ", name)
-        elif self.model_args.tuning_mode == "lora+adapter":
-            from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
-            
-            
-            # model.base_model.model_frozen = True
-            # print('cur_trainable_params_percentage', self.check_trainable_parameters())
-            # # peft package
-            # cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            # assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
-            # task_type = TaskType.SEQ_2_SEQ_LM
-            # config = LoraConfig(
-            #     task_type=task_type,
-            #     inference_mode=False,
-            #     r=cur_lora_r,
-            #     lora_alpha=32,
-            #     lora_dropout=0.1
-            # )
-            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            
-            
-            
-            
-            # lora 2
-            cur_lora_r = 40 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            freeze_model = True
-            from transformers.adapters import LoRAConfig
-            config = LoRAConfig(r=cur_lora_r, alpha=16)
-            self.model.add_adapter("lora_adapter", config=config)
-            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            self.check_trainable_parameters()
-            print("lora_adapter is added, trainable parameters: ", self.check_trainable_parameters())
-
-            # adapter
-            cur_reduction_factor=18
-            peft_config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
-            reset_peft = False
-            # cur_trainable_params_percentage = self.load_peft_module(config, reset_peft=True)
-            self.model.add_adapter(self.model_args.tuning_mode,
-                                   config = peft_config, overwrite_ok=reset_peft)
-            self.model.train_adapter(self.model_args.tuning_mode)
-            print('cur_reduction_factor', cur_reduction_factor, 'cur_trainable_params_percentage', self.check_trainable_parameters())
-            # do not freeze model as model itself is already frozen
-            # we don't want to freeze the lora module
-            
-            # self.model.train_adapter(["sst-2","lora_adapter"] , freeze_model=freeze_model)
-            self.model.train_adapter(["sst-2", "lora_adapter"], freeze_model=freeze_model)
-            
-            if self.model_args.model_arch == "encoder":
-                self.model.add_classification_head("lm_head-sst-2", num_labels=2, overwrite_ok=reset_peft)
-            elif self.model_args.model_arch == "encoder-decoder":
-                self.model.add_seq2seq_lm_head("lm_head-sst-2", overwrite_ok=reset_peft)
-                # reset weight self.model.heads["lm_head-sst-2"][0].weight
-                # self.model.heads["lm_head-sst-2"][0].weight = self.model_lm_head_weight
-
-                self.model.heads["lm_head-sst-2"][0].weight.requires_grad = False
-                
-                
-            else:
-                raise NotImplementedError(
-                    f"Not implemented for model arch: {self.model_args.model_arch}"
-                )
-            
-            self.model.set_active_adapters(["sst-2", "lora_adapter"])
-            self.peft_args.lora_r = cur_lora_r
-
-            
-            # invalid
-        elif self.model_args.tuning_mode == "unipelt":
-            from transformers.adapters import UniPELTConfig, PrefixTuningConfig, PfeifferConfig, LoRAConfig, HoulsbyConfig
-            gating = False
-            reset_peft=False
-            # peft_config = UniPELTConfig(
-            #     PrefixTuningConfig(prefix_length=1, use_gating=self.peft_args.use_pelt_gate),
-            #     PfeifferConfig(reduction_factor=500, use_gating=self.peft_args.use_pelt_gate),
-            #     LoRAConfig(r=self.peft_args.lora_r, use_gating=self.peft_args.use_pelt_gate),
-            #     )
-            peft_config = UniPELTConfig(
-                PrefixTuningConfig(prefix_length=1, use_gating=self.peft_args.use_pelt_gate),
-                HoulsbyConfig(reduction_factor=500, use_gating=self.peft_args.use_pelt_gate),
-                LoRAConfig(r=self.peft_args.lora_r, use_gating=self.peft_args.use_pelt_gate),
-                )
-            self.model.add_adapter(adapter_name, config = peft_config)
-            self.model.train_adapter(adapter_name)
-            
-            
-            self.model.add_seq2seq_lm_head(f"lm_head-{adapter_name}", overwrite_ok=reset_peft)
-            self.model.set_active_adapters(adapter_name)
-            # reset weight self.model.heads["lm_head-sst-2"][0].weight
-            # self.model.heads[f"lm_head-{adapter_name}"][0].weight = self.model_lm_head_weight
-
-            self.model.heads[f"lm_head-{adapter_name}"][0].weight.requires_grad = False
-
-
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
@@ -1849,7 +1710,7 @@ class PEFTTrainer:
             results = self.evaluate(step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
-            self.print_log(f"current metric_val: {cur_metric_val},  global_step: {global_step}")
+            self.print_log(f"current metric_val: {cur_metric_val}")
             if cur_metric_val > self.best_metric_val:
                 self.best_metric_val = cur_metric_val
                 # log before save
@@ -1857,8 +1718,7 @@ class PEFTTrainer:
                     {
                         "best_metric_val": self.best_metric_val,
                         "best_metric_step": global_step,
-                    },
-                    step=global_step
+                    }
                 )
                 self.print_log(f"best_metric_val: {self.best_metric_val}, new best_metric_step: {global_step}")
                 # save model and state
@@ -1914,6 +1774,9 @@ class PEFTTrainer:
                 remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
 
     def load_previous_run(self):
+        """
+        load previous run from checkpoint folder, if failed, then init a new run.
+        """
         loaded = False
         while not loaded:
             self.accelerator.wait_for_everyone()
@@ -1937,16 +1800,23 @@ class PEFTTrainer:
                         config=self.train_state.state_dict,
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                     )
-                    start_epoch = self.train_state.get("epoch")
-                    start_step = self.train_state.get("step")
-                    global_step =  self.train_state.get("global_step")
-                    
+                    self.start_epoch = self.train_state.get("epoch")
+                    self.start_step = self.train_state.get("step")
+                    self.global_step =  self.train_state.get("global_step")
+                    self.test_eval_finished = self.train_state.get("test_eval_finished")
+                    self.best_metric_step = self.train_state.get("best_metric_step")
                     # if training is finished, then only load the state
                     # because the model checkpoint is already removed
-                    if global_step >= self.total_step:
-                        self.print_log(f"training is already finished, {start_epoch} epochs and {start_step} steps are already done")
+                    if self.global_step >= self.total_step:
+                        self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
                         self.print_log("Only train state is loaded...")
                         return True
+                    
+                    # only train state exists in latest checkpoint
+                    # so no further state loading
+                    if self.test_eval_finished:
+                        self.print_log("test evaluation is already finished,  exit...")
+                        exit()
                     
                     self.accelerator.load_state(latest_cp)
                     # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
