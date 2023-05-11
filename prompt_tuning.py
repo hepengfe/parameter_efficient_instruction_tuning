@@ -70,7 +70,7 @@ class PeftArguments:
 
     # adaptor
     adapter_size: int = field(
-        default=64,
+        default=32,
         metadata={"help": "adapter size"}
     )
     
@@ -482,27 +482,30 @@ def main():
         eval_logger.setLevel(logging.DEBUG)
         training_args.learning_rate = 0.01
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 60
+        training_args.dev_train_data_size = 30
 
         
 
-        # test overfitting
-        training_args.logging_steps = 10
-        # async eval and save
-        training_args.save_steps = 300
-        training_args.eval_steps = 30
-        training_args.per_device_eval_batch_size = 20
+        # # test overfitting
+        # training_args.num_train_epochs= 3
+        # training_args.logging_steps = 10
+        # # async eval and save
+        # training_args.save_steps = 20
+        # training_args.eval_steps = 20
+        # training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
-        training_args.per_device_eval_batch_size = 10
-        training_args.per_device_train_batch_size = 1
         
         # test save
-        # training_args.num_train_epochs = 1
+        training_args.num_train_epochs = 1
         # training_args.dev_train_data_size = 12 # number of gpus
-        # training_args.save_steps = 4
-        # training_args.eval_steps = 4
-        # training_args.per_device_eval_batch_size = 2
-        # training_args.per_device_train_batch_size = 2
+        training_args.save_steps = 4
+        training_args.eval_steps = 4
+        training_args.per_device_eval_batch_size = 2
+        training_args.per_device_train_batch_size = 1
+        
+        
+
+        
         
         # test warmup steps
         # training_args.dev_train_data_size = 1000

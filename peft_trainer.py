@@ -196,6 +196,7 @@ class PEFTTrainer:
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
         assert self.model is not None, "model should loaded"
 
+        # also resize embedding here
         self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         # resize token embedding will set requires_grad back to True
@@ -268,10 +269,10 @@ class PEFTTrainer:
         
 
         # lr should be scaled linearly with the number of processes
-        if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
-            # self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
-            # lr  = self.training_args.learning_rate / self.num_processes
-            self.print_log(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
+        # if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
+        #     # self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
+        #     # lr  = self.training_args.learning_rate / self.num_processes
+        #     self.print_log(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
 
         if not self.distributed_type == DistributedType.DEEPSPEED:
             # DDP, keep parameters require_grad status
@@ -354,10 +355,14 @@ class PEFTTrainer:
         if os.path.exists(self.potential_model_path):
             if "llama" in self.model_args.model_name_or_path.lower():
                 self.tokenizer = LlamaTokenizer.from_pretrained(
-                    self.potential_model_path
+                    self.potential_model_path,
+                    truncation_side = "left" # NOTE: this is important for causal lm data prepare in case </sep> is truncated
                 )
             else:
-                self.tokenizer = AutoTokenizer.from_pretrained(self.potential_model_path)
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.potential_model_path,
+                    truncation_side = "left" # NOTE: this is important for causal lm data prepare in case </sep> is truncated
+                    )
         else:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name_or_path,
@@ -380,7 +385,7 @@ class PEFTTrainer:
                 'sep_token': '</SEP>'
             })
             self.model.resize_token_embeddings(len(self.tokenizer))
-            
+
         
         
         self.padding = "max_length" if self.data_args.pad_to_max_length else False
@@ -443,7 +448,8 @@ class PEFTTrainer:
                 # from_tf=bool(".ckpt" in self.model_name_or_path),
                 # config=m_config,
                 cache_dir=self.training_args.cache_dir,
-                config = config)
+                config = config
+            )
         else:
             raise NotImplementedError("Model not supported: " + self.model_name_or_path)
 
@@ -647,6 +653,7 @@ class PEFTTrainer:
                 raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["validation"] = raw_datasets["train"]
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
+
 
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
@@ -1178,10 +1185,14 @@ class PEFTTrainer:
                 # reload tokenizer in this case
                 if "llama" in self.model_args.model_name_or_path.lower():
                     self.tokenizer = LlamaTokenizer.from_pretrained(
-                        self.potential_model_path
+                        self.potential_model_path,
+                        truncation_side = "left"
                     )
                 else:
-                    self.tokenizer = AutoTokenizer.from_pretrained(sharded_model_path)
+                    self.tokenizer = AutoTokenizer.from_pretrained(
+                        sharded_model_path,
+                        truncation_side = "left"
+                    )
 
                 model = self.load_pretrained_model(config)
                 if hasattr(self.model, "load_adapter"):
@@ -1232,6 +1243,7 @@ class PEFTTrainer:
                 else:
                     # self.tokenizer.batch_decode(labels)
                     # self.tokenizer.batch_decode(inputs.input_ids)
+                    
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
                                             synced_gpus = True if self.use_distributed else False,

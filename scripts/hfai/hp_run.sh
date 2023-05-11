@@ -32,8 +32,8 @@ declare -A lora_rank2bs
 declare -A adapter_size2bs
 adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
 lora_rank2bs=(["8"]=20 ["32"]=20 ["64"]=20 ["128"]=15 ["256"]=10 ["512"]=5)
-model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["llama"]="facebook/llama-7b")
-model_name2arch=(["t5"]="encoder-decoder" ["opt"]="decoder" ["llama"]="decoder")
+model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
+model_name2arch=(["t5"]="encoder-decoder" ["opt"]="decoder" ["llama"]="decoder" ["gpt2"]="decoder")
 
 
 model=${model_name2path[$MODEL_NAME]}
