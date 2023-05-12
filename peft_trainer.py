@@ -1075,7 +1075,7 @@ class PEFTTrainer:
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             "train/lr": self.scheduler.get_last_lr()[0],
                             })
-                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps} at {self.global_step} steps")
+                    self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
                     self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]} at {self.global_step} steps")
                     logging_loss = 0
                 self.best_metric_val = self.train_state.get("best_metric_val")
