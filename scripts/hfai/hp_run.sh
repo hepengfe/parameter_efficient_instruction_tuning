@@ -66,7 +66,7 @@ elif [ $tuning_mode == "prefix_tuning" ]; then
 elif [ $tuning_mode == "prompt_tuning" ]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
-    eval_bs=6
+    eval_bs=4
     scheduler="linear"
 elif [[ $tuning_mode == "ia3" || $tuning_mode == "bitfit" ]]; then
     config_file="configs/hfai/default_config_ddp.yaml"
