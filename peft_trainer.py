@@ -49,7 +49,7 @@ import time
 from transformers.trainer_pt_utils import LabelSmoother
 # modules use two pacakges 
 ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
-PEFT_MODULES=["prompt_tuning", "lora_peft"]
+PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit"]
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
@@ -832,47 +832,6 @@ class PEFTTrainer:
 
             
         elif self.model_args.tuning_mode == "bitfit":
-            # if self.model_args.model_arch == "encoder":
-            #     # deactivate gradients except for bias terms
-            #     BIAS_TERMS_DICT = {
-            #         'intermediate': 'intermediate.dense.bias',
-            #         'key': 'attention.self.key.bias',
-            #         'query': 'attention.self.query.bias',
-            #         'value': 'attention.self.value.bias',
-            #         'output': 'output.dense.bias',
-            #         'output_layernorm': 'output.LayerNorm.bias',
-            #         'attention_layernorm': 'attention.output.LayerNorm.bias',
-            #         'all': 'bias',
-            #     }
-            # elif self.model_args.model_arch == "encoder-decoder":
-            #     BIAS_TERMS_DICT = {
-            #         'intermediate': 'intermediate.dense.bias',
-            #         'key': 'attention.self.key.bias',
-            #         'query': 'attention.self.query.bias',
-            #         'value': 'attention.self.value.bias',
-            #         'output': 'output.dense.bias',
-            #         'output_layernorm': 'output.LayerNorm.bias',
-            #         'attention_layernorm': 'attention.output.LayerNorm.bias',
-            #         'all': 'bias',
-            #     }
-            # def convert_to_actual_components(components):
-            #     return [BIAS_TERMS_DICT[component] for component in components]
-            # is_bias_init = False
-            # for name, module in self.model.named_modules():
-            #     if hasattr(module, "bias") and "lm_head" not in name:
-            #         if module.bias is None:
-            #             print("found none bias, init bias for ", name)
-            #             module.bias = torch.nn.Parameter(torch.randn(module.out_features))
-            #             is_bias_init = True
-            #         if not module.bias.requires_grad:
-            #             module.bias.requires_grad = True
-                        
-            # assert is_bias_init == True, "bias should be initialized"
-            
-            # raise NotImplementedError("bitfit is not computed for trainable paramters yet")
-            # components = ["intermediate", "key", "query", "value", "output", "output_layernorm", "attention_layernorm", "all"]
-            # trainable_components = convert_to_actual_components(components)
-            # self._deactivate_relevant_gradients(trainable_components)
             for param in self.model.parameters():
                 param.requires_grad = False
             layers = []
@@ -893,29 +852,18 @@ class PEFTTrainer:
                     layers.append(m.layer[0])
             else:
                 raise ValueError("bias name not supported: ", arguments.bias_name)
-            # NOTE: test enable bias 
-            # for name, module in self.model.named_modules():
-            #     if  "lm_head" in name:
-            #         module.bias.requires_grad = True
+
             for l in layers:
                 for name, module in l.named_modules():
-                    # if "selfattention" in name.lower():
-                    # if hasattr(module, "bias") and type(module) == transformers.adapters.lora.Linear:
-                    #     module.bias.requires_grad = True
-                    #     print("activate gradient for ", name)
-                    #     # print("name: ", name, " type: ", type(module))
-                        
+
                     # first check if bias is settable
                     if hasattr(module, "bias") and type(module) == transformers.adapters.lora.Linear:
                         if module.bias is None:
                             print("found none bias, init bias for ", name)
                             module.bias = torch.nn.Parameter(torch.randn(module.out_features))
-                            is_bias_init = True
                         if not module.bias.requires_grad:
                             print("activate gradient for ", name)
                             module.bias.requires_grad = True
-            
-
         else:
             # NOTE: prompt tuning
             # general peft converting based on different peft config

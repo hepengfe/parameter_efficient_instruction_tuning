@@ -134,9 +134,12 @@ elif [ $tuning_mode == "prefix_tuning" ]; then
 elif [ $tuning_mode == "prompt_tuning" ]; then
     tuning_config="prompt_len_${PROMPT_LEN}"
     tuning_args="--tuning_mode ${tuning_mode} --prompt_len ${PROMPT_LEN}"
-elif [[ $tuning_mode == "ia3" || $tuning_mode == "bitfit" ]]; then
+elif [[ $tuning_mode == "ia3" ]]; then
     tuning_config="None"
     tuning_args="--tuning_mode ${tuning_mode}"
+elif [[ $tuning_mode == "bitfit" ]]; then
+    tuning_config="None"
+    tuning_args="--tuning_mode ${tuning_mode} --bias_name encoder_decoder_bias"
 else
     echo "tuning_mode ${tuning_mode} is not supported"
     exit 1
