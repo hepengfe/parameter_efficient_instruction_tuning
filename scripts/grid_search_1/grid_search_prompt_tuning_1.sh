@@ -1,6 +1,6 @@
 # bash scripts/grid_search_1/grid_search_prompt_tuning_1.sh dev_cmd t5
 # LORA_RANKS=(8 32 64 128 256 512)
-
+exit 1
 # flip the order of the bottleneck sizes
 PROMPT_LENS=(256 128 32 8)
 # BOTTLENECK_SIZES=(1024 512 256)

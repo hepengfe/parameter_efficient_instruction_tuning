@@ -172,9 +172,11 @@ launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model} 
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"
-    echo "expr_name: $expr_name"
-    echo "expr_dir: $expr_dir"
-    echo "launch command: $launch_command"
+    echo -e "expr_name: \n $expr_name"
+    echo -e "\n\n"
+    echo -e "expr_dir: \n $expr_dir"
+    echo -e "\n\n"
+    echo -e "launch command: \n $launch_command"
     echo -e "\n\n"
 elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" ]];then
     echo $launch_command
