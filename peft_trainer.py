@@ -354,24 +354,8 @@ class PEFTTrainer:
         if "lora" in self.model_args.tuning_mode:
             assert self.training_args.scheduler_type == "linear"
             # assert self.training_args.warmup_steps == 500
-            assert isinstance(self.scheduler, torch.optim.lr_scheduler.LambdaLR)
 
 
-        # # self.optimizer = Adafactor(
-        # #     self.model.parameters(),
-        # #     # filter(lambda p: p.requires_grad, self.model.parameters()),
-        # #     lr= self.training_args.learning_rate,
-        # #     eps=(1e-30, 1e-3),
-        # #     clip_threshold=1.0,
-        # #     decay_rate=-0.8,
-        # #     beta1=None,
-        # #     weight_decay=1e-5,
-        # #     # fixed learning rate
-        # #     scale_parameter=False,
-        # #     relative_step=False,
-        # #     warmup_init=False,
-        # # )
-            
     def load_tokenzier(self):
 
         if os.path.exists(self.potential_model_path):
@@ -1245,10 +1229,11 @@ class PEFTTrainer:
                 else:
                     # self.tokenizer.batch_decode(labels)
                     # self.tokenizer.batch_decode(inputs.input_ids)
-                    
+                    print("model embedding size: ", model.get_input_embeddings().weight.shape)
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
-                                            synced_gpus = True if self.use_distributed else False,
+                                            # synced_gpus = True if self.use_distributed else False,
+                                            synced_gpus = False,
                                             pad_token_id=self.tokenizer.eos_token_id if self.model_args.model_arch == "decoder" else self.tokenizer.pad_token_id,
                                             # synced_gpus = False,
                                             # pad_token_id=self.tokenizer.pad_token_id,
@@ -1669,6 +1654,7 @@ class PEFTTrainer:
                     }
                 )
                 self.print_log(f"best_metric_val: {self.best_metric_val}, new best_metric_step: {global_step}")
+                self.print_log("saving a new best checkpoint...")
                 # save model and state
                 self.save(global_step, save_best_checkpoint=True)
 
@@ -1694,7 +1680,7 @@ class PEFTTrainer:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir)
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
         self.accelerator.save_state(checkpoint_folder_path_to_save)
-
+        self.print_log(f"save accelerator state to {checkpoint_folder_path_to_save}")
 
         # save sharded checkpoint into another model
         sharded_model_path = os.path.join(checkpoint_folder_path_to_save, "save_pretrained")

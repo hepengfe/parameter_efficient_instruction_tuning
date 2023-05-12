@@ -161,7 +161,10 @@ launch_prefix="hfai python hfai_accelerate.py  launch --config_file ${config_fil
 launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
 if [ $script_mode == "dev" ]; then
-    launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+    # launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+    # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
+    
     launch_suffix="--dev_train"
 fi
 spcecial_arg=""
