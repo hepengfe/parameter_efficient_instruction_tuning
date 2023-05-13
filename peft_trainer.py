@@ -598,7 +598,7 @@ class PEFTTrainer:
         # with gradient accumulation, per gradient update step is actually multiple steps
         self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
         self.warmup_steps = self.total_step * self.training_args.warmup_ratio
-        self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}")
+        self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}", print_step=False)
         
         self.num_training_steps_for_scheduler = self.total_step * self.accelerator.num_processes
         self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
@@ -891,7 +891,7 @@ class PEFTTrainer:
         self.train_state.update(
             trainable_state
         )
-        self.print_log(trainable_state)
+        self.print_log(trainable_state, print_step=False)
         return trainable_state
 
 
@@ -1090,11 +1090,6 @@ class PEFTTrainer:
                 print(s)
         elif self.accelerator.is_main_process:
             logger.info(s)
-            
-        
-        
-
-
 
     def evaluate(self, mode="eval", step=None):
         """
@@ -1874,29 +1869,3 @@ class PEFTTrainer:
                     except StopIteration:
                         break
                 cur_prefix_len += 1
-            
-        
-        # from peft import LoraConfig
-            # # peft package
-            # cur_lora_r = 15 if self.peft_args.lora_r is None else self.peft_args.lora_r
-            # assert self.peft_args.trainable_params_percentage is not None or self.peft_args.lora_r > 0, "either lora_r or trainable_params_percentage should be set"
-            # task_type = TaskType.SEQ_2_SEQ_LM
-            # config = LoraConfig(
-            #     task_type=task_type,
-            #     inference_mode=False,
-            #     r=cur_lora_r,
-            #     lora_alpha=77,
-            #     lora_dropout=0.1,
-            #     # lora_modules
-            #     target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
-            # )
-            # self.model = get_peft_model(self.model, config)
-            # print("current trainable params percentage is {}".format(self.check_trainable_parameters()))
-
-class NoOpContextManager:
-    def __enter__(self):
-        pass
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass
-

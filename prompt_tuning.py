@@ -539,7 +539,7 @@ def main():
         # test save and test eval OOM, also whether eval and test results are same
         # save at 4, 8, 10(epoch) steps
         training_args.num_train_epochs = 1
-        training_args.dev_test_data_size = 30 # number of gpus
+        training_args.dev_test_data_size = 4
         training_args.save_steps = 4
         training_args.eval_steps = 4
         training_args.per_device_eval_batch_size = 4
