@@ -926,23 +926,7 @@ class PEFTTrainer:
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
         self.load_previous_run()
-        # if loaded:
-        #     start_epoch = self.train_state.get("epoch")
-        #     start_step = self.train_state.get("step")
-        #     global_step =  self.train_state.get("global_step")
-        #     self.test_eval_finished = self.train_state.get("test_eval_finished")
-        #     self.best_metric_val = self.train_state.get("best_metric_val")
-        #     best_metric_step=self.train_state.get("best_metric_step")
 
-        # if self.accelerator.is_main_process:
-        #     import pdb; pdb.set_trace()
-        #     print('check keys')
-        #     # it updates d like  {"state_dict": ___}
-        #     # so eval_save doesn't log the step
-        #     # log is implemented wrong
-        #     # it's right in file
-        #     # so it's wrong in loading
-        # self.accelerator.wait_for_everyone()
         
         # NOTE: gradient accumulation step is not unrelated to the computation below
 
