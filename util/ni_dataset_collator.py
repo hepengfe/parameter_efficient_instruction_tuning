@@ -3,7 +3,7 @@ import random
 import string
 from transformers.data.data_collator import *
 from transformers import (
-    # OPTPreTrainedModel,
+    OPTPreTrainedModel,
     GPT2PreTrainedModel,
     LlamaPreTrainedModel
 )
@@ -169,7 +169,7 @@ class DataCollatorForNI:
             labels = None
 
     
-        is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel)
+        is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel) or isinstance(self.model, OPTPreTrainedModel)
 
 
         # 2. prepare model inputs first
@@ -238,6 +238,7 @@ class DataCollatorForNI:
             # print("input_ids == self.tokenizer.sep_token_id: ", input_ids == self.tokenizer.sep_token_id)
             if not eval_mode:
                 labels = input_ids.clone()
+
                 seq_indices = torch.where(input_ids == self.tokenizer.sep_token_id)
 
                 assert len(seq_indices[1]) == len(text_labels), f"number of <\sep> is more than expected in the text. len(seq_indices[1]) = {len(seq_indices[1])}, len(text_labels) = {len(text_labels)}"

@@ -50,11 +50,13 @@ from transformers.trainer_pt_utils import LabelSmoother
 # modules use two pacakges 
 ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
 PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit"]
+CAUSAL_LM=["gpt", "llama", "opt"]
+
 
 BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
 from transformers import LlamaTokenizer
-from transformers import LlamaLMHeadModel
+from transformers import LlamaForCausalLM
 
 import logging
 from accelerate.logging import get_logger
@@ -144,6 +146,8 @@ class TrainingState:
     def __str__(self):
         return str(self.to_dict())
 
+
+
 class PEFTTrainer:
     def __init__(self, training_args, data_args, model_args, peft_args):
         
@@ -221,6 +225,10 @@ class PEFTTrainer:
             elif "llama" in model_args.model_name_or_path:
                 self.model.lm_head.weight.requires_grad = False
                 self.model.model.embed_tokens.weight.requires_grad = False
+            elif "opt" in model_args.model_name_or_path:
+                self.model.model.decoder.embed_tokens.weight.requires_grad = False
+                self.model.lm_head.weight.requires_grad = False
+                
         trainable_params_percent = self.check_trainable_parameters()
 
         self.total_step = -1
@@ -379,16 +387,18 @@ class PEFTTrainer:
                 use_fast=True,
                 return_tensors="pt"
             )
-
-        if self.tokenizer.pad_token is None:
-            assert "gpt2" in self.model_name_or_path or "llama" in self.model_name_or_path, "Only gpt2 or llama is expected not having pad tokens for now"
+        
+        if any([m in self.model_name_or_path for m in CAUSAL_LM]):
+        
+        # if self.tokenizer.pad_token is None:
+            # assert "gpt2" in self.model_name_or_path or "llama" in self.model_name_or_path, "Only gpt2 or llama is expected not having pad tokens for now"
             # add <sep> token
         
             
             # gpt2 model
             self.tokenizer.add_special_tokens({
                 'pad_token': '</PAD>',
-                'sep_token': '</SEP>'
+                'sep_token': '</SEP>',
             })
             self.model.resize_token_embeddings(len(self.tokenizer))
 
@@ -442,7 +452,7 @@ class PEFTTrainer:
 
         elif "llama" in self.model_name_or_path.lower():
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
-                model = LlamaLMHeadModel.from_pretrained(self.potential_model_path, config = config)
+                model = LlamaForCausalLM.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
         elif "roberta" in self.model_name_or_path:
