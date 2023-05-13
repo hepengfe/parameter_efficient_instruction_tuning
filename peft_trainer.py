@@ -1048,11 +1048,11 @@ class PEFTTrainer:
                     logging_loss = 0
                 self.best_metric_val = self.train_state.get("best_metric_val")
                 best_metric_step = self.train_state.get("best_metric_step")
-            self.print_log(f"epoch {epoch} finished, global_step {self.global_step}, evaluating...")
+            self.print_log(f"epoch {epoch} finished, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
             self.save_and_eval(self.global_step, force=True)
-            self.print_log(f"epoch {epoch} finished, global_step {self.global_step}, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
+            self.print_log(f"epoch {epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
             self.print_log(f"steps per epoch: {self.global_step/(epoch+1)}")
         
         # log best metric val at final step for easy comparison
@@ -1086,13 +1086,13 @@ class PEFTTrainer:
         """
         print log under different training system.
         """
-        
+        info_s = f"global_step {self.global_step}: {s}"
         if self.training_args.is_cluster:
             import hfai
             if hfai.distributed.get_rank() == 0:
-                print(f"gloabl_step {self.global_step}: {s}")
+                print(info_s)
         elif self.accelerator.is_main_process:
-            logger.info(s)
+            logger.info(info_s)
             
         
         
