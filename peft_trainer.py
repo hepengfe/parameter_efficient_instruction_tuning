@@ -978,18 +978,16 @@ class PEFTTrainer:
                 self.print_log(f"------------new epoch: {epoch} global_step: {self.global_step}")
             for step, inputs in enumerate(self.train_dataloader, start=self.start_step):
                 self.accelerator.wait_for_everyone() # wait for all processes to finish the previous step
-
-                if self.use_distributed:
-                    # per progress bar step is actually gradient_accumulation_steps
-                    with self.accelerator.accumulate(self.model):
-                        
-                        self.train_state.update(
+                self.train_state.update(
                             {
                                 "epoch": epoch,
                                 "step": step,
                                 "global_step": self.global_step,
                             }
                         )
+                if self.use_distributed:
+                    # per progress bar step is actually gradient_accumulation_steps
+                    with self.accelerator.accumulate(self.model):
                         if self.label_smoother is None:
                             outputs = self.model(**inputs)
                             loss = outputs["loss"]
@@ -1011,7 +1009,6 @@ class PEFTTrainer:
                 else:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
-
                     outputs = self.model(**inputs)
                     loss = outputs["loss"]
                     loss.backward()
@@ -1044,14 +1041,13 @@ class PEFTTrainer:
                             "train/lr": self.scheduler.get_last_lr()[0],
                             })
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
-                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]} at {self.global_step} steps")
+                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]}")
                     logging_loss = 0
-                self.best_metric_val = self.train_state.get("best_metric_val")
-                best_metric_step = self.train_state.get("best_metric_step")
+
             self.print_log(f"epoch {epoch} finished, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
-            self.save_and_eval(self.global_step, force=True)
+            self.save_and_eval(self.global_step, force=True if not ( self.training_args.dev_train or self.training_args.dev_run or self.training_args.dev_test) else False)
             self.print_log(f"epoch {epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
             self.print_log(f"steps per epoch: {self.global_step/(epoch+1)}")
         
@@ -1082,17 +1078,18 @@ class PEFTTrainer:
         )
         self.train_state.update(d)
     
-    def print_log(self, s):
+    def print_log(self, s, print_step=True):
         """
         print log under different training system.
         """
-        info_s = f"global_step {self.global_step}: {s}"
+        if print_step:
+            s = f"global_step {self.global_step}: {s}"
         if self.training_args.is_cluster:
             import hfai
             if hfai.distributed.get_rank() == 0:
-                print(info_s)
+                print(s)
         elif self.accelerator.is_main_process:
-            logger.info(info_s)
+            logger.info(s)
             
         
         
@@ -1213,7 +1210,6 @@ class PEFTTrainer:
                 else:
                     # self.tokenizer.batch_decode(labels)
                     # self.tokenizer.batch_decode(inputs.input_ids)
-                    print("model embedding size: ", model.get_input_embeddings().weight.shape)
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
                                             # synced_gpus = True if self.use_distributed else False,
@@ -1250,7 +1246,8 @@ class PEFTTrainer:
         self.model.train()
         self.log(results_with_mode)
         self.train_state.save_to_json(get_latest_checkpoint(self.training_args.output_dir))
-
+        metric="rougeL"
+        self.print_log(f"{mode}/{metric}: {results_with_mode[f'{mode}/{metric}']}")
         if mode == "test":
             self.train_state.update({"test_eval_finished": True})
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
@@ -1700,7 +1697,7 @@ class PEFTTrainer:
         while not loaded:
             self.accelerator.wait_for_everyone()
             if os.path.exists(self.training_args.output_dir):
-                self.print_log("load from existing state")
+                self.print_log("load from existing state", print_step=False)
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                 
 
