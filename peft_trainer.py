@@ -1139,10 +1139,13 @@ class PEFTTrainer:
                 best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
                 print("load from existing state: ", best_cp_dir)
                 assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
-                self.accelerator.load_state(best_cp_dir)
-                del self.optimizer
-                del self.scheduler
-                torch.cuda.empty_cache()
+                # only in this case we need to first move loaded pretrained mdoel to cpu
+                # and load trained model weights into the model
+                # then we move model back to gpu
+                self.model = self.model.to("cpu")
+                self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                self.model = self.model.to(self.accelerator.device)
+                
             except Exception as e:
                 self.accelerator.clear()
                 # sleep 5 seconds
