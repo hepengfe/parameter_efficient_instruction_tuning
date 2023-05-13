@@ -1646,6 +1646,7 @@ class PEFTTrainer:
             self.print_log(f"current metric_val: {cur_metric_val}")
             if cur_metric_val > self.best_metric_val:
                 self.best_metric_val = cur_metric_val
+                self.best_metric_step = global_step
                 # log before save
                 self.log(
                     {
