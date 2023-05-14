@@ -234,7 +234,10 @@ class PEFTTrainer:
         self.total_step = -1
         self.build_dataloader()
         assert self.total_step > 0
-        assert self.warmup_steps > 0
+        if self.model_args.tuning_mode == "fine_tuning":
+            assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"
+        else:
+            assert self.warmup_steps > 0, f"lr warmup steps should be larger than 0, but got {self.warmup_steps}"
         # some scheduler require num_training_steps which is depedent on len(dataset)
         self.load_optimizer_n_scheduler()
         
@@ -353,10 +356,10 @@ class PEFTTrainer:
             assert self.optimizer.lr == self.training_args.learning_rate, "optimizer learning rate is not set successfully"
             self.print_log(f"Learning rate(lr) is set to {self.optimizer.lr}", )
 
+            
             self.scheduler = accelerate.utils.DummyScheduler(
                 self.optimizer,
-                num_training_steps=self.total_step,
-                num_warmup_steps=self.warmup_steps,
+                warmup_num_steps=self.warmup_steps,
                 total_num_steps=self.total_step
             )
 
