@@ -1155,9 +1155,12 @@ class PEFTTrainer:
                 # only in this case we need to first move loaded pretrained mdoel to cpu
                 # and load trained model weights into the model
                 # then we move model back to gpu
-                self.model = self.model.to("cpu")
-                self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                self.model = self.model.to(self.accelerator.device)
+                if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                    self.model = self.model.to("cpu")
+                    self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                    self.model = self.model.to(self.accelerator.device)
+                else:
+                    self.accelerator.load_state(best_cp_dir)
                 
             except Exception as e:
                 self.accelerator.clear()
