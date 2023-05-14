@@ -33,7 +33,7 @@ declare -A adapter_size2bs
 
 adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
 
-model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["opt-350m"]="facebook/opt-350m" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
+model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["opt-350m"]="facebook/opt-350m" ["opt-2.7b"]="facebook/opt-2.7b" ["opt-6.7b"]="facebook/opt-6.7b" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
 lora_rank2bs=(["8"]=15 ["32"]=15 ["64"]=15 ["128"]=15 ["256"]=10 ["512"]=5)
 
 # one can pass either abbreviation or a full path into MODEL_NAME

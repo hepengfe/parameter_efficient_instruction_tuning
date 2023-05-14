@@ -355,6 +355,7 @@ class PEFTTrainer:
                 self.optimizer,
                 num_training_steps=self.total_step,
                 num_warmup_steps=self.warmup_steps,
+                total_num_steps=self.total_step
             )
 
 
@@ -969,7 +970,7 @@ class PEFTTrainer:
                 self.print_log(f"Resume training from epoch {self.start_epoch}, step {self.start_step}, global_step {self.global_step}")
 
                 self.accelerator.skip_first_batches(self.train_dataloader,  self.start_step)
-                self.print_log(f"skip first {self.start_step} steps in train_dataloader")
+                self.print_log(f"skip first {self.start_step} steps in train_dataloader", print_step=False)
         else:
             progress_bar = tqdm(
                 range(self.global_step, self.total_step),
@@ -1038,7 +1039,6 @@ class PEFTTrainer:
                             
 
 
-
                 # log each backward step (not grad acc step)
                 self.global_step += 1
                 progress_bar.update(1)
@@ -1053,6 +1053,9 @@ class PEFTTrainer:
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
                     self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]}")
                     logging_loss = 0
+
+    
+
 
             self.print_log(f"epoch {epoch} finished, evaluating...")
             # eval and save per epoch as well
@@ -1148,6 +1151,7 @@ class PEFTTrainer:
                 
             except Exception as e:
                 self.accelerator.clear()
+                # This might be buggy and needs to be improved.
                 # sleep 5 seconds
                 time.sleep(5) # wait for oom processes to be killed in case of oom
                 print(f"load state failed, try to load from model_path due to \n {e}")
