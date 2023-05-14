@@ -1051,12 +1051,17 @@ class PEFTTrainer:
                 
                 # logging
                 if self.global_step != 0 and self.global_step % self.training_args.logging_steps == 0:
+                    try:
+                        last_lr = self.scheduler.get_last_lr()[0]
+                    except AssertionError:
+                        last_lr = None
+                        self.print_log("No latest lr found in scheduler...")
                     self.log({
                             "train/loss": logging_loss/self.training_args.logging_steps,
-                            "train/lr": self.scheduler.get_last_lr()[0],
+                            "train/lr": last_lr,
                             })
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
-                    self.print_log(f"train/lr: {self.scheduler.get_last_lr()[0]}")
+                    self.print_log(f"train/lr: {last_lr}")
                     logging_loss = 0
 
     
@@ -1229,8 +1234,8 @@ class PEFTTrainer:
                     # self.tokenizer.batch_decode(inputs.input_ids)
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
-                                            # synced_gpus = True if self.use_distributed else False,
-                                            synced_gpus = False,
+                                            synced_gpus = True if self.use_distributed else False,
+                                            # synced_gpus = False,
                                             pad_token_id=self.tokenizer.eos_token_id if self.model_args.model_arch == "decoder" else self.tokenizer.pad_token_id,
                                             # synced_gpus = False,
                                             # pad_token_id=self.tokenizer.pad_token_id,
