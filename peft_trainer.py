@@ -279,7 +279,9 @@ class PEFTTrainer:
     def load_model_n_peft_module(self):
         self.model = self.load_pretrained_model()
         self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-        assert self.model_trainable_params > 0, "Model has no trainable parameters"
+        # zero3_init_flag: true
+        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+            assert self.model_trainable_params > 0, "Model has no trainable parameters"
         self.configure_n_load_peft_module() # always load model from scratch for accelerate
 
 
@@ -891,7 +893,10 @@ class PEFTTrainer:
         def human_readable_format(num, precision=3, suffixes=['', 'K', 'M', 'G', 'T', 'P']):
             m = sum([abs(num/1000.0**x) >= 1 for x in range(1, len(suffixes))])
             return f'{num/1000.0**m:.{precision}f}{suffixes[m]}'
-        trainable_ratio = trainable_params/self.model_trainable_params
+        if self.model_trainable_params > 0: 
+            trainable_ratio = trainable_params/self.model_trainable_params
+        else:
+            trainable_ratio = 0
         trainable_params = human_readable_format(trainable_params)
         
         trainable_state = {
