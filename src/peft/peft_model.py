@@ -761,7 +761,6 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 kwargs.pop("decoder_attention_mask", None)
                 return self.base_model(inputs_embeds=inputs_embeds,  **kwargs)
             else:
-                assert decoder_input_ids is not None or decoder_inputs_embeds is not None, "decoder_input_ids or decoder_inputs_embeds should be provided"
                 if decoder_inputs_embeds is None:
                     if decoder_input_ids is None:
                         decoder_input_ids = shift_tokens_right(

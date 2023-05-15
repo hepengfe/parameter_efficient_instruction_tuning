@@ -13,6 +13,10 @@ model_names = ("google/t5-small-lm-adapt", "google/t5-large-lm-adapt", "google/t
 
 model_names = ("gpt2", )
 
+model_names = ("facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b")# ,"facebook/opt-13b", )
+
+model_names = ("facebook/opt-6.7b", )
+
 # test llama
 # tokenizer = AutoTokenizer.from_pretrained("cache/saved_pretrained/facebook/llama-7b")
 # , use_fast=True, return_tensors="pt"
@@ -39,7 +43,7 @@ for m in model_names:
     # check if the model exists in the path
     # priority: 1. potential_model_path 2. cache_dir 3. download from huggingface
     
-    if "gpt2" in m:
+    if "gpt2" in m or "opt" in m or "llama" in m:
         model = AutoModelForCausalLM.from_pretrained(m, cache_dir=cache_dir)
     else:
         model = AutoModelForSeq2SeqLM.from_pretrained(m, cache_dir=cache_dir)

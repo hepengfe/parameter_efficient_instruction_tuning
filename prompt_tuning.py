@@ -14,7 +14,7 @@ from typing import Optional, List
 from utils import flatten, build_peft_config_name
 import logging
 from logging import getLogger
-
+from utils import remove_old_checkpoints
 logger = getLogger(__name__)
 
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
@@ -28,8 +28,8 @@ class ModelArguments:
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
 
-    model_arch: str = field(
-        default="encoder-decoder",
+    model_arch: Optional[str] = field(
+        default=None,
         metadata={"help": "model architecture"}
     )
 
@@ -70,7 +70,7 @@ class PeftArguments:
 
     # adaptor
     adapter_size: int = field(
-        default=64,
+        default=32,
         metadata={"help": "adapter size"}
     )
     
@@ -314,11 +314,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     # )
 
     checkpoint_save_total_limit: Optional[int] = field(
-        default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
+        default=1, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
     )
     
     best_checkpoint_save_total_limit:  Optional[int] = field(
-        default=2, metadata={"help": "The maximum total amount of best checkpoints to save."}
+        default=1, metadata={"help": "The maximum total amount of best checkpoints to save."}
     )
 
     max_steps: Optional[int] = field(
@@ -382,6 +382,12 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=False,
     )
 
+    dev_test: bool = field(
+        default=False,
+        metadata={ "help": "Whether to run in test mode which check evaluation on test dataset" },
+    )
+
+
     use_accelerate: bool = field(
         default=False,
         metadata={ "help": "Whether to use accelerate." },
@@ -423,11 +429,23 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "The warmup ratio." },
     )
 
-
+ENCODER_DECODER_MODEL_NAMES = ["t5"]
+DECODER_MODEL_NAMES = ["opt", "llama", "gpt2"]
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
+
+    if any([m in model_args.model_name_or_path for m in ENCODER_DECODER_MODEL_NAMES]):
+        model_args.model_arch = "encoder-decoder"
+        print(f"model {model_args.model_name_or_path} is encoder-decoder")
+    elif any([m in model_args.model_name_or_path for m in DECODER_MODEL_NAMES]):
+        model_args.model_arch = "decoder"
+        print(f"model {model_args.model_name_or_path} is decoder")
+    else:
+        if model_args.model_arch is None:
+            raise ValueError(f"model name or path {model_args.model_name_or_path} is not categorized into encoder-decoder or decoder. If it's model path, please specify model_arch.")
+
     
     
     if training_args.is_cluster:
@@ -446,7 +464,7 @@ def main():
     if training_args.dev_run:
         # no adjustable variables
         os.environ["WANDB_MODE"] = "disabled"
-        training_args.dev_run_data_size = 200
+        training_args.dev_run_data_size = 2000
                 # # debug logging
         training_args.save_steps = 30
         training_args.eval_steps = 30
@@ -474,39 +492,59 @@ def main():
         # training_args.per_device_test_batch_size = 10
         # training_args.dev_run_data_size = 40
 
+        # test evaluation
+        training_args.dev_run_data_size = 500
+        training_args.save_steps = 50
+        training_args.eval_steps = 50
+        training_args.num_train_epochs = 4
+        training_args.per_device_train_batch_size = 2
+        training_args.per_device_eval_batch_size = 10 # can be increased for offload
+        training_args.per_device_test_batch_size = 10
+        
 
     if training_args.dev_train:
         # dev issues such as OOM, training loss decreasing
         os.environ["WANDB_MODE"] = "disabled"
         eval_logger = logging.getLogger("compute_metrics.py")
         eval_logger.setLevel(logging.DEBUG)
-        training_args.learning_rate = 0.01
+        # training_args.learning_rate = 0.01
         # try to adjust train/eval bs during dev run
-        training_args.dev_train_data_size = 60
+        training_args.dev_train_data_size = 30
 
         
 
         # test overfitting
         training_args.logging_steps = 10
         # async eval and save
-        training_args.save_steps = 300
-        training_args.eval_steps = 30
-        training_args.per_device_eval_batch_size = 20
+        training_args.num_train_epochs = 5
+        training_args.save_steps = 60
+        training_args.eval_steps = 60
+        training_args.dev_train_data_size = 30
+        training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
-        training_args.per_device_eval_batch_size = 10
         training_args.per_device_train_batch_size = 1
+
         
-        # test save
-        # training_args.num_train_epochs = 1
-        # training_args.dev_train_data_size = 12 # number of gpus
-        # training_args.save_steps = 4
-        # training_args.eval_steps = 4
-        # training_args.per_device_eval_batch_size = 2
+        # test evaluation
+        # training_args.dev_train_data_size = 100
+        # training_args.save_steps = 20
+        # training_args.eval_steps = 20
+        # training_args.num_train_epochs = 20
         # training_args.per_device_train_batch_size = 2
-        
-        # test warmup steps
-        # training_args.dev_train_data_size = 1000
-        # training_args.num_train_epochs = 4
+        # training_args.per_device_eval_batch_size = 10 # can be increased for offload
+        # training_args.per_device_test_batch_size = 10
+
+
+    if training_args.dev_test:
+        # test save and test eval OOM, also whether eval and test results are same
+        # save at 4, 8, 10(epoch) steps
+        training_args.num_train_epochs = 1
+        training_args.dev_test_data_size = 4
+        training_args.save_steps = 4
+        training_args.eval_steps = 4
+        training_args.per_device_eval_batch_size = 4
+        training_args.per_device_train_batch_size = 1
+
         
     if training_args.do_search_hyperparams:
         peft_args.trainable_params_percentage = sorted([float(v) for v in peft_args.trainable_params_percentage.split(",")])
@@ -603,10 +641,13 @@ def main():
     if not training_args.output_dir:
         training_args.output_dir = output_dir
     
-    if training_args.overwrite_output_dir and os.path.exists(training_args.output_dir):
-        shutil.rmtree(training_args.output_dir, ignore_errors=True)
-        shutil.rmtree(training_args.logging_dir, ignore_errors=True)
-        
+    if training_args.overwrite_output_dir:
+        if os.path.exists(training_args.output_dir):
+            shutil.rmtree(training_args.output_dir, ignore_errors=True)
+            print(f"Removed output_dir: {training_args.output_dir}")
+        if os.path.exists(training_args.logging_dir):
+            shutil.rmtree(training_args.logging_dir, ignore_errors=True)
+            print(f"Removed logging_dir: {training_args.logging_dir}")
         # --overwrite_output_dir in cluster should be used for only one time
         if training_args.is_cluster:
             exit()

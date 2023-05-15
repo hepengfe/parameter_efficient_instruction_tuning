@@ -1,6 +1,4 @@
-# bash scripts/hfai/hp_search.sh lora_adapter lora_r hfai 0
-# bash scripts/hfai/hp_search.sh lora_adapter lora_r hfai 1
-# bash scripts/hfai/hp_search.sh lora_adapter lr hfai 0
+# bash scripts/grid_search_1/grid_search_prefix_tuning_1.sh dev_cmd t5
 TRAINING_SETTINGS=(0 1)
 # LORA_RANKS=(8 32 64 128 256 512)
 
@@ -25,7 +23,7 @@ for prefix_len in "${PREFIX_LENS[@]}"; do
             export LR=$lr
             export CMD_INDEX=$i
             export MODEL_NAME=$model_name
-            bash scripts/hfai/hp_run.sh prefix_tuning $script_mode
+            bash scripts/hfai/hp_run.sh prefix_tuning $script_mode &
             ((i++))
             if [ $script_mode == "dev" ];then
                 break

@@ -1,9 +1,6 @@
-# bash scripts/hfai/hp_search.sh lora_adapter lora_r hfai 0
-# bash scripts/hfai/hp_search.sh lora_adapter lora_r hfai 1
-# bash scripts/hfai/hp_search.sh lora_adapter lr hfai 0
-
+# bash scripts/grid_search_1/grid_search_prompt_tuning_1.sh dev_cmd t5
 # LORA_RANKS=(8 32 64 128 256 512)
-
+exit 1
 # flip the order of the bottleneck sizes
 PROMPT_LENS=(256 128 32 8)
 # BOTTLENECK_SIZES=(1024 512 256)
@@ -25,7 +22,7 @@ for prompt_len in "${PROMPT_LENS[@]}"; do
         export LR=$lr
         export CMD_INDEX=$i
         export MODEL_NAME=$model_name
-        bash scripts/hfai/hp_run.sh prompt_tuning $script_mode
+        bash scripts/hfai/hp_run.sh prompt_tuning $script_mode &
         ((i++))
         if [ $script_mode == "dev" ];then
             break
