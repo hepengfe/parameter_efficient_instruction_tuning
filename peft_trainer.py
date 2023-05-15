@@ -359,8 +359,8 @@ class PEFTTrainer:
             
             self.scheduler = accelerate.utils.DummyScheduler(
                 self.optimizer,
-                warmup_num_steps=self.warmup_steps,
-                total_num_steps=self.total_step
+                warmup_num_steps=self.warmup_steps_for_scheduler,
+                total_num_steps=self.num_training_steps_for_scheduler
             )
 
 
@@ -1089,7 +1089,8 @@ class PEFTTrainer:
             # only keep lastest checkpoint's train_state.json file
             remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-            remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
+            if latest_cp is not None:
+                remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
         # wait for last eval saving and old checkpoint removal
         self.accelerator.wait_for_everyone()
 
