@@ -50,7 +50,7 @@ scheduler=$default_scheduler
 
 # tuning mode fixed setup
 if [ $tuning_mode == "fine_tuning" ]; then
-    config_file="configs/hfai/default_config_deepspeed_hf.yaml"
+    config_file="configs/hfai/default_config_deepspeed_hfai_ft.yaml"
     default_eval_step=5000
     scheduler="constant"
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
