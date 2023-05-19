@@ -1110,7 +1110,7 @@ class PEFTTrainer:
         print log under different training system.
         """
         if print_step:
-            s = f"global_step {self.global_step}: {s}"
+            s = f"global_step {self.global_step}/{self.total_step}  ({self.global_step/self.total_step}): {s}"
         if self.training_args.is_cluster:
             import hfai
             if hfai.distributed.get_rank() == 0:
