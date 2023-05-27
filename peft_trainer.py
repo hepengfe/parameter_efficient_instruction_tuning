@@ -465,13 +465,16 @@ class PEFTTrainer:
             model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
         elif "gpt2" in self.model_name_or_path or "bloom" in self.model_name_or_path or "opt" in self.model_name_or_path:
             from transformers import AutoModelForCausalLM
-            model = AutoModelForCausalLM.from_pretrained(
-                self.model_name_or_path,
-                # from_tf=bool(".ckpt" in self.model_name_or_path),
-                # config=m_config,
-                cache_dir=self.training_args.cache_dir,
-                config = config
-            )
+            if os.path.exists(self.potential_model_path):
+                model = AutoModelForCausalLM.from_pretrained(self.potential_model_path, config = config)
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name_or_path,
+                    # from_tf=bool(".ckpt" in self.model_name_or_path),
+                    # config=m_config,
+                    cache_dir=self.training_args.cache_dir,
+                    config = config
+                )
         else:
             raise NotImplementedError("Model not supported: " + self.model_name_or_path)
 
@@ -813,6 +816,9 @@ class PEFTTrainer:
                 self.model.add_seq2seq_lm_head(lm_head_adapter_name, overwrite_ok=reset_peft)
                 self.model.heads[lm_head_adapter_name][0].weight = self.model_lm_head_weight
                 self.model.heads[lm_head_adapter_name][0].weight.requires_grad = False
+                del self.model_lm_head_weight
+                import gc
+                gc.collect()
             elif self.model_args.model_arch == "decoder":
                 pass
                 # since we don't fine tune causal lm head and inherit
@@ -1007,13 +1013,21 @@ class PEFTTrainer:
                 if self.use_distributed:
                     # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
-                        if self.label_smoother is None:
-                            outputs = self.model(**inputs)
-                            loss = outputs["loss"]
-                        else:
-                            labels = inputs.pop("labels")
-                            outputs = self.model(**inputs)
-                            loss = self.label_smoother(outputs, labels)
+                        try:
+                            if self.label_smoother is None:
+                                outputs = self.model(**inputs)
+                                loss = outputs["loss"]
+                            else:
+                                labels = inputs.pop("labels")
+                                outputs = self.model(**inputs)
+                                loss = self.label_smoother(outputs, labels)
+                        except RuntimeError as e:
+                            if self.accelerator.is_local_main_process:
+                                shutil.rmtree(self.training_args.output_dir)
+                                shutil.rmtree(self.training_args.logging_dir)
+                            self.accelerator.wait_for_everyone()
+                            print(f"this expr's output dir and logging dir have been removed due to error \n {e}")
+                            raise e
 
                         # log before backward
                         self.accelerator.backward(loss) # it does gradient acc internally
@@ -1152,52 +1166,79 @@ class PEFTTrainer:
             dataloader2eval = self.test_dataloader
             best_cp_dir = None
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-            try:
-                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
-                print("load from existing state: ", best_cp_dir)
-                assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
-                # only in this case we need to first move loaded pretrained mdoel to cpu
-                # and load trained model weights into the model
-                # then we move model back to gpu
-                if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-                    self.model = self.model.to("cpu")
-                    self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                    self.model = self.model.to(self.accelerator.device)
-                else:
-                    self.accelerator.load_state(best_cp_dir)
+            best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+            print("load from existing state: ", best_cp_dir)
+            assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
+            # only in this case we need to first move loaded pretrained mdoel to cpu
+            # and load trained model weights into the model
+            # then we move model back to gpu
+            if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                self.model = self.model.to("cpu")
+                del self.optimizer
+                del self.scheduler
+                self.accelerator._optimizers = []
+                self.accelerator._schedulers = []
+                torch.cuda.empty_cache()
+                time.sleep(60)
+                self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                time.sleep(60)
+                print(f"Moving mdoel back to gpu {self.accelerator.device}")
+                self.model = self.model.to(self.accelerator.device)
+            else:
+                self.accelerator.load_state(best_cp_dir)
+            # try:
+            #     best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+            #     print("load from existing state: ", best_cp_dir)
+            #     assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
+            #     # only in this case we need to first move loaded pretrained mdoel to cpu
+            #     # and load trained model weights into the model
+            #     # then we move model back to gpu
+            #     if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+            #         self.model = self.model.to("cpu")
+            #         del self.optimizer
+            #         del self.scheduler
+            #         torch.cuda.empty_cache()
+            #         time.sleep(60)
+            #         self.accelerator.load_state(best_cp_dir, map_location="cpu")
+            #         self.model = self.model.to(self.accelerator.device)
+            #     else:
+            #         self.accelerator.load_state(best_cp_dir)
                 
-            except Exception as e:
-                self.accelerator.clear()
-                # This might be buggy and needs to be improved.
-                # sleep 5 seconds
-                time.sleep(5) # wait for oom processes to be killed in case of oom
-                print(f"load state failed, try to load from model_path due to \n {e}")
-                if best_cp_dir is None:
-                    print("No best checkpoint found, exiting")
-                    exit()
-                sharded_model_path = os.path.join(best_cp_dir, "save_pretrained")
-                config = AutoConfig.from_pretrained(sharded_model_path)
-                # reload tokenizer in this case
-                if "llama" in self.model_args.model_name_or_path.lower():
-                    self.tokenizer = LlamaTokenizer.from_pretrained(
-                        self.potential_model_path,
-                        truncation_side = "left"
-                    )
-                else:
-                    self.tokenizer = AutoTokenizer.from_pretrained(
-                        sharded_model_path,
-                        truncation_side = "left"
-                    )
+            # except Exception as e:
+                
+            #     self.accelerator.clear()
+            #     # This might be buggy and needs to be improved.
+            #     # sleep 5 seconds
+            #     time.sleep(5) # wait for oom processes to be killed in case of oom
+            #     print(f"distributed_type: {self.accelerator.distributed_type}. load state failed, try to load from model_path due to \n {e}")
+            #     print("Only accelerator load_state() is expected to use. Exiting...")
+            #     exit()
+            #     if best_cp_dir is None:
+            #         print("No best checkpoint found, exiting")
+            #         exit()
+            #     sharded_model_path = os.path.join(best_cp_dir, "save_pretrained")
+            #     config = AutoConfig.from_pretrained(sharded_model_path)
+            #     # reload tokenizer in this case
+            #     if "llama" in self.model_args.model_name_or_path.lower():
+            #         self.tokenizer = LlamaTokenizer.from_pretrained(
+            #             self.potential_model_path,
+            #             truncation_side = "left"
+            #         )
+            #     else:
+            #         self.tokenizer = AutoTokenizer.from_pretrained(
+            #             sharded_model_path,
+            #             truncation_side = "left"
+            #         )
 
-                model = self.load_pretrained_model(config)
-                if hasattr(self.model, "load_adapter"):
-                    adapter_path = os.path.join(sharded_model_path, self.model_args.tuning_mode)
-                    model.load_adapter(adapter_path)
+            #     model = self.load_pretrained_model(config)
+            #     if hasattr(self.model, "load_adapter"):
+            #         adapter_path = os.path.join(sharded_model_path, self.model_args.tuning_mode)
+            #         model.load_adapter(adapter_path)
                 
-                # model = AutoModelForSeq2SeqLM.from_pretrained(self.model_args.model_name_or_path)
-                # prepare model with dataloader (dataloader is already prepared tho)
-                # move model to device and possibly ddp or deepspeed
-                model, dataloader2eval = self.accelerator.prepare(model, dataloader2eval)
+            #     # model = AutoModelForSeq2SeqLM.from_pretrained(self.model_args.model_name_or_path)
+            #     # prepare model with dataloader (dataloader is already prepared tho)
+            #     # move model to device and possibly ddp or deepspeed
+            #     model, dataloader2eval = self.accelerator.prepare(model, dataloader2eval)
 
         input_host = []
         output_host = []
@@ -1264,6 +1305,10 @@ class PEFTTrainer:
                 # labels[labels == -100] = self.tokenizer.pad_token_id
                 
                 label_host += self.tokenizer.batch_decode(labels)
+
+                cnt = len(label_host)
+                if cnt % 100 == 0:
+                    print(f"evaluated {cnt} {mode} data")
 
         results = self.compute_metrics(
                 (output_host, label_host),
@@ -1556,7 +1601,7 @@ class PEFTTrainer:
                 task_type=task_type,
                 num_virtual_tokens=self.peft_args.prompt_len,
                 inference_mode=False,
-                device= self.peft_args.module_device,
+                device= str(self.accelerator.device),
                 # prompt_tuning_init="TEXT",
                 # prompt_tuning_init_text=prompt_tuning_init_text,
                 # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
@@ -1763,7 +1808,18 @@ class PEFTTrainer:
                         self.print_log("test evaluation is already finished,  exit...")
                         exit()
                     
+                    # if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                    #     self.model = self.model.to("cpu")
+                    #     torch.cuda.empty_cache()
+                    #     self.accelerator.load_state(latest_cp, map_location="cpu")
+                    #     self.model = self.model.to(self.accelerator.device)
+                    # else:
+                    #     self.accelerator.load_state(latest_cp)
+                    time.sleep(60)
                     self.accelerator.load_state(latest_cp)
+                    time.sleep(60)
+
+
                     # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
                     
 

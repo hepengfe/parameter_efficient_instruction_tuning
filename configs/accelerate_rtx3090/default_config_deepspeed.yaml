@@ -1,7 +1,7 @@
 compute_environment: LOCAL_MACHINE
 deepspeed_config:
-  deepspeed_config_file: configs/deepspeed/zero_stage3_offload_config.json
-  zero3_init_flag: false
+  deepspeed_config_file: configs/deepspeed/zero_stage3_offload_peft_config.json
+  zero3_init_flag: true
 distributed_type: DEEPSPEED
 downcast_bf16: 'no'
 machine_rank: 0

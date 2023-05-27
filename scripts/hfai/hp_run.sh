@@ -31,9 +31,9 @@ declare -A model_name2path
 declare -A lora_rank2bs
 declare -A adapter_size2bs
 
-adapter_size2bs=(["8"]=20 ["32"]=20 ["64"]=15 ["128"]=10 ["256"]=2)
+adapter_size2bs=(["8"]=10 ["32"]=10 ["64"]=10 ["128"]=10 ["256"]=2)
 
-model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["opt"]="facebook/opt-13b" ["opt-350m"]="facebook/opt-350m" ["opt-2.7b"]="facebook/opt-2.7b" ["opt-6.7b"]="facebook/opt-6.7b" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
+model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["t5-11b"]="google/t5-xxl-lm-adapt" ["opt"]="facebook/opt-13b" ["opt-350m"]="facebook/opt-350m" ["opt-2.7b"]="facebook/opt-2.7b" ["opt-6.7b"]="facebook/opt-6.7b" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
 lora_rank2bs=(["8"]=15 ["32"]=15 ["64"]=15 ["128"]=15 ["256"]=10 ["512"]=5)
 
 # one can pass either abbreviation or a full path into MODEL_NAME
@@ -46,6 +46,7 @@ fi
 
 
 
+
 scheduler=$default_scheduler
 
 # tuning mode fixed setup
@@ -53,20 +54,32 @@ if [ $tuning_mode == "fine_tuning" ]; then
     config_file="configs/hfai/default_config_deepspeed_hfai_ft.yaml"
     default_eval_step=5000
     scheduler="constant"
+    default_warmup_ratio=0
+    eval_bs=1
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
-    config_file="configs/hfai/default_config_ddp.yaml"
+    eval_bs=${lora_rank2bs[$LORA_RANK]}
+    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
+        config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
+        eval_bs=2
+    else
+        config_file="configs/hfai/default_config_ddp.yaml"
+    fi
     default_eval_step=5000
     scheduler="linear"
-    eval_bs=${lora_rank2bs[$LORA_RANK]}
 elif [ $tuning_mode == "adapter" ]; then
-    config_file="configs/hfai/default_config_ddp.yaml"
-    default_eval_step=5000
     eval_bs=${adapter_size2bs[$ADAPATER_SIZE]}
+    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
+        config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
+        eval_bs=2
+    else
+        config_file="configs/hfai/default_config_ddp.yaml"
+    fi
+    default_eval_step=5000
     scheduler="linear"
 elif [ $tuning_mode == "prefix_tuning" ]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
-    eval_bs=10
+    eval_bs=2
     scheduler="linear"
 elif [ $tuning_mode == "prompt_tuning" ]; then
     config_file="configs/hfai/default_config_ddp.yaml"
@@ -76,7 +89,7 @@ elif [ $tuning_mode == "prompt_tuning" ]; then
 elif [[ $tuning_mode == "ia3" || $tuning_mode == "bitfit" ]]; then
     config_file="configs/hfai/default_config_ddp.yaml"
     default_eval_step=5000
-    eval_bs=20
+    eval_bs=10
     scheduler="linear"
 else
     echo "tuning_mode ${tuning_mode} is not supported"
@@ -91,6 +104,9 @@ fi
 # ddp higher save/eval interval
 default_save_step=$((default_eval_step/5)) # 5000/5=1000
 defualt_logging_steps=$((default_eval_step/20)) # 5000/20=250
+if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
+    defualt_logging_steps=$((default_eval_step/10))
+fi
 
 if [[ $script_mode == "hfai" || $script_mode == "hfai_rm" ]]; then
     hfai workspace push  --force --no_zip
@@ -99,6 +115,9 @@ fi
  
 # data
 data_folder=$default_data_folder
+if [ -v DATA_FOLDER ]; then
+    data_folder=$DATA_FOLDER
+fi
 dataset=$default_dataset
 # training/evaluation
 
@@ -115,7 +134,7 @@ lora_modules=$default_lora_modules
 
 
 # expr name
-model_name=${default_model//\//_} # flatten "/" 
+model_name=${model//\//_} # flatten "/" 
 # dataset/dataset_config/model/tuning_mode/tuning_config/lr
 # e.g.
 # ni/default_train_707_val_50/t5-xl-lm-adapt/ft/no_config/lora_r_64_alpha_32/5e-4
@@ -166,8 +185,8 @@ launch_prefix="hfai python hfai_accelerate.py  launch --config_file ${config_fil
 launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
 if [ $script_mode == "dev" ]; then
-    launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
-    # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
+    # launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
     # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
     
     launch_suffix="--dev_train"

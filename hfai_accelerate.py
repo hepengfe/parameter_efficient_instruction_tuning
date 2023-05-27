@@ -37,8 +37,7 @@ def main():
     subprocess.check_output('ninja --version'.split())
 
     hfai_proj_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/"
-    
-
+    os.environ["CUDA_VISIBLE_DEVICES"] = "7,6,5,4,3,2,1,0"
     if args.config_file is not None:
         args.config_file = os.path.join(hfai_proj_dir, args.config_file)
 

@@ -16,6 +16,9 @@ model_names = ("gpt2", )
 model_names = ("facebook/opt-350m", "facebook/opt-1.3b", "facebook/opt-2.7b")# ,"facebook/opt-13b", )
 
 model_names = ("facebook/opt-6.7b", )
+model_names = ("facebook/opt-13b",)
+model_names=("google/t5-xxl-lm-adapt",)
+model_names=("google/t5-base-lm-adapt",)
 
 # test llama
 # tokenizer = AutoTokenizer.from_pretrained("cache/saved_pretrained/facebook/llama-7b")
