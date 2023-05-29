@@ -61,6 +61,8 @@ elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
         eval_bs=2
+        echo "tuning mode has been changed to lora peft for large model"
+        tuning_mode="lora_peft"
     else
         config_file="configs/hfai/default_config_ddp.yaml"
     fi

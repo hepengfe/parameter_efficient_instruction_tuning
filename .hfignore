@@ -1,5 +1,6 @@
 wandb
 ./data
+data/
 out
 scripts/util
 src/peft.egg-info
