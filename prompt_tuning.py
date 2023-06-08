@@ -428,14 +428,22 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=0.0,
         metadata={ "help": "The warmup ratio." },
     )
+    
+    
+    random_seed: int = field(
+        default=42,
+        metadata={ "help": "The random seed." },
+    )
 
 ENCODER_DECODER_MODEL_NAMES = ["t5"]
 DECODER_MODEL_NAMES = ["opt", "llama", "gpt2"]
 def main():
     parser = HfArgumentParser((ModelArguments, PeftArguments, DataArguments, TrainingArguments))
+    
+    
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
-
+    torch.manual_seed(training_args.random_seed)
     if any([m in model_args.model_name_or_path for m in ENCODER_DECODER_MODEL_NAMES]):
         model_args.model_arch = "encoder-decoder"
         print(f"model {model_args.model_name_or_path} is encoder-decoder")
@@ -619,6 +627,7 @@ def main():
     # output_dir:   xx/xx/xx
     # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
     data_config_name = f"num_validation_tasks_{num_validation_tasks}"
+    random_seed_name = f"random_seed_{training_args.seed}"
     dev_folder = ""
     if training_args.dev_run:
         dev_folder = "dev_run"
@@ -632,7 +641,7 @@ def main():
             flatten(model_args.model_name_or_path, "/-", "_"),
             dev_folder,
             model_args.tuning_mode,
-            "_".join([peft_config_name, data_config_name]),
+            "_".join([peft_config_name, data_config_name, random_seed_name]),
     )
     if training_args.dev_run:
         output_dir += "_dev_run"
@@ -640,7 +649,7 @@ def main():
         output_dir += "_dev_train"
     if not training_args.output_dir:
         training_args.output_dir = output_dir
-    
+
     if training_args.overwrite_output_dir:
         if os.path.exists(training_args.output_dir):
             shutil.rmtree(training_args.output_dir, ignore_errors=True)

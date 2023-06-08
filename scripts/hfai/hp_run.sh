@@ -15,7 +15,7 @@ default_dataset="ni"
 
 # lora
 default_lora_modules="qv"
-
+default_random_seed=42
 
 
 default_scheduler="linear"
@@ -44,7 +44,11 @@ else
 fi
 
 
-
+if [ -v RANDOM_SEED ]; then
+    random_seed=$RANDOM_SEED
+else
+    random_seed=$default_random_seed
+fi
 
 
 scheduler=$default_scheduler
@@ -175,7 +179,7 @@ tuning_args+=" --learning_rate ${LR} --scheduler_type ${scheduler} --warmup_rati
 
 
 # expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${lr}_label_smoothing_factor_${label_smoothing_factor}_scheduler_${scheduler}_warmup_steps_${warmup_steps}
-expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${LR}_weight_decay_${WEIGHT_DECAY}_dropout_rate_${DROPOUT_RATE}_label_smoothing_factor_${LABEL_SMOOTHING_FACTOR}_scheduler_${scheduler}_warmup_ratio_${default_warmup_ratio}
+expr_dir=${dataset}/${data_folder}/${model_name}/${tuning_mode}/${tuning_config}/lr_${LR}_weight_decay_${WEIGHT_DECAY}_dropout_rate_${DROPOUT_RATE}_label_smoothing_factor_${LABEL_SMOOTHING_FACTOR}_scheduler_${scheduler}_warmup_ratio_${default_warmup_ratio}_random_seed_${random_seed}
 
 expr_name=${expr_dir//\//_} # replace "/" with "_"
 
@@ -187,8 +191,8 @@ launch_prefix="hfai python hfai_accelerate.py  launch --config_file ${config_fil
 launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
 if [ $script_mode == "dev" ]; then
-    # launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
-    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
+    launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+    # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
     # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
     
     launch_suffix="--dev_train"
@@ -197,7 +201,7 @@ spcecial_arg=""
 if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
     spcecial_arg="--overwrite_output_dir"
 fi
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix"
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir $launch_suffix --random_seed $random_seed"
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"
