@@ -15,6 +15,7 @@ from utils import flatten, build_peft_config_name
 import logging
 from logging import getLogger
 from utils import remove_old_checkpoints
+import accelerate
 logger = getLogger(__name__)
 
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
@@ -443,7 +444,7 @@ def main():
     
     model_args, peft_args, data_args, training_args = parser.parse_args_into_dataclasses()
     
-    torch.manual_seed(training_args.random_seed)
+    accelerate.utils.set_seed(training_args.random_seed)
     if any([m in model_args.model_name_or_path for m in ENCODER_DECODER_MODEL_NAMES]):
         model_args.model_arch = "encoder-decoder"
         print(f"model {model_args.model_name_or_path} is encoder-decoder")
