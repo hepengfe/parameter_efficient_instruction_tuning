@@ -1626,7 +1626,7 @@ class PEFTTrainer:
 
             config = LoRAConfig(r=self.peft_args.lora_r ,
                                 alpha=self.peft_args.lora_alpha,
-                                attn_matrices=list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
+                                attn_matrices=self.peft_args.lora_modules.split(",") if self.peft_args.lora_modules else ["q", "v"],
                                 # mlp_lora=True,
                                 dropout=self.peft_args.dropout_rate,
                                 )
@@ -1641,7 +1641,7 @@ class PEFTTrainer:
                 lora_alpha=self.peft_args.lora_alpha,
                 lora_dropout=self.peft_args.dropout_rate,
                 # lora_modules
-                target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
+                target_modules= self.peft_args.lora_modules.split(",") if self.peft_args.lora_modules else ["q", "v"],
             )
             get_peft_model(self.model, config)
 

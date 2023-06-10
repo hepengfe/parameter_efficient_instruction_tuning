@@ -60,7 +60,7 @@ class PeftArguments:
     )
 
     lora_modules: str = field(
-        default="qv",
+        default="q,v",
         metadata={"help": "lore modules to be reparameterized."}
     )
     

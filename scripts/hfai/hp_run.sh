@@ -192,6 +192,10 @@ launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
 if [ $script_mode == "dev" ]; then
     launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+    launch_prefix="CUDA_VISIABLE_DEVICES=0,1 accelerate launch --config_file configs/accelerate_A6000/default_config_ddp_2gpu.yaml"
+    # launch_prefix="CUDA_VISIABLE_DEVICES=0,1 accelerate launch --config_file configs/accelerate_A6000/default_config_deepspeed_2gpu.yaml"
+    
+    
     # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
     # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
     
