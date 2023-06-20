@@ -8,7 +8,7 @@ i=0
 export LABEL_SMOOTHING_FACTOR=0
 export DROPOUT_RATE=0
 export WEIGHT_DECAY=0
-export RANDOM_SEED=42
+export RANDOM_SEED=$3
 lr=1e-5
 
 for data_folder in "${DATA_FOLDERS[@]}"; do

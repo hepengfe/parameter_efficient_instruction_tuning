@@ -14,7 +14,7 @@ export LABEL_SMOOTHING_FACTOR=0
 export DROPOUT_RATE=0.1
 export WEIGHT_DECAY=0.01
 export LR=1e-4
-export RANDOM_SEED=42
+export RANDOM_SEED=$3
 
 for data_folder in "${DATA_FOLDERS[@]}"; do
     for adapter_size in "${ADAPATER_SIZES[@]}"; do
