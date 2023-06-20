@@ -53,6 +53,8 @@ class LlamaAdapterDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
         )
+        
+        
         hidden_states = self.attention_adapters(hidden_states, residual, None)
         # hidden_states = residual + hidden_states
 

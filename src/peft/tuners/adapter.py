@@ -65,6 +65,9 @@ class AdapterConfig(PeftConfig):
 
 
 class AdapterModel(torch.nn.Module):
+    """
+    pretrained model wrapper to add adapters
+    """
     def __init__(self, config, model):
         super().__init__()
         self.peft_config = config
@@ -73,7 +76,8 @@ class AdapterModel(torch.nn.Module):
         # mark_only_adapter_as_trainable(self.model, self.peft_config.bias)
         mark_only_adapter_as_trainable(self.model)
         self.forward = self.model.forward
-        
+    
+    
     def _find_and_replace(self):
         # replace layers with adapters that have customized forward pass
         key_list = [key for key, _ in self.model.named_modules()]
@@ -91,27 +95,36 @@ class AdapterModel(torch.nn.Module):
                 if not is_target_modules_in_base_model:
                     is_target_modules_in_base_model = True
                 parent, target, target_name = self._get_submodules(key)
-                from .adapters import OPTAdapterDecoderLayer, LlamaAdapterDecoderLayer, T5LayerSelfAttention,  T5AdapterLayerCrossAttention, T5AdapterLayerFF
-                
+                from .adapters import OPTAdapterDecoderLayer, LlamaAdapterDecoderLayer, T5AdapterLayerSelfAttention,  T5AdapterLayerCrossAttention, T5AdapterLayerFF
+                    
                 for layer_idx, layer in enumerate(target.children()):
-                    print(key)
-                    if key.startswith("encoder"):
-                        # replace encoder layer
-                        # layer.0
-                        new_ff = T5LayerSelfAttention(layer.layer[0], self.peft_config)
-                        new_self_attn = T5AdapterLayerFF(layer.layer[1], self.peft_config)
-                        layer.layer[0] = new_ff
-                        layer.layer[1] = new_self_attn
-                    elif key.startswith("decoder"):
-                        new_ff = T5LayerSelfAttention(layer.layer[0], self.peft_config)
-                        new_cross_attn = T5AdapterLayerCrossAttention(layer.layer[1], self.peft_config)
-                        new_self_attn = T5AdapterLayerFF(layer.layer[2], self.peft_config)
-                        layer.layer[0] = new_ff
-                        layer.layer[1] = new_cross_attn
-                        layer.layer[2] = new_self_attn
-                
-                    # else:
-                        
+                    if "t5" in type(self.model).__name__.lower():
+                        if key.startswith("encoder"):
+                            # replace encoder layer
+                            # layer.0
+                            new_ff = T5AdapterLayerSelfAttention(layer.layer[0], self.peft_config)
+                            new_self_attn = T5AdapterLayerFF(layer.layer[1], self.peft_config)
+                            layer.layer[0] = new_ff
+                            layer.layer[1] = new_self_attn
+                            # import pdb; pdb.set_trace()
+                            # print('encoder layer check')
+                            
+                        elif key.startswith("decoder"):
+                            new_ff = T5AdapterLayerSelfAttention(layer.layer[0], self.peft_config)
+                            # new_cross_attn = T5AdapterLayerCrossAttention(layer.layer[1], self.peft_config)
+                            new_self_attn = T5AdapterLayerFF(layer.layer[2], self.peft_config)
+                            layer.layer[0] = new_ff
+                            # layer.layer[1] = new_cross_attn
+                            layer.layer[2] = new_self_attn
+                            # import pdb; pdb.set_trace()
+                            # print('decoder layer check')
+                            
+                    elif "opt" in type(self.model).__name__.lower():
+                        new_module = OPTAdapterDecoderLayer(layer, self.peft_config)
+                        target[layer_idx] = new_module
+                    elif "llama" in type(self.model).__name__.lower():
+                        new_module = LlamaAdapterDecoderLayer(layer, self.peft_config)
+                        target[layer_idx] = new_module
                     
                 #     # new_module = OPTAdapterDecoderLayer(layer, self.peft_config)
                 #     new_module = LlamaAdapterDecoderLayer(layer, self.peft_config)
@@ -125,6 +138,7 @@ class AdapterModel(torch.nn.Module):
                 # print(parent, target, target_name)
                 # new_module = OPTAdapterDecoderLayer(target)
                 # self._replace_module(parent, target_name, new_module, target)
+
         if not is_target_modules_in_base_model:
             raise ValueError(
                 f"Target modules {self.peft_config.target_modules} not found in the base model. "
@@ -157,10 +171,21 @@ class AdapterModel(torch.nn.Module):
         except AttributeError:
             return getattr(self.model, name)
 
+    @property
+    def modules_to_save(self):
+        return None
 
+    def get_peft_config_as_dict(self, inference: bool = False):
+        config = {k: v.value if isinstance(v, Enum) else v for k, v in asdict(self.peft_config).items()}
+        if inference:
+            config["inference_mode"] = True
+        return config
 
 
 class AdapterLayer(nn.Module):
+    """
+    adapter wrapper to configure adapter and forward function.
+    """
     def __init__(self, location_key: str, config):
         super().__init__()
         self.location_key = location_key
@@ -246,7 +271,7 @@ class Adapter(nn.Module):
         self.name = adapter_name
         self.input_size = input_size
         self.add_layer_norm_before = False
-        self.add_layer_norm_after = True
+        self.add_layer_norm_after = False
         self.adapter_residual_before_ln = False
         self.use_gating = False
 
@@ -275,7 +300,7 @@ class Adapter(nn.Module):
         # seq_list.append(nn.Linear(self.input_size, self.down_sample))
 
         # # select non-linearity
-        # self.non_linearity = get_activation("relu".lower())
+        self.non_linearity = get_activation("silu".lower())
 
         # seq_list.append(self.non_linearity)
 
@@ -287,7 +312,7 @@ class Adapter(nn.Module):
         self.adapter_up = nn.Linear(self.down_sample, self.input_size)
 
 
-        self.scaling =  1.0
+        self.scaling = 1.0
         # # Additional scaling factor (from He et al. (2021))
         # if isinstance(config["scaling"], float):
         #     self.scaling = config["scaling"]
@@ -323,6 +348,7 @@ class Adapter(nn.Module):
         #             self.gate.apply(self.init_bert_weights)
         # else:
         #     raise ValueError("Unknown init_weights type: {}".format(config["init_weights"]))
+
 
     def pre_forward(
         self,
@@ -366,7 +392,7 @@ class Adapter(nn.Module):
 
     def forward(self, x, residual_input, output_gating=False):
         down = self.adapter_down(x)
-
+        down= self.non_linearity(down)
         up = self.adapter_up(down)
         up = up * self.scaling
         output = up
@@ -435,6 +461,7 @@ class Adapter(nn.Module):
 # had to adapt it for `lora_only` to work
 def mark_only_adapter_as_trainable(model: nn.Module, bias: str = "none") -> None:
     for n, p in model.named_parameters():
-        print(n)
+        
         if "adapters" not in n:
             p.requires_grad = False
+        

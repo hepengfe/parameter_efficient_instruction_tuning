@@ -1,4 +1,4 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration,T5Model, T5Config, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification, Seq2SeqAdapterTrainer, TrainerState
+from transformers import T5Tokenizer, T5ForConditionalGeneration,T5Model, T5Config, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification
 
 from datasets import load_dataset, load_metric, concatenate_datasets
 import numpy as np
@@ -12,7 +12,7 @@ from transformers import (
     get_scheduler,
     EarlyStoppingCallback
 )
-from transformers import AutoModelForSeq2SeqLM, AutoAdapterModel
+from transformers import AutoModelForSeq2SeqLM
 
 from torch.utils.data import DataLoader
 import numpy as np
@@ -48,8 +48,8 @@ from accelerate.utils import DistributedType
 import time
 from transformers.trainer_pt_utils import LabelSmoother
 # modules use two pacakges 
-ADAPTER_TRANSFORMERS_MODULES=["adapter", "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter"]
-PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit"]
+ADAPTER_TRANSFORMERS_MODULES=[ "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter", "adapter_adapter"]
+PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit", "adapter_peft"]
 CAUSAL_LM=["gpt", "llama", "opt"]
 
 
@@ -57,7 +57,7 @@ BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
 from transformers import LlamaTokenizer
 from transformers import LlamaForCausalLM
-
+from peft import PeftModelForCausalLM
 import logging
 from accelerate.logging import get_logger
 import accelerate
@@ -188,7 +188,7 @@ class PEFTTrainer:
         
         self.accelerator = Accelerator(
                 log_with="tensorboard",
-                logging_dir=self.training_args.logging_dir,
+                # logging_dir=self.training_args.logging_dir,
                 project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
@@ -226,8 +226,15 @@ class PEFTTrainer:
                 self.model.lm_head.weight.requires_grad = False
                 self.model.model.embed_tokens.weight.requires_grad = False
             elif "opt" in model_args.model_name_or_path:
-                self.model.model.decoder.embed_tokens.weight.requires_grad = False
-                self.model.lm_head.weight.requires_grad = False
+                # check if it's type PeftModelForCausalLM
+                if type(self.model) == PeftModelForCausalLM:
+                    self.model.model.model.decoder.embed_tokens.weight.requires_grad = False
+                    self.model.model.lm_head.weight.requires_grad = False
+                else:
+                    self.model.model.model.decoder.embed_tokens.weight.requires_grad = False
+                    self.model.model.lm_head.weight.requires_grad = False
+                    # self.model.model.decoder.embed_tokens.weight.requires_grad = False
+                    # self.model.lm_head.weight.requires_grad = False
                 
         trainable_params_percent = self.check_trainable_parameters()
 
@@ -339,6 +346,8 @@ class PEFTTrainer:
                         "weight_decay": 0.0
                     },
                 ]
+                
+                
                 for param in self.model.parameters():
                     param.requires_grad = True
                 self.optimizer = accelerate.utils.DummyOptim(
@@ -434,7 +443,7 @@ class PEFTTrainer:
                 else:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
-                
+                from transformers import AutoAdapterModel
                 # if os.path.exists(self.potential_model_path):
                 #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 # else:
@@ -994,6 +1003,7 @@ class PEFTTrainer:
                 disable=self.training_args.is_cluster
             )
 
+
         self.model.train()
         logging_loss = 0
         
@@ -1024,7 +1034,7 @@ class PEFTTrainer:
                         except RuntimeError as e:
                             if self.accelerator.is_local_main_process:
                                 shutil.rmtree(self.training_args.output_dir)
-                                shutil.rmtree(self.training_args.logging_dir)
+                                # shutil.rmtree(self.training_args.logging_dir)
                             self.accelerator.wait_for_everyone()
                             print(f"this expr's output dir and logging dir have been removed due to error \n {e}")
                             raise e
@@ -1077,6 +1087,10 @@ class PEFTTrainer:
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             "train/lr": last_lr,
                             })
+                    # adapter_peft
+                    # self.print_log(f"{self.model.model.decoder.block[0].layer[0].attention_adapters.adapter.adapter_down.weight[0]}")
+
+                    # self.print_log(f"{self.model.model.decoder.block[0].layer[0].attention_adapters.adapter.adapter_down.weight[0]}")
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
                     self.print_log(f"train/lr: {last_lr}")
                     logging_loss = 0
@@ -1268,7 +1282,7 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
-                if self.model_args.tuning_mode == "lora_peft" or self.model_args.tuning_mode == "prompt_tuning": # temp PEFT lora implementation
+                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning", "adapter_peft"]: # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
@@ -1643,7 +1657,9 @@ class PEFTTrainer:
                 # lora_modules
                 target_modules= self.peft_args.lora_modules.split(",") if self.peft_args.lora_modules else ["q", "v"],
             )
-            get_peft_model(self.model, config)
+            self.load_peft_module(config)
+
+            # self.model = get_peft_model(self.model, config)
 
         elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config
@@ -1652,14 +1668,42 @@ class PEFTTrainer:
                 dropout=self.peft_args.dropout_rate,
             )
             self.load_peft_module(config)
-
-        elif self.model_args.tuning_mode in ["adapter", "compactor"]:
+        elif self.model_args.tuning_mode == "adapter_peft":
+            from peft import AdapterConfig
+            if "t5" in self.model_name_or_path:
+                peft_config = AdapterConfig(
+                    task_type = TaskType.SEQ_2_SEQ_LM,
+                    adapter_size = self.peft_args.adapter_size,
+                    target_modules = ["encoder.block", "decoder.block"],
+                    inference_mode=False
+                )
+            elif "opt" in self.model_name_or_path:
+                peft_config = AdapterConfig(
+                    task_type = TaskType.CAUSAL_LM,
+                    adapter_size = self.peft_args.adapter_size,
+                    target_modules =["model.decoder.layers"],
+                    inference_mode=False
+                )
+            elif "llama" in self.model_name_or_path:
+                peft_config = AdapterConfig(
+                    adapter_size = self.peft_args.adapter_size,
+                    task_type = TaskType.CAUSAL_LM,
+                    target_modules = ["model.layers"],
+                    inference_mode=False
+                )
+            else:
+                raise NotImplementedError(
+                    f"Adapter is not implemented for {self.self.model_name_or_path}"
+                )
+            self.load_peft_module(peft_config)
+        
+        elif self.model_args.tuning_mode in ["adapter_adapter", "compactor"]:
             cur_reduction_factor = 64 if self.peft_args.reduction_factor is  None else self.peft_args.reduction_factor
  
             from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
             # check existing adapter and remove them
             # config = AdapterConfig()
-            if self.model_args.tuning_mode == "adapter":
+            if self.model_args.tuning_mode == "adapter_adapter":
                 # config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 config = HoulsbyConfig(adapter_size=self.peft_args.adapter_size,)
             else:
@@ -1904,10 +1948,10 @@ class PEFTTrainer:
                         
                 cur_lora_r += 1
         
-            elif self.model_args.tuning_mode in ["adapter", "compactor"]:
+            elif self.model_args.tuning_mode in ["adapter_adapter", "compactor"]:
                 from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
 
-                if self.model_args.tuning_mode == "adapter":
+                if self.model_args.tuning_mode == "adapter_adapter":
                     config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
                 else:
                     config = CompacterConfig(reduction_factor=cur_reduction_factor,

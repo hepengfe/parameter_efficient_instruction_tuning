@@ -22,7 +22,9 @@ def build_peft_config_name(model_args, peft_args, training_args):
         peft_config_name += "layer_name_" + str(peft_args.layer_name)
     elif model_args.tuning_mode == "bitfit":
         peft_config_name += "bias_name_" + str(peft_args.bias_name)
-    elif model_args.tuning_mode == "adapter":
+    elif model_args.tuning_mode == "adapter_adapter":
+        peft_config_name += "adapter_size_" + str(peft_args.adapter_size)
+    elif model_args.tuning_mode == "adapter_peft":
         peft_config_name += "adapter_size_" + str(peft_args.adapter_size)
     elif model_args.tuning_mode == "compactor":
         peft_config_name +=f"_reduction_factor_{peft_args.reduction_factor:.4f}"

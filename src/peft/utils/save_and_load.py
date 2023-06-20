@@ -48,6 +48,12 @@ def get_peft_model_state_dict(model, state_dict=None):
                         to_return[bias_name] = state_dict[bias_name]
         else:
             raise NotImplementedError
+    elif model.peft_config.peft_type == PeftType.ADAPTER:
+        to_return = {k: state_dict[k] for k in state_dict if "adapter" in k}
+        # for k in state_dict:
+        #     if "adapter" in k:
+        #         to_return = state_dict[k]
+        
     else:
         to_return = {}
         if model.peft_config.inference_mode:

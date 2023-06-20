@@ -22,6 +22,7 @@ class T5AdapterLayerFF(nn.Module):
             hidden_states=self.dropout(forwarded_states), residual_input=hidden_states, layer_norm=None
         )
         return hidden_states
+
     def __getattr__(self, name: str):
         """Forward missing attributes to the wrapped module."""
         try:
@@ -29,7 +30,7 @@ class T5AdapterLayerFF(nn.Module):
         except AttributeError:
             return getattr(self.org_layer, name)
 
-class T5LayerSelfAttention(nn.Module):
+class T5AdapterLayerSelfAttention(nn.Module):
     def __init__(self, org_layer, peft_config):
         super().__init__()
         

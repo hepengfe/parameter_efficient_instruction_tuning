@@ -15,7 +15,7 @@ class OPTAdapterDecoderLayer(nn.Module):
         }
         
         self.attention_adapters = AdapterLayer("mh_adapter", self.config)
-        
+        self.output_adapters = AdapterLayer("output_adapter", self.config)
         # self.attention_adapters._init_adapter_modules()
         # self.output_adapters._init_adapter_modules()
 
