@@ -26,7 +26,23 @@ def is_bnb_available():
 if is_bnb_available():
     import bitsandbytes as bnb
 
+from transformers.activations import get_activation
 
+
+class Activation_Function_Class(nn.Module):
+    """
+    Implementation of various activation function.
+    """
+
+    def __init__(self, hidden_act):
+        super().__init__()
+        if hidden_act.lower() == "leakyrelu":
+            self.f = nn.functional.leaky_relu
+        else:
+            self.f = get_activation(hidden_act.lower())
+
+    def forward(self, x):
+        return self.f(x)
 @dataclass
 class AdapterConfig(PeftConfig):
     """
@@ -200,11 +216,13 @@ class AdapterLayer(nn.Module):
 
     def forward(self, hidden_states, residual_input, layer_norm):
         adapter_layer = self.adapter
+        input_hidden_states = hidden_states
         hidden_states, _, residual = adapter_layer.pre_forward(hidden_states, residual_input, layer_norm)
         layer_output = adapter_layer(
             hidden_states, residual_input=residual, 
         )
         hidden_states, up = layer_output[0], layer_output[2]
+        hidden_states = adapter_layer.post_forward(hidden_states, input_hidden_states, residual_input, layer_norm)
         return hidden_states
         # # Batch sizes might be different due to prefix tuning w. Parallel block
         # (residual_input,) = adjust_tensors_for_parallel(hidden_states, residual_input)
@@ -298,17 +316,22 @@ class Adapter(nn.Module):
             self.down_sample = 1
 
         # seq_list.append(nn.Linear(self.input_size, self.down_sample))
-
+        
         # # select non-linearity
-        self.non_linearity = get_activation("silu".lower())
+        self.non_linearity = Activation_Function_Class("silu")
 
+        
         # seq_list.append(self.non_linearity)
 
         # # sequential adapter, first downproject, then non-linearity then upsample. In the forward pass we include the
         # # residual connection
         # self.adapter_down = nn.Sequential(*seq_list)
 
-        self.adapter_down = nn.Linear(self.input_size, self.down_sample)
+        # self.adapter_down = nn.Linear(self.input_size, self.down_sample)
+        seq_list = []
+        seq_list.append(nn.Linear(self.input_size, self.down_sample))
+        seq_list.append(self.non_linearity)
+        self.adapter_down = nn.Sequential(*seq_list)
         self.adapter_up = nn.Linear(self.down_sample, self.input_size)
 
 

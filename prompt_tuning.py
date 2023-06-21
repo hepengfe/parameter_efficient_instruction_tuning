@@ -528,6 +528,9 @@ def main():
         training_args.num_train_epochs = 5
         training_args.save_steps = 60
         training_args.eval_steps = 60
+
+        training_args.save_steps = 600
+        training_args.eval_steps = 200
         training_args.dev_train_data_size = 30
         training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
@@ -548,7 +551,7 @@ def main():
         # test save and test eval OOM, also whether eval and test results are same
         # save at 4, 8, 10(epoch) steps
         training_args.num_train_epochs = 30
-        training_args.dev_test_data_size = 12
+        training_args.dev_test_data_size = 100
         training_args.save_steps = 60
         training_args.eval_steps = 60
         training_args.logging_steps = 10

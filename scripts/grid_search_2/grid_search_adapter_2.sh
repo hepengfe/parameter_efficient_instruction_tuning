@@ -22,7 +22,7 @@ for data_folder in "${DATA_FOLDERS[@]}"; do
         export CMD_INDEX=$i
         export MODEL_NAME=$model_name
         export DATA_FOLDER=$data_folder
-        bash scripts/hfai/hp_run.sh adapter $script_mode &
+        bash scripts/hfai/hp_run.sh adapter_peft $script_mode &
         ((i++))
         if [ $script_mode == "dev" ];then
             break

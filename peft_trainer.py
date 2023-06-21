@@ -121,6 +121,8 @@ class TrainingState:
 
 
     def save_to_json(self, cp_path):
+        if cp_path is None:
+            return
         file_path = os.path.join(cp_path, self.file_name)
         with open(file_path, "w") as f:
             json.dump(self.to_dict(), f)
@@ -207,6 +209,8 @@ class PEFTTrainer:
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
         
+        # import pdb; pdb.set_trace()
+        # print('check model again')
         
         # TODO: accelerator needs to load model and peft module first anyway
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
@@ -238,6 +242,8 @@ class PEFTTrainer:
                 
         trainable_params_percent = self.check_trainable_parameters()
 
+        
+        
         self.total_step = -1
         self.build_dataloader()
         assert self.total_step > 0
@@ -288,10 +294,6 @@ class PEFTTrainer:
 
     def load_model_n_peft_module(self):
         self.model = self.load_pretrained_model()
-        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
-        # zero3_init_flag: true
-        if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-            assert self.model_trainable_params > 0, "Model has no trainable parameters"
         self.configure_n_load_peft_module() # always load model from scratch for accelerate
 
 
@@ -462,6 +464,7 @@ class PEFTTrainer:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -690,6 +693,8 @@ class PEFTTrainer:
             elif self.training_args.dev_train:
                 raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["validation"] = raw_datasets["train"]
+                # raw_datasets["train"] =  raw_datasets["train"]
+                # raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
             elif self.training_args.dev_test:
                 # test compute metrics are same for validation and test as
@@ -911,6 +916,7 @@ class PEFTTrainer:
         def human_readable_format(num, precision=3, suffixes=['', 'K', 'M', 'G', 'T', 'P']):
             m = sum([abs(num/1000.0**x) >= 1 for x in range(1, len(suffixes))])
             return f'{num/1000.0**m:.{precision}f}{suffixes[m]}'
+        self.model_trainable_params = sum(p.numel() for p in self.model.parameters())
         if self.model_trainable_params > 0: 
             trainable_ratio = trainable_params/self.model_trainable_params
         else:

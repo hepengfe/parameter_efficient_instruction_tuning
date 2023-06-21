@@ -152,9 +152,9 @@ model_name=${model//\//_} # flatten "/"
 if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     tuning_config="r_${LORA_RANK}_alpha_${LORA_RANK}_modules_${lora_modules}" # for lora_peft
     tuning_args="--tuning_mode ${tuning_mode} --lora_r ${LORA_RANK} --lora_alpha ${LORA_RANK}"
-elif [ $tuning_mode == "adapter" ]; then
+elif [ $tuning_mode == "adapter_peft" ]; then
     tuning_config="sz_${ADAPATER_SIZE}" # for adapter_peft
-    tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${ADAPATER_SIZE} "
+    tuning_args="--tuning_mode adapter_peft --adapter_size ${ADAPATER_SIZE} "
 elif [ $tuning_mode == "fine_tuning" ]; then
     tuning_config="None"
     tuning_args="--tuning_mode ${tuning_mode}"
