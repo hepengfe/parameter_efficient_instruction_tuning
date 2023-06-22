@@ -10,7 +10,7 @@ class OPTAdapterDecoderLayer(nn.Module):
         self.peft_config = peft_config
         
         self.config = {
-            "hidden_size": self.org_layer.embed_dim,
+            "hidden_size": self.peft_config.model_config.hidden_size, # self.org_layer.embed_dim,
             "adapter_size": self.peft_config.adapter_size,
         }
         

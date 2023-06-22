@@ -11,7 +11,7 @@ class LlamaAdapterDecoderLayer(nn.Module):
         self.peft_config = peft_config
 
         self.config = {
-            "hidden_size": self.org_layer.hidden_size,
+            "hidden_size": self.peft_config.model_config.hidden_size,
             "adapter_size": self.peft_config.adapter_size,
         }
         self.attention_adapters = AdapterLayer("mh_adapter", self.config)

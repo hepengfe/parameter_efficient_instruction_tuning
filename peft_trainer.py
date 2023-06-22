@@ -296,6 +296,8 @@ class PEFTTrainer:
         self.model = self.load_pretrained_model()
         self.configure_n_load_peft_module() # always load model from scratch for accelerate
 
+        
+
 
 
     def load_optimizer_n_scheduler(self):
@@ -1029,6 +1031,7 @@ class PEFTTrainer:
                 if self.use_distributed:
                     # per progress bar step is actually gradient_accumulation_steps
                     with self.accelerator.accumulate(self.model):
+                        
                         try:
                             if self.label_smoother is None:
                                 outputs = self.model(**inputs)
@@ -1058,6 +1061,7 @@ class PEFTTrainer:
                 else:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
+    
                     outputs = self.model(**inputs)
                     loss = outputs["loss"]
                     loss.backward()
@@ -1288,7 +1292,7 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
-                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning", "adapter_peft"]: # temp PEFT lora implementation
+                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning"]: # , "adapter_peft"]: # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
@@ -1905,6 +1909,7 @@ class PEFTTrainer:
 
         self.model = self.load_pretrained_model()
 
+        
         
         # trainable parameters percent list
         # for loop linearly for each hyperparameter for the peft method

@@ -93,6 +93,7 @@ class AdapterModel(torch.nn.Module):
         self._find_and_replace() # replace layers with adapters
         # mark_only_adapter_as_trainable(self.model, self.peft_config.bias)
         mark_only_adapter_as_trainable(self.model)
+        
         self.forward = self.model.forward
     
     
@@ -139,11 +140,13 @@ class AdapterModel(torch.nn.Module):
                             
                     elif "opt" in type(self.model).__name__.lower():
                         new_module = OPTAdapterDecoderLayer(layer, self.peft_config)
+                        
+                        
                         target[layer_idx] = new_module
                     elif "llama" in type(self.model).__name__.lower():
                         new_module = LlamaAdapterDecoderLayer(layer, self.peft_config)
                         target[layer_idx] = new_module
-                    
+        
                 #     # new_module = OPTAdapterDecoderLayer(layer, self.peft_config)
                 #     new_module = LlamaAdapterDecoderLayer(layer, self.peft_config)
                 #     target[layer_idx] = new_module
