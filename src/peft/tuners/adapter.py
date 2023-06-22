@@ -74,7 +74,9 @@ class AdapterConfig(PeftConfig):
         default=False,
         metadata={"help": "Set this to True if the layer to replace stores weight like (fan_in, fan_out)"},
     )
-    
+    model_config: Optional[dict] = field(
+        default=None,
+    )
 
     def __post_init__(self):
         self.peft_type = PeftType.ADAPTER

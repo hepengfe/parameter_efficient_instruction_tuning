@@ -9,8 +9,10 @@ class T5AdapterLayerFF(nn.Module):
         super().__init__()
         self.org_layer = org_layer
         self.peft_config = peft_config
+
+
         self.config = {
-            "hidden_size": self.org_layer.DenseReluDense.wi_0.weight.shape[1],
+            "hidden_size": self.peft_config.model_config.d_model, # self.org_layer.DenseReluDense.wi_0.weight.shape[1],
             "adapter_size": self.peft_config.adapter_size,
         }
         self.output_adapters = AdapterLayer("output_adapter", self.config)
@@ -36,10 +38,9 @@ class T5AdapterLayerSelfAttention(nn.Module):
         
         self.org_layer = org_layer
         self.peft_config = peft_config
-
         # self.org_layer.SelfAttention.key_value_proj_dim
         self.config = {
-            "hidden_size":self.org_layer.SelfAttention.q.weight.shape[1],
+            "hidden_size":self.peft_config.model_config.d_model,
             "adapter_size": self.peft_config.adapter_size,
         }
         
@@ -81,9 +82,10 @@ class T5AdapterLayerCrossAttention(nn.Module):
         super().__init__()
         self.org_layer = org_layer
         self.peft_config = peft_config
-        
+        # self.org_layer.EncDecAttention.q.weight.shape[1],
+        self.peft_config.model_config.d_model
         self.config = {
-            "hidden_size": self.org_layer.EncDecAttention.q.weight.shape[1],
+            "hidden_size": self.peft_config.model_config.d_model,
             "adapter_size": self.peft_config.adapter_size,
         }
         self.attention_adapters = AdapterLayer("cross_adapter", self.config)
