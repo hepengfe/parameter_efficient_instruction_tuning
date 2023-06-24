@@ -471,7 +471,7 @@ class PEFTTrainer:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
         elif "llama" in self.model_name_or_path.lower():
-            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning", "adapter_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 model = LlamaForCausalLM.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)

@@ -62,7 +62,7 @@ if [ $tuning_mode == "fine_tuning" ]; then
     eval_bs=1
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     eval_bs=${lora_rank2bs[$LORA_RANK]}
-    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
+    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
         eval_bs=2
         echo "tuning mode has been changed to lora peft for large model"
@@ -75,8 +75,9 @@ elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
 elif [ $tuning_mode == "adapter_peft" ]; then
     eval_bs=${adapter_size2bs[$ADAPATER_SIZE]}
     if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
-        config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
+        config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
         eval_bs=2
+        defualt_logging_steps=10
     else
         config_file="configs/hfai/default_config_ddp.yaml"
     fi
