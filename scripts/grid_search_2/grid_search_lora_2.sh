@@ -16,6 +16,7 @@ export LR=5e-4
 export RANDOM_SEED=$random_seed
 
 
+
 for data_folder in "${DATA_FOLDERS[@]}"; do
     for lora_r in "${LORA_RANKS[@]}"; do
         export LORA_RANK=$lora_r
