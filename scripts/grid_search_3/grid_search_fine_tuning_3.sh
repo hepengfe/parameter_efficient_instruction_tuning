@@ -1,5 +1,5 @@
 
-MODEL_NAMES=("google/t5-base-lm-adapt" "google/t5-large-lm-adapt" "google/t5-xl-lm-adapt" "google/t5-xxl-lm-adapt")
+MODEL_NAMES=("google/t5-xxl-lm-adapt" "facebook/opt-13b" "facebook/llama-7b" )
 lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
 script_mode=$1
 

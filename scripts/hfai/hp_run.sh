@@ -77,7 +77,7 @@ elif [ $tuning_mode == "adapter_peft" ]; then
     if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
         eval_bs=2
-        defualt_logging_steps=10
+        
     else
         config_file="configs/hfai/default_config_ddp.yaml"
     fi
@@ -120,9 +120,14 @@ fi
 
 # ddp higher save/eval interval
 default_save_step=$((default_eval_step/5)) # 5000/5=1000
-defualt_logging_steps=$((default_eval_step/20)) # 5000/20=250
+default_logging_steps=$((default_eval_step/20)) # 5000/20=250
 if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
-    defualt_logging_steps=$((default_eval_step/10))
+    default_logging_steps=$((default_eval_step/10))
+fi
+
+
+if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
+    default_logging_steps=10
 fi
 
 if [[ $script_mode == "hfai" || $script_mode == "hfai_rm" ]]; then
@@ -216,7 +221,7 @@ spcecial_arg=""
 if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
     spcecial_arg="--overwrite_output_dir"
 fi
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${defualt_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed $launch_suffix"
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${default_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed $launch_suffix"
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"
