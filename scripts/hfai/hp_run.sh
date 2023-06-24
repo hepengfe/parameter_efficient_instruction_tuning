@@ -62,7 +62,7 @@ if [ $tuning_mode == "fine_tuning" ]; then
     eval_bs=1
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     eval_bs=${lora_rank2bs[$LORA_RANK]}
-    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
+    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
         eval_bs=2
         echo "tuning mode has been changed to lora peft for large model"
@@ -72,7 +72,18 @@ elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     fi
     default_eval_step=5000
     scheduler="linear"
-elif [ $tuning_mode == "adapter" ]; then
+elif [ $tuning_mode == "adapter_peft" ]; then
+    eval_bs=${adapter_size2bs[$ADAPATER_SIZE]}
+    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
+        config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
+        eval_bs=2
+        defualt_logging_steps=10
+    else
+        config_file="configs/hfai/default_config_ddp.yaml"
+    fi
+    default_eval_step=5000
+    scheduler="linear"
+elif [ $tuning_mode == "adapter_adapter" ]; then
     eval_bs=${adapter_size2bs[$ADAPATER_SIZE]}
     if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
@@ -152,9 +163,9 @@ model_name=${model//\//_} # flatten "/"
 if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     tuning_config="r_${LORA_RANK}_alpha_${LORA_RANK}_modules_${lora_modules}" # for lora_peft
     tuning_args="--tuning_mode ${tuning_mode} --lora_r ${LORA_RANK} --lora_alpha ${LORA_RANK}"
-elif [ $tuning_mode == "adapter" ]; then
+elif [ $tuning_mode == "adapter_peft" ]; then
     tuning_config="sz_${ADAPATER_SIZE}" # for adapter_peft
-    tuning_args="--tuning_mode ${tuning_mode} --adapter_size ${ADAPATER_SIZE} "
+    tuning_args="--tuning_mode adapter_peft --adapter_size ${ADAPATER_SIZE} "
 elif [ $tuning_mode == "fine_tuning" ]; then
     tuning_config="None"
     tuning_args="--tuning_mode ${tuning_mode}"

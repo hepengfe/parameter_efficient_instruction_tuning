@@ -18,7 +18,7 @@
 # limitations under the License.
 
 from .adapters_utils import CONFIG_NAME, WEIGHTS_NAME
-from .config import PeftConfig, PeftType, PromptLearningConfig, TaskType
+from .config import PeftConfig, PeftType, PromptLearningConfig,  TaskType
 from .other import (
     TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING,
     _set_trainable,
