@@ -95,7 +95,6 @@ class TrainingState:
         }
         self.file_name = "training_state.json"
 
-
     def get(self, k):
         if k in self.state_dict:
             return self.state_dict[k]
@@ -106,19 +105,12 @@ class TrainingState:
                 raise ValueError(
                     f"{k} cannot be found in train state"
                 )
-            
 
     def update(self, dict):
         self.state_dict.update(dict)
-        # for k, v in dict.items():
-        #     if hasattr(self, k):
-        #         setattr(self, k, v)
-        #     else:
-        #         logger.warning(f"key {k} is not in TrainingState")
 
     def to_dict(self):
         return dict([(k, v) for k, v in self.__dict__.items() if not k.startswith("_")])
-
 
     def save_to_json(self, cp_path):
         if cp_path is None:
@@ -127,24 +119,13 @@ class TrainingState:
         with open(file_path, "w") as f:
             json.dump(self.to_dict(), f)
 
-
     def load_from_json(self, cp_path):
         file_path = os.path.join(cp_path, self.file_name)
         with open(file_path, "r") as f:
             data = json.load(f)
-        # if self.accelerator.is_main_process:
-        #     import pdb; pdb.set_trace()
-        #     print('check keys')
-        #     # it updates d like  {"state_dict": ___}
-        #     # so eval_save doesn't log the step
-        #     # log is implemented wrong
-        #     # it's right in file
-        #     # so it's wrong in loading
-        # self.accelerator.wait_for_everyone()
         self.state_dict = data["state_dict"]
         self.training_args = data["training_args"]
 
-    
     def __str__(self):
         return str(self.to_dict())
 
@@ -1163,7 +1144,6 @@ class PEFTTrainer:
             )
             self.load_peft_module(config)
 
-            # self.model = get_peft_model(self.model, config)
 
         elif self.model_args.tuning_mode == "ia3":
             from transformers.adapters import IA3Config

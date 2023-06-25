@@ -169,7 +169,6 @@ class DataCollatorForNI:
             text_labels = []
             labels = None
         is_causal_lm = self.model_arch == "decoder"
-        # is_causal_lm =  isinstance(self.model, GPT2PreTrainedModel) or isinstance(self.model, LlamaPreTrainedModel) or isinstance(self.model, OPTPreTrainedModel) or "causal" in str(type(self.model)).lower()  # <class 'peft.peft_model.PeftModelForCausalLM'>
 
 
         # 2. prepare model inputs first

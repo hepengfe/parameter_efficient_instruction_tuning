@@ -17,7 +17,6 @@ from logging import getLogger
 from utils import remove_old_checkpoints
 import accelerate
 logger = getLogger(__name__)
-
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
 @dataclass
@@ -39,8 +38,6 @@ class ModelArguments:
         metadata={"help": "tuning mode, either fine tuning or peft"}
     )
 
-    
-    
 
 @dataclass
 class PeftArguments:
@@ -137,7 +134,6 @@ class DataArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
-
     
     lang: str = field(default=None, metadata={"help": "Language id for multilingual model."})
     data_dir: str = field(
@@ -310,9 +306,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     save_steps: int = field(
         default=5000, metadata={"help": "Save checkpoint every X steps."}
     )
-    # load_best_model_at_end: bool = field(
-    #     default=True, metadata={"help": "Whether to load the best model found during training at the end of training."}
-    # )
 
     checkpoint_save_total_limit: Optional[int] = field(
         default=1, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
@@ -357,13 +350,11 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default="warning",
         metadata={ "help": "The logging level." },
     )
-    
-    
+
     eval_metric: str = field(
         default="rougeL",
     )
-    
-    
+
     dev_run: bool = field(
         default=False,
         metadata={ "help": "Whether to run in dev mode." },
@@ -388,13 +379,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to run in test mode which check evaluation on test dataset" },
     )
 
-
-    use_accelerate: bool = field(
-        default=False,
-        metadata={ "help": "Whether to use accelerate." },
-    )
-
-
     is_cluster: bool = field(
         default = False,
         metadata={ "help": "Whether to run on the cluster." },
@@ -415,11 +399,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default="constant",
         metadata={ "help": "The scheduler type." },
     )
-
-    # warmup_steps: int = field(
-    #     default=0,
-    #     metadata={ "help": "The warmup steps." },
-    # )
 
     warmup_ratio: float = field(
         default=0.0,
@@ -558,11 +537,6 @@ def main():
         # dev issues such as empty prediction (although it's mostly likely a generation issue)
         pass
 
-    
-
-
-
-
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
     assert training_args.logging_steps > 0, "logging_steps should be larger than 0"
@@ -570,14 +544,9 @@ def main():
     if training_args.do_search_hyperparams:
         assert not training_args.do_train, "do_train should be false for search mode"
         assert not training_args.do_test, "do_test should be false for search mode"
-        
-    # tranable params percentage list
-    
     
     if data_args.dataset_name == "ni":
         assert training_args.predict_with_generate, "predict_with_generate is required for ni"
-    
-
 
     if model_args.tuning_mode == "layer_tuning":
         assert peft_args.layer_name is not None, "layer_name should be specified for layer tuning mode"
@@ -591,9 +560,8 @@ def main():
         print("lr is set to 1e-5 due to fine_tuning mode")
 
     if training_args.per_device_test_batch_size is None:
-
         training_args.per_device_test_batch_size = training_args.per_device_eval_batch_size
-        # print()
+
 
     # extract suffix number from data_dir
     if data_args.data_dir is not None:
@@ -655,12 +623,9 @@ def main():
         if training_args.is_cluster:
             exit()
 
-
     # run_name: xx-xx-xx
     training_args.run_name = flatten(training_args.run_name, "/", "-") # could pass in dir like run name like xx/xx/xx
-    # passed run_name as prefix
-    # training_args.run_name += flatten(os.path.join(*output_dir.split(os.path.sep)[2:]), "/", "-")
-    
+
     print("logging_dir: ", training_args.logging_dir)
     print("output_dir: ", training_args.output_dir)
     print("run_name: ", training_args.run_name)
@@ -677,26 +642,11 @@ def main():
         logger.info(f"check the results in {training_args.output_dir}")
         logger.info("*** Training finished ***")
 
-
     if training_args.do_test:
         trainer.evaluate("test")
         logger.info("*** Test finished ***")
-    
-    if training_args.do_search_hyperparams:
-        
-        trainer.search_for_hyperperameters()
-        logger.info("*** Hyperparameter search finished ***")
 
-    
-    
 
-    # TODO:
-    # if training_args.do_search_peft_config_by_trainable_params:
-    #     trainer.search_peft_config_by_trainable_params()
-    # training_args.do_search_peft_config_by_trainable_params can be 
-    # 0.1, 0.2, 0.3
-    #  self.model_cache = deepcopy(self.model)
-    # del self.model_cache
 
     
 if __name__ == "__main__":
