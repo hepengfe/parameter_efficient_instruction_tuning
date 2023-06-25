@@ -76,3 +76,10 @@ class LlamaAdapterDecoderLayer(nn.Module):
             outputs += (present_key_value,)
 
         return outputs
+
+    def __getattr__(self, name: str):
+        """Forward missing attributes to the wrapped module."""
+        try:
+            return super().__getattr__(name)  # defer to nn.Module's logic
+        except AttributeError:
+            return getattr(self.org_layer, name)

@@ -14,7 +14,7 @@ default_model="google/t5-xl-lm-adapt"
 default_dataset="ni"
 
 # lora
-default_lora_modules="qv"
+default_lora_modules="q,v"
 default_random_seed=42
 
 
@@ -121,12 +121,11 @@ fi
 # ddp higher save/eval interval
 default_save_step=$((default_eval_step/5)) # 5000/5=1000
 default_logging_steps=$((default_eval_step/20)) # 5000/20=250
-if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
-    default_logging_steps=$((default_eval_step/10))
-fi
+
 
 
 if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
+    config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
     default_logging_steps=10
 fi
 
@@ -166,8 +165,12 @@ model_name=${model//\//_} # flatten "/"
 # after hp are determined, set tuning_config
 
 if [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
+    if [[  $model == "facebook/llama-7b" ||  $model == "facebook/opt-13b" ]]; then
+        lora_modules="q_proj,v_proj"
+    fi
     tuning_config="r_${LORA_RANK}_alpha_${LORA_RANK}_modules_${lora_modules}" # for lora_peft
     tuning_args="--tuning_mode ${tuning_mode} --lora_r ${LORA_RANK} --lora_alpha ${LORA_RANK}"
+    tuning_args+=" --lora_modules ${lora_modules}"
 elif [ $tuning_mode == "adapter_peft" ]; then
     tuning_config="sz_${ADAPATER_SIZE}" # for adapter_peft
     tuning_args="--tuning_mode adapter_peft --adapter_size ${ADAPATER_SIZE} "

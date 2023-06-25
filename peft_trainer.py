@@ -13,7 +13,7 @@ from transformers import (
     EarlyStoppingCallback
 )
 from transformers import AutoModelForSeq2SeqLM
-
+from peft import PeftModel
 from torch.utils.data import DataLoader
 import numpy as np
 import os
@@ -157,15 +157,11 @@ class PEFTTrainer:
         self.data_args = data_args
         self.model_args = model_args
         self.peft_args = peft_args
-        # self.use_distributed = use_accelerator replaced
-        
-        # self.arguments = arguments
         self.model_name_or_path = self.model_args.model_name_or_path
         self.potential_model_path =  os.path.join(
             self.training_args.saved_pretrained_model_path,
             self.model_name_or_path
         )
-        self.verbalizers = self.get_dataset_verbalizers(self.data_args.dataset_name if self.data_args.dataset_name != "super_glue" else self.data_args.dataset_config_name)
         
         self.model = None
         self.model_trainable_params = None
@@ -190,7 +186,7 @@ class PEFTTrainer:
         
         self.accelerator = Accelerator(
                 log_with="tensorboard",
-                # logging_dir=self.training_args.logging_dir,
+                logging_dir=self.training_args.logging_dir,
                 project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
@@ -209,9 +205,6 @@ class PEFTTrainer:
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
         
-        # import pdb; pdb.set_trace()
-        # print('check model again')
-        
         # TODO: accelerator needs to load model and peft module first anyway
         # is there anyway to not load the original model? since if model is large then it will take a lot of time
         assert self.model is not None, "model should loaded"
@@ -221,28 +214,25 @@ class PEFTTrainer:
         assert self.tokenizer is not None, "tokenizer should loaded"
         # resize token embedding will set requires_grad back to True
         # we need to set it back to False
+        if isinstance(self.model, PeftModel):
+            model = self.model.model
+        else:
+            model = self.model
         if self.model_args.tuning_mode != "fine_tuning":
             if "gpt2" in model_args.model_name_or_path:
-                self.model.transformer.wte.weight.requires_grad = False
-                self.model.transformer.wpe.weight.requires_grad = False
-                self.model.lm_head.weight.requires_grad = False
+                model.transformer.wte.weight.requires_grad = False
+                model.transformer.wpe.weight.requires_grad = False
+                model.lm_head.weight.requires_grad = False
             elif "llama" in model_args.model_name_or_path:
-                self.model.lm_head.weight.requires_grad = False
-                self.model.model.embed_tokens.weight.requires_grad = False
+                model.lm_head.weight.requires_grad = False
+                model.model.embed_tokens.weight.requires_grad = False
             elif "opt" in model_args.model_name_or_path:
                 # check if it's type PeftModelForCausalLM
-                if type(self.model) == PeftModelForCausalLM:
-                    self.model.model.model.decoder.embed_tokens.weight.requires_grad = False
-                    self.model.model.lm_head.weight.requires_grad = False
-                else:
-                    self.model.model.model.decoder.embed_tokens.weight.requires_grad = False
-                    self.model.model.lm_head.weight.requires_grad = False
-                    # self.model.model.decoder.embed_tokens.weight.requires_grad = False
-                    # self.model.lm_head.weight.requires_grad = False
+                model.model.decoder.embed_tokens.weight.requires_grad = False
+                model.lm_head.weight.requires_grad = False
+
                 
         trainable_params_percent = self.check_trainable_parameters()
-
-        
         
         self.total_step = -1
         self.build_dataloader()
@@ -269,28 +259,6 @@ class PEFTTrainer:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = self.model.to(self.device)
 
-        """
-        Model is loaded, now we need to set up the trainer
-        1. prepare peft model
-        2. set up trainer
-        """
-        task_type = TaskType.SEQ_2_SEQ_LM
-        init_from_text = False
-        if self.data_args.dataset_name == "sst2" and self.model_args.model_arch == "encoder":
-            task_type = TaskType.SEQ_CLS
-            prompt_tuning_init = None # NOTE: it decides whether prompt init is used
-            prompt_tuning_init_text = None
-            init_text_tokenizer_name_or_path = None
-            prompt_tuning_init = "TEXT"
-            print("task type is seq_cls")
-        prompt_tuning_init_text=" ".join(self.verbalizers)
-        init_text_tokenizer_name_or_path = self.model_name_or_path
-
-        if self.peft_args.trainable_params_percentage and not self.model_args.tuning_mode in ["compactor","fine_tuning"]:
-            # not check compactor
-            assert abs(self.peft_args.trainable_params_percentage - cur_trainable_params_percentage) < 0.002, f"trainable_params_percentage {self.peft_args.trainable_params_percentage} is not matched with cur_trainable_params_percentage {cur_trainable_params_percentage}"
-
-
 
     def load_model_n_peft_module(self):
         self.model = self.load_pretrained_model()
@@ -301,14 +269,6 @@ class PEFTTrainer:
 
 
     def load_optimizer_n_scheduler(self):
-        
-
-        # lr should be scaled linearly with the number of processes
-        # if self.use_distributed or self.distributed_type == DistributedType.DEEPSPEED:
-        #     # self.training_args.learning_rate = self.training_args.learning_rate * self.num_processes
-        #     # lr  = self.training_args.learning_rate / self.num_processes
-        #     self.print_log(f"Scale up learning rate from to {self.training_args.learning_rate} due to number of processes({self.num_processes})")
-
         if not self.distributed_type == DistributedType.DEEPSPEED:
             # DDP, keep parameters require_grad status
             # create AdamW optimizer
@@ -408,12 +368,6 @@ class PEFTTrainer:
             )
         
         if any([m in self.model_name_or_path for m in CAUSAL_LM]):
-        
-        # if self.tokenizer.pad_token is None:
-            # assert "gpt2" in self.model_name_or_path or "llama" in self.model_name_or_path, "Only gpt2 or llama is expected not having pad tokens for now"
-            # add <sep> token
-        
-            
             # gpt2 model
             self.tokenizer.add_special_tokens({
                 'pad_token': '</PAD>',
@@ -448,10 +402,6 @@ class PEFTTrainer:
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
             elif self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 from transformers import AutoAdapterModel
-                # if os.path.exists(self.potential_model_path):
-                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
-                # else:
-                #     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
                 # adapter model + seq2seq lm head (replace lm head with original t5-lm head weights)
                 if os.path.exists(self.potential_model_path):
                     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
@@ -471,7 +421,7 @@ class PEFTTrainer:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
         elif "llama" in self.model_name_or_path.lower():
-            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning", "adapter_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning", "adapter_peft", "lora_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 model = LlamaForCausalLM.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
@@ -493,108 +443,6 @@ class PEFTTrainer:
             raise NotImplementedError("Model not supported: " + self.model_name_or_path)
 
         return model
-
-    def preprocess(self, examples, class_ids = [0,1], evaluation=False):
-        prefix_prompt = ""
-        if self.peft_args.num_soft_tokens ==0:
-            assert prefix_prompt == ""
-        if self.model_args.model_arch == "encoder":
-            add_prompt_for_gen = False
-        else:
-            add_prompt_for_gen = True
-        if self.data_args.dataset_name == "sst2":
-            prompt_for_gen = "Sentiment:"
-            inputs =["Sentence: " + sent for sent, label_id in zip(examples["sentence"], examples["label"]) if label_id in class_ids]
-            
-            # verbalize the sentiment id to tokens
-            # it's not used for t5 evaluation though (label id is used instead)
-            verbal_targets = [self.verbalizers[l]
-                    for l in examples["label"] if l in class_ids]
-        elif self.data_args.dataset_name == "yelp_review_full":
-            prompt_for_gen = "give the review score from 1-5 stars:"
-            inputs =["Sentence: " + sent for sent, label_id in zip(examples["text"], examples["label"]) if label_id in class_ids]
-            verbal_targets = [self.verbalizers[l]
-                    for l in examples["label"] if l in class_ids]
-            
-        elif self.data_args.dataset_name == "super_glue":
-            prompt_for_gen = "Answer:"
-            if self.data_args.dataset_config_name in['axb', 'axg'] :
-                raise NotImplementedError("axb and axg are not implemented yet")
-                inputs = ["Premise: " + premise + " Hypothesis: " + hypothesis + "Given the premise, is the hypothesis correct? Answer: " for premise, hypothesis in zip(examples["premise"], examples["hypothesis"])]
-                verbal_targets = [self.verbalizers[l]
-                    for l in examples["label"] if l in class_ids]
-            elif self.data_args.dataset_config_name in ["boolq", "multirc"]:
-                if self.data_args.dataset_config_name == "boolq":
-                    inputs = ["Question: " + question + "Passage: " + passage for question, passage, label_id in zip(examples["question"], examples["passage"], examples["label"]) if label_id in class_ids]
-                elif self.data_args.dataset_config_name == "multirc":
-                    inputs = ["Question: " + question + "Paragraph: " + paragraph  for question, paragraph, label_id in zip(examples["question"], examples["paragraph"], examples["label"]) if label_id in class_ids]
-                    # inputs = ["" for question, paragraph in zip(examples["question"], examples["paragraph"])]
-                # inputs = ["Passage: " + passage + " Question: " + question for question, passage in zip(examples["question"], examples["passage"])]
-                verbal_targets = [self.verbalizers[l]
-                    for l in examples["label"] if l in class_ids]
-            elif self.data_args.dataset_config_name in ["wic"]:
-                prompt_for_gen = "" # NOTE: wic has a special format
-                inputs = ["Sentence1: " + sentence1 + " Sentence2: " + sentence2 + f" Question: does the word '{word}' have the same meaning in the two sentences? Answer: " for sentence1, sentence2, word, label_id in zip(examples["sentence1"], examples["sentence2"], examples["word"], examples["label"])  if label_id in class_ids]
-                verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["label"], examples["label"])  if label_id in class_ids]
-        elif self.data_args.dataset_name in ["trec"]:
-            prompt_for_gen = " What's the type of the question? "
-            inputs = ["Question: " + t for t, label_id in zip(examples["text"],examples["coarse_label"]) if label_id in class_ids]
-            verbal_targets = [self.verbalizers[l] for l, label_id in zip(examples["coarse_label"], examples["coarse_label"])  if label_id in class_ids]
-        else:
-            
-            
-            raise NotImplementedError("Dataset not supported: " + self.data_args.dataset_name)
-        if add_prompt_for_gen:
-                inputs = [inp + " " + prompt_for_gen for inp in inputs]
-        formatted_inputs, verbal_targets =\
-                self._format_prompts(prefix_prompt,
-                                    inputs,
-                                    # [self.prefix_prompt]*len(inputs),
-                                    verbal_targets,
-        )
-        print("Sample input: ", formatted_inputs[0])
-
-        
-        model_inputs = {}
-        tokenizer = self.tokenizer
-
-        model_inputs = tokenizer(
-                formatted_inputs,
-                max_length=self.data_args.max_source_length,
-                padding=self.padding,
-                truncation=True,
-                return_tensors='pt'
-        )
-        # build label input ids
-        with tokenizer.as_target_tokenizer():
-            labels = tokenizer(
-                verbal_targets,
-                return_tensors='pt',
-                padding="max_length", 
-                max_length=self.data_args.max_target_length,
-                truncation=True,
-            )
-        if self.padding == "max_length" and self.data_args.ignore_pad_token_for_loss:
-            pad_token_id = tokenizer.pad_token_id
-            labels["input_ids"][labels["input_ids"]==pad_token_id] = -100
-            
-            
-            # if encoder only model
-            if self.model_args.model_arch == "encoder":
-                # for SequenceClassificationModel
-                # model_inputs["label"] = [l for l in examples["label"] if l in class_ids]
-                model_inputs["labels"] = [l for l in examples["label"] if l in class_ids]
-            else:
-                # model_inputs["label"] = labels["input_ids"]
-                model_inputs["labels"] = labels["input_ids"]
-
-        if evaluation:
-            label_name = "label" if self.data_args.dataset_name not in ["trec"] else "coarse_label"
-            label_class_ids = [l for l in examples[label_name] if l in class_ids]
-            model_inputs["class_ids"] = torch.tensor(label_class_ids)
-            # model_inputs = add_idx_to_inputs_keys(model_inputs, model_idx)
-
-        return model_inputs
 
 
     def build_dataloader(self):
@@ -638,8 +486,6 @@ class PEFTTrainer:
         
 
 
-    
-    
     def load_dataloader(self):
         self.train_dataloader = DataLoader(
             self.train_dataset,
@@ -710,78 +556,7 @@ class PEFTTrainer:
             self.test_dataset = raw_datasets["test"]
         else:
             raise NotImplementedError("New implementation no train,valid,test.   Dataset not supported: " + self.data_args.dataset_name)
-            raw_datasets = load_dataset(self.data_args.dataset_name, self.data_args.dataset_config_name)
-            column_names = raw_datasets["train"].column_names
 
-            if train:
-                self.train_dataset = raw_datasets["train"].map(
-                    self.preprocess,
-                    batched=True,
-                    remove_columns= column_names,
-                    num_proc=1,
-                    # load_from_cache_file=self.arguments.dataset_cache,
-                    fn_kwargs = {"evaluation": False},
-                    # fn_kwargs = {"evaluation": True},
-                    desc="Running tokenizer on train dataset",
-                )
-                
-                
-                # sample_input = np.array(self.train_dataset[0]["input_ids_0"])
-                sample_input = np.array(self.train_dataset[0]["input_ids"])
-                # sample_label = np.array(self.train_dataset[0]["labels_0"])
-                sample_label = np.array(self.train_dataset[0]["labels"])
-                sample_input[sample_input==-100] = 0
-                sample_label[sample_label==-100] = 0
-
-                
-                print("train dataset input sample", sample_input, "\n", self.tokenizer.decode(sample_input))
-                print("train dataset label sample", sample_label,"\n", self.tokenizer.decode(sample_label))
-                self.train_dataset.set_format(type="torch")
-
-            if valid:
-                if self.data_args.dataset_name in ["yelp_review_full", "ag_news", "trec"]:
-                    valid_split_name = "test"
-                else:
-                    valid_split_name = "validation"
-                
-                if self.training_args.dev:
-
-                    true_val_dataset = raw_datasets[valid_split_name].map(
-                        self.preprocess,
-                        batched=True,
-                        remove_columns=column_names,
-                        num_proc=1,
-                        # load_from_cache_file=self.arguments.dataset_cache,
-                        # fn_kwargs = {"evaluation": False},  # hf internal validation
-                        fn_kwargs = {"evaluation": True, "class_ids":[0]},
-                        desc="Running tokenizer on validation dataset",
-                    )
-
-                    false_val_dataset = raw_datasets[valid_split_name].map(
-                        self.preprocess,
-                        batched=True,
-                        remove_columns=column_names,
-                        num_proc=1,
-                        # load_from_cache_file=self.arguments.dataset_cache,
-                        # fn_kwargs = {"evaluation": False},  # hf internal validation
-                        fn_kwargs = {"evaluation": True, "class_ids":[1]},
-                        desc="Running tokenizer on validation dataset",
-                    )
-
-                    # select 100 data from each class and merge them
-                    self.eval_dataset = concatenate_datasets([true_val_dataset.select(range(100)),false_val_dataset.select(range(100))])
-                else:
-                    self.eval_dataset = raw_datasets[valid_split_name].map(
-                        self.preprocess,
-                        batched=True,
-                        remove_columns=column_names,
-                        num_proc=1,
-                        # load_from_cache_file=self.arguments.dataset_cache,
-                        # fn_kwargs = {"evaluation": False},  # hf internal validation
-                        fn_kwargs = {"evaluation": True},
-                        desc="Running tokenizer on validation dataset",
-                    )
-                self.eval_dataset.set_format(type="torch")
 
                 
     def load_data_collator(self):
@@ -789,6 +564,7 @@ class PEFTTrainer:
             dataset_dependent_data_collator = DataCollatorForNI(
                 self.tokenizer,
                 model=self.model,
+                model_arch=self.model_args.model_arch,
                 padding="max_length" if self.data_args.pad_to_max_length else "longest",
                 max_source_length=self.data_args.max_source_length,
                 max_target_length=self.data_args.max_target_length,
@@ -890,8 +666,6 @@ class PEFTTrainer:
             # NOTE: prompt tuning
             # general peft converting based on different peft config
             assert peft_config is not None, "peft config should be provided for non-adapter peft method"
-            # convert text to token ids
-            verbalizer_ids = [self.tokenizer.encode(v) for v in self.verbalizers]
             
             if reset_peft:
                 # self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir)
@@ -904,8 +678,6 @@ class PEFTTrainer:
 
 
     def check_trainable_parameters(self, print_params_required_grad = False):
-        
-        
         # total_params = sum(p.numel() for p in self.model.parameters())
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
@@ -1043,7 +815,7 @@ class PEFTTrainer:
                         except RuntimeError as e:
                             if self.accelerator.is_local_main_process:
                                 shutil.rmtree(self.training_args.output_dir)
-                                # shutil.rmtree(self.training_args.logging_dir)
+                                shutil.rmtree(self.training_args.logging_dir)
                             self.accelerator.wait_for_everyone()
                             print(f"this expr's output dir and logging dir have been removed due to error \n {e}")
                             raise e
@@ -1097,10 +869,6 @@ class PEFTTrainer:
                             "train/loss": logging_loss/self.training_args.logging_steps,
                             "train/lr": last_lr,
                             })
-                    # adapter_peft
-                    # self.print_log(f"{self.model.model.decoder.block[0].layer[0].attention_adapters.adapter.adapter_down.weight[0]}")
-
-                    # self.print_log(f"{self.model.model.decoder.block[0].layer[0].attention_adapters.adapter.adapter_down.weight[0]}")
                     self.print_log(f"train/loss: {logging_loss/self.training_args.logging_steps}")
                     self.print_log(f"train/lr: {last_lr}")
                     logging_loss = 0
@@ -1210,59 +978,6 @@ class PEFTTrainer:
                 self.model = self.model.to(self.accelerator.device)
             else:
                 self.accelerator.load_state(best_cp_dir)
-            # try:
-            #     best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
-            #     print("load from existing state: ", best_cp_dir)
-            #     assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
-            #     # only in this case we need to first move loaded pretrained mdoel to cpu
-            #     # and load trained model weights into the model
-            #     # then we move model back to gpu
-            #     if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-            #         self.model = self.model.to("cpu")
-            #         del self.optimizer
-            #         del self.scheduler
-            #         torch.cuda.empty_cache()
-            #         time.sleep(60)
-            #         self.accelerator.load_state(best_cp_dir, map_location="cpu")
-            #         self.model = self.model.to(self.accelerator.device)
-            #     else:
-            #         self.accelerator.load_state(best_cp_dir)
-                
-            # except Exception as e:
-                
-            #     self.accelerator.clear()
-            #     # This might be buggy and needs to be improved.
-            #     # sleep 5 seconds
-            #     time.sleep(5) # wait for oom processes to be killed in case of oom
-            #     print(f"distributed_type: {self.accelerator.distributed_type}. load state failed, try to load from model_path due to \n {e}")
-            #     print("Only accelerator load_state() is expected to use. Exiting...")
-            #     exit()
-            #     if best_cp_dir is None:
-            #         print("No best checkpoint found, exiting")
-            #         exit()
-            #     sharded_model_path = os.path.join(best_cp_dir, "save_pretrained")
-            #     config = AutoConfig.from_pretrained(sharded_model_path)
-            #     # reload tokenizer in this case
-            #     if "llama" in self.model_args.model_name_or_path.lower():
-            #         self.tokenizer = LlamaTokenizer.from_pretrained(
-            #             self.potential_model_path,
-            #             truncation_side = "left"
-            #         )
-            #     else:
-            #         self.tokenizer = AutoTokenizer.from_pretrained(
-            #             sharded_model_path,
-            #             truncation_side = "left"
-            #         )
-
-            #     model = self.load_pretrained_model(config)
-            #     if hasattr(self.model, "load_adapter"):
-            #         adapter_path = os.path.join(sharded_model_path, self.model_args.tuning_mode)
-            #         model.load_adapter(adapter_path)
-                
-            #     # model = AutoModelForSeq2SeqLM.from_pretrained(self.model_args.model_name_or_path)
-            #     # prepare model with dataloader (dataloader is already prepared tho)
-            #     # move model to device and possibly ddp or deepspeed
-            #     model, dataloader2eval = self.accelerator.prepare(model, dataloader2eval)
 
         input_host = []
         output_host = []
@@ -1270,16 +985,6 @@ class PEFTTrainer:
         from tqdm import tqdm
         self.print_log(f"***** Running evaluation {mode} *****")
         # it handles deepspeed and DDP
-        
-        # print("extract model")
-        from copy import deepcopy
-        if self.accelerator.is_main_process and self.model_args.tuning_mode == "lora_adapter":
-            pass
-            # logger.debug('check active adapter')
-            # model.model.layers
-            # logger.debug("lora_B weight (should change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.loras.lora_adapter.lora_B))
-            # logger.debug("query weight(should not change): " + str(model.transformer.encoder.block[0].layer[0].SelfAttention.q.weight))
-            
 
         with torch.no_grad():
             progress_bar = tqdm(dataloader2eval,
@@ -1302,8 +1007,6 @@ class PEFTTrainer:
                                         # pad_token_id=self.tokenizer.pad_token_id,
                     )
                 else:
-                    # self.tokenizer.batch_decode(labels)
-                    # self.tokenizer.batch_decode(inputs.input_ids)
                     outputs = model.generate(**inputs,
                                             max_new_tokens = self.data_args.max_target_length,
                                             synced_gpus = True if self.use_distributed else False,
@@ -1366,10 +1069,7 @@ class PEFTTrainer:
         result = metrics
 
         if self.data_args.dataset_name == "ni":
-
             save_prefix = None
-            
-            # decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
             decoded_preds = preds
             
             
@@ -1403,215 +1103,9 @@ class PEFTTrainer:
                             "Prediction": pred
                         }) + "\n")
             return result
-
-        raise NotImplementedError("compute_metrics is not implemented for dataset other than ni")
-        
-        if not is_pred_logits:
-            # based on predicted tokens to compute metrics
-            decoded_preds = self.tokenizer.batch_decode(preds, skip_special_tokens=True)
-            labels = np.where(labels != -100, labels,
-                                self.tokenizer.pad_token_id)
-            decoded_labels = self.tokenizer.batch_decode(
-                labels, skip_special_tokens=True)
-            # Some simple post-processing
-            decoded_preds, decoded_labels = postprocess_text(
-                decoded_preds, decoded_labels
-            )
-            metric = load_metric("sacrebleu")
-            result = metric.compute(
-                predictions=decoded_preds, references=decoded_labels
-            )
-            result = {f"bleu_{model_idx}": result["score"]}
-            prediction_lens = [
-                np.count_nonzero(pred != self.tokenizer.pad_token_id) for pred in preds
-            ]
-            result[f"gen_len_{model_idx}"] = np.mean(prediction_lens)
-            result = {k: round(v, 4) for k, v in result.items()}
-            correct =0 
-            missed_pred = [] # maybe empty or some other wrong predictions
-            true_cnt = 0
-            false_cnt = 0
-            for idx, (pred, label)in enumerate(zip(decoded_preds, decoded_labels)):
-                if idx < 5:
-                    print("pred: ", pred, " label: ", label)
-                if self.verbalizers[0] in pred and self.verbalizers[1] in pred:
-                    print("both true and false in pred: ", pred)
-                    continue
-                # check if pred is correct
-                if (self.verbalizers[0] in pred and self.verbalizers[0] in label):
-                    correct += 1
-                    true_cnt += 1
-                elif (self.verbalizers[1] in pred and self.verbalizers[1] in label):
-                    correct += 1
-                    false_cnt += 1
-                else:
-                    print("missed pred: ", pred, " label: ", label)
-                    missed_pred.append(pred)            
-            result[f"acc_{model_idx}"] = correct / len(eval_dataset)
-            result[f"true_ratio_{model_idx}"] = true_cnt / len(eval_dataset)
-            result[f"false_ratio_{model_idx}"] = false_cnt / len(eval_dataset)
         else:
-            model = self.trainer.model
-            
-            if self.model_args.model_arch == "encoder":
-                import evaluate
-                accuracy = evaluate.load("accuracy")
-                print("preds: ", preds)
-                preds = np.argmax(preds, axis=1)
-                
-                return accuracy.compute(predictions=preds, references=labels)
-            
-            encoder = model.get_encoder()
+            raise NotImplementedError("compute_metrics is not implemented for dataset other than ni")
 
-            dataloader = DataLoader(eval_dataset,
-                                    # collate_fn=collate_fn,
-                                    batch_size=self.training_args.per_device_eval_batch_size)
-            
-            correct = 0
-            for idx, data in enumerate(dataloader):
-                model_verbalizer_logits = [None, None]
-                # batch_size = data["input_ids_0"].size(0)
-                # input_ids = data["input_ids_0"]
-                batch_size = data["input_ids"].size(0)
-                input_ids = data["input_ids"]
-                
-                # attention_mask = data["attention_mask_0"]
-                # labels = data["labels_0"]
-                attention_mask = data["attention_mask"]
-                # labels = data["label"]
-                labels = data["labels"]
-                class_ids = data["class_ids"]
-
-                for j in range(len(self.verbalizers)):
-                    v_ids = torch.tensor(self.tokenizer.encode(self.verbalizers[j]))
-                    v_ids = v_ids[:1] # ONLY USE THE FIRST TOKEN
-                    v_logits =  torch.zeros(batch_size)
-                    decoder_input_ids = torch.zeros(input_ids.size(0),1).long().cuda()
-                    # get out with encoder outputs
-                    # decoder input ids are just pad tokens as <bos>
-                    out = model(input_ids = input_ids.cuda(), attention_mask=attention_mask.cuda(), decoder_input_ids=decoder_input_ids)
-                    # out = model(
-                    #     input_ids = input_ids.cuda(), 
-                    #     attention_mask=attention_mask.cuda(), 
-                    #     # labels=labels.cuda()
-                    # )
-                    logits = out.logits.cpu()
-                    
-                    for seq_step, vid in enumerate(v_ids):
-                        v_logits += logits[:, -1, vid].detach().cpu()    # logits for the batch
-
-                    # model_verbalizer_logits: bs x 1
-                    model_verbalizer_logits[j] = v_logits  # set jth verbalizer logits
-                
-                # compute probability using softmax
-                model_verbalizer_logits = torch.stack(model_verbalizer_logits, dim=1)
-                probs = torch.softmax(model_verbalizer_logits, dim=-1)
-                
-                predict_label = torch.argmax(probs, dim=1)
-                correct += (predict_label == class_ids).sum()
-            print(f"probs {model_idx}: ", probs) # just print the last probs
-            # import pdb; pdb.set_trace()
-            # print('double check ac checkpoint 2')
-            
-            result[f"acc_{model_idx}"] = correct / len(eval_dataset)
-
-        return result
-
-    def get_dataset_verbalizers(self, dataset):
-        if dataset in ['sst-2', 'sst2', 
-                       'yelp-2', 'mr', 'cr']:
-            # verbalizers = ['\u0120terrible', '\u0120great'] # num_classes
-            verbalizers = ['terrible', 'great']
-        elif dataset == 'agnews': 
-            verbalizers = ['World', 'Sports', 'Business', 'Tech'] # num_classes
-        elif dataset in ['sst-5', 'yelp-5']:
-            # verbalizers = ['\u0120terrible', '\u0120bad', '\u0120okay', 
-            #             '\u0120good', '\u0120great'] # num_classes
-            verbalizers = ['terrible', 'bad', 'okay', 'good', 'great']
-        elif dataset == 'subj':
-            # verbalizers = ['\u0120subjective', '\u0120objective']
-            verbalizers = ['subjective', 'objective']
-        elif dataset == 'trec':
-            verbalizers = ['Description', 'Entity',
-                        'Expression', 'Human',
-                        'Location', 'Number']
-            verbalizers = ['Description', 'Entity', 'Expression', 'Human', 'Location', 'Number']
-        elif dataset == 'yahoo':
-            verbalizers = ['culture', 'science',
-                        'health', 'education',
-                        'computer', 'sports',
-                        'business', 'music',
-                        'family', 'politics']
-        elif dataset == 'dbpedia':
-            verbalizers = ['\u0120Company', '\u0120Education',
-                        '\u0120Artist', '\u0120Sports',
-                        '\u0120Office', '\u0120Transportation',
-                        '\u0120Building', '\u0120Natural',
-                        '\u0120Village', '\u0120Animal',
-                        '\u0120Plant', '\u0120Album',
-                        '\u0120Film', '\u0120Written']
-            verbalizers = ['Company', 'Education', 'Artist', 'Sports', 'Office', 'Transportation', 'Building', 'Natural', 'Village', 'Animal', 'Plant', 'Album', 'Film', 'Written']
-        elif dataset in ['axb', 'axg']:
-            verbalizers = ["No", "Yes"]
-        elif dataset in ['cb', "rtx"]:
-            verbalizers = ["Yes", "No"]
-        elif dataset in ['copa', ]:
-            verbalizers = ["choice1", "choice2"]
-        elif dataset in ['boolq','multirc', 'wic', 'wsc', 'wsc_fixed']:
-            if dataset == 'boolq':
-                # only boolq
-                verbalizers = ["True", "False"]
-            else:
-                verbalizers = ["False", "True"]
-        elif dataset == 'record':
-            verbalizers = [None] # answer is text
-        elif dataset == 'yelp_review_full':
-            verbalizers = ['1', '2', '3', '4', '5']
-        elif dataset == 'ag_news':
-            verbalizers = ['World', 'Sports', 'Business', 'Sci/Tech']
-        elif dataset == 'ni':
-            verbalizers = []
-        else:
-            raise NotImplementedError("Dataset not supported: " + dataset)
-        return verbalizers
-    
-    def _deactivate_relevant_gradients(self, trainable_components):
-        """
-        https://github.com/benzakenelad/BitFit/blob/7ead19a8350a01d5701f9e2df896a1c5b42c3723/glue_evaluator.py#L612
-        """
-        for param in self.model.parameters():
-            param.requires_grad = False
-        if trainable_components:
-            trainable_components = trainable_components + ['pooler.dense.bias']
-        trainable_components = trainable_components + ['classifier']
-        # it iterates exsiting parameters only
-        # bias init must be done before this
-        for name, param in self.model.named_parameters():
-            for component in trainable_components:
-                # print(f"check component {name}")
-                # if component in name:
-                #     print(f"activate {name}")
-                #     param.requires_grad = True
-                #     break
-                
-                # brute force bias activation
-                if "bias" in name:
-                    print(f"activate {name}")
-                    param.requires_grad = True
-                    break
-
-
-    def _format_prompts(self, prefix, source_strs, verbal_targets, include_labels_in_input = False):
-        prompts = [""] * len(source_strs)
-        prompts = [""]* len(source_strs)
-        formatted_inputs = [f"{prefix} {s_1} {prompt} " for s_1, prompt in zip(source_strs, prompts)]
-        formatted_inputs = [f"{input} " for input in formatted_inputs]
-
-        if include_labels_in_input:
-            labels = ",".join(verbal_targets)
-            formatted_inputs = [f"{input} Decide the label in {self.verbalizers}." for input in formatted_inputs]    
-
-        return formatted_inputs, verbal_targets
 
     def configure_n_load_peft_module(self):
         # model loading procedure:
@@ -1864,23 +1358,9 @@ class PEFTTrainer:
                     if self.test_eval_finished:
                         self.print_log("test evaluation is already finished,  exit...")
                         exit()
-                    
-                    # if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-                    #     self.model = self.model.to("cpu")
-                    #     torch.cuda.empty_cache()
-                    #     self.accelerator.load_state(latest_cp, map_location="cpu")
-                    #     self.model = self.model.to(self.accelerator.device)
-                    # else:
-                    #     self.accelerator.load_state(latest_cp)
                     time.sleep(60)
                     self.accelerator.load_state(latest_cp)
                     time.sleep(60)
-
-
-                    # TODO: is it better to store wandb separately under every checkpoint folder? Since in offline mode, it cannot be resuemd anyway. But upload to wandb might be tricky as it requires some script to extract.
-                    
-
-                    
                     loaded = True
                 except Exception as e:
                     # it can be state dict file corrupted or model checkpoint corrupted
@@ -1902,118 +1382,3 @@ class PEFTTrainer:
                 )
                 loaded = True
         return loaded
-
-    
-    def search_for_hyperperameters(self):
-        # assert  self.use_distributed is False, "search for hyperparameters doesn't need distributed training"
-
-        self.model = self.load_pretrained_model()
-
-        
-        
-        # trainable parameters percent list
-        # for loop linearly for each hyperparameter for the peft method
-        # print out corresponding hyperparameter
-        # exit()
-        # parallel to configure_n_load_peft_module
-        
-        # in init method, model and peft method has
-        # we reload all of peft modules
-        
-        self.model_cache = deepcopy(self.model)
-        from peft import LoraConfig
-        # peft package
-        cur_lora_r = 1 if self.peft_args.lora_r is None else self.peft_args.lora_r
-        # adapter
-        cur_reduction_factor = 64 if self.peft_args.reduction_factor is  None else self.peft_args.reduction_factor
-        # prompt tuning
-        cur_prompt_len = 1 if self.peft_args.prompt_len is None else self.peft_args.prompt_len
-        # prefix tuning
-        cur_prefix_len = 1 if self.peft_args.prefix_len is None else self.peft_args.prefix_len
-        bottleneck_size = 10 # original paper, 512 table to text, 800 for summarization
-        
-        
-        trainable_params_percentage = self.training_args.trainable_params_percentage
-        assert trainable_params_percentage is not None and len(trainable_params_percentage) > 0
-        cur_trainable_params_percent= 0
-        percent_iterator = iter(trainable_params_percentage)
-        cur_percent_threshold = next(percent_iterator)
-        task_type = TaskType.SEQ_2_SEQ_LM
-        while trainable_params_percentage and cur_trainable_params_percent < cur_percent_threshold:
-            if self.model_args.tuning_mode == "lora_peft":
-                task_type = TaskType.SEQ_2_SEQ_LM
-                config = LoraConfig(
-                    task_type=task_type,
-                    inference_mode=False,
-                    r=cur_lora_r,
-                    lora_alpha=32,
-                    lora_dropout=0,
-                    # lora_modules
-                    target_modules= list(self.peft_args.lora_modules) if self.peft_args.lora_modules else ["q", "v"],
-                )
-                # trainable_params_status = self.load_peft_module(config, reset_peft=True)
-                # cur_trainable_params_percent = trainable_params_status["trainable_ratio"]
-                if cur_trainable_params_percent > cur_percent_threshold:
-                    print(f"model: {self.model_args.model_name_or_path}, lora_r: {cur_lora_r}, lora_alpha: {config.lora_alpha}, lora_dropout: {config.lora_dropout}, lora_modules: {config.target_modules}, trainable_params_percent: {cur_trainable_params_percent} for percent threshold: {cur_percent_threshold}")
-                    try:
-                        cur_percent_threshold = next(percent_iterator)
-                    except StopIteration:
-                        break
-                        
-                cur_lora_r += 1
-        
-            elif self.model_args.tuning_mode in ["adapter_adapter", "compactor"]:
-                from transformers.adapters import AdapterConfig, HoulsbyConfig, CompacterConfig
-
-                if self.model_args.tuning_mode == "adapter_adapter":
-                    config = HoulsbyConfig(reduction_factor=cur_reduction_factor)
-                else:
-                    config = CompacterConfig(reduction_factor=cur_reduction_factor,
-                                            phm_dim=self.peft_args.phm_dimension)
-                
-                
-                # reload peft module with new config
-                trainable_params_status = self.load_peft_module(config, reset_peft=True)
-                cur_trainable_params_percent = trainable_params_status["trainable_ratio"]
-                
-                if cur_trainable_params_percent > cur_percent_threshold:
-                    print(f"model: {self.model_args.model_name_or_path}, reduction_factor: {cur_reduction_factor}, phm_dim: {config.phm_dim}, trainable_params_percent: {cur_trainable_params_percent} for percent threshold: {cur_percent_threshold}")
-                    try:
-                        cur_percent_threshold = next(percent_iterator)
-                    except StopIteration:
-                        break
-                cur_reduction_factor /=1.01
-            elif self.model_args.tuning_mode == "prompt_tuning":
-                config = PromptTuningConfig(
-                    task_type=task_type,
-                    num_virtual_tokens=cur_prompt_len,
-                    inference_mode=False,
-                    device= self.peft_args.module_device,
-                    # prompt_tuning_init="TEXT",
-                    # prompt_tuning_init_text=prompt_tuning_init_text,
-                    # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
-                )
-                trainable_params_status = self.load_peft_module(config, reset_peft=True)
-                cur_trainable_params_percent = trainable_params_status["trainable_ratio"]
-                if cur_trainable_params_percent > cur_percent_threshold:
-                    print(f"model: {self.model_args.model_name_or_path}, num_virtual_tokens: {cur_prompt_len}, trainable_params_percent: {cur_trainable_params_percent} for percent threshold: {cur_percent_threshold}")
-                    try:
-                        cur_percent_threshold = next(percent_iterator)
-                    except StopIteration:
-                        break
-                cur_prompt_len += 1
-            elif self.model_args.tuning_mode == "prefix_tuning":
-                from transformers.adapters import PrefixTuningConfig
-
-                config = PrefixTuningConfig(prefix_length=cur_prefix_len, bottleneck_size=bottleneck_size,
-                                            encoder_prefix=True,
-                                            cross_prefix=True)
-                trainable_params_status = self.load_peft_module(config, reset_peft=True)
-                cur_trainable_params_percent = trainable_params_status["trainable_ratio"]
-                if cur_trainable_params_percent > cur_percent_threshold:
-                    print(f"model: {self.model_args.model_name_or_path}, prefix_length: {cur_prefix_len}, bottleneck_size: {bottleneck_size}, trainable_params_percent: {cur_trainable_params_percent} for percent threshold: {cur_percent_threshold}")
-                    try:
-                        cur_percent_threshold = next(percent_iterator)
-                    except StopIteration:
-                        break
-                cur_prefix_len += 1

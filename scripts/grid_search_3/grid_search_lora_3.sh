@@ -1,7 +1,7 @@
 MODEL_NAMES=("google/t5-xxl-lm-adapt" "facebook/opt-13b" "facebook/llama-7b" )
 # lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
 script_mode=$1
-
+random_seed=$2
 
 i=0
 export LABEL_SMOOTHING_FACTOR=0

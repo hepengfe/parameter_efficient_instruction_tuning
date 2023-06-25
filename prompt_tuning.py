@@ -400,10 +400,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "Whether to run on the cluster." },
     )
 
-    do_search_hyperparams: bool = field(
-        default=False,
-        metadata={ "help": "Whether to search hyperparameters." },
-    )
 
     label_smoothing_factor: float = field(
         default=0.0,
@@ -557,13 +553,6 @@ def main():
         training_args.logging_steps = 10
         training_args.per_device_eval_batch_size = 4
         training_args.per_device_train_batch_size = 1
-
-        
-    if training_args.do_search_hyperparams:
-        peft_args.trainable_params_percentage = sorted([float(v) for v in peft_args.trainable_params_percentage.split(",")])
-        os.environ["WANDB_MODE"] = "disabled"
-        os.environ["CUDA_VISIBLE_DEVICES"] = "" # no gpu needed for search
-
 
     if training_args.dev_eval:
         # dev issues such as empty prediction (although it's mostly likely a generation issue)
