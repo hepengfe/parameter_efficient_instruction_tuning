@@ -1,16 +1,9 @@
-from transformers import T5Tokenizer, T5ForConditionalGeneration,T5Model, T5Config, Seq2SeqTrainer, Seq2SeqTrainingArguments, Trainer, AutoModelForSequenceClassification
-
-from datasets import load_dataset, load_metric, concatenate_datasets
+from datasets import load_dataset
 import numpy as np
-from torch.nn import CrossEntropyLoss
 import torch
 from transformers import (
-    GPT2TokenizerFast,
-    GPT2LMHeadModel,
     AdamW,
-    Adafactor,
     get_scheduler,
-    EarlyStoppingCallback
 )
 from transformers import AutoModelForSeq2SeqLM
 from peft import PeftModel
@@ -20,28 +13,18 @@ import os
 import time
 from functools import partial
 from transformers import (
-    AutoConfig,
     AutoTokenizer,
-    DataCollatorForSeq2Seq,
     default_data_collator,
-    set_seed,
-    create_optimizer,
-    get_constant_schedule
 )
-from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
-from transformers.optimization import Adafactor, AdafactorSchedule, AdamW
+from transformers.optimization import AdamW
 import transformers
-from peft import get_peft_config, get_peft_model, LoraConfig, TaskType, PromptTuningConfig,PrefixTuningConfig
+from peft import get_peft_model, TaskType, PromptTuningConfig
 from util.ni_dataset_collator import DataCollatorForNI
 from copy import deepcopy
-import datetime
-from peft import PeftModelForSeq2SeqLM
 from utils import get_latest_checkpoint, remove_old_checkpoints, remove_files_and_folders_other_than
 import json
-import math
 from accelerate import Accelerator
 from tqdm.auto import tqdm
-import wandb
 import shutil
 from util.compute_metrics import compute_metrics, compute_grouped_metrics
 from accelerate.utils import DistributedType
@@ -57,7 +40,6 @@ BEST_CP_FOLDER_NAME="best_checkpoint"
 LATEST_CP_FOLDER_NAME="latest_checkpoint"
 from transformers import LlamaTokenizer
 from transformers import LlamaForCausalLM
-from peft import PeftModelForCausalLM
 import logging
 from accelerate.logging import get_logger
 import accelerate
@@ -388,8 +370,7 @@ class PEFTTrainer:
                     model = AutoAdapterModel.from_pretrained(self.potential_model_path, config = config)
                 else:
                     model = AutoAdapterModel.from_pretrained(self.model_name_or_path, cache_dir=self.training_args.cache_dir, config = config)
-                
-                    
+
             elif self.model_args.tuning_mode in PEFT_MODULES:
                 # NOTE: this is not compatible if loading for the first time as
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
@@ -397,7 +378,6 @@ class PEFTTrainer:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
-                
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -406,8 +386,6 @@ class PEFTTrainer:
                 model = LlamaForCausalLM.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
-        elif "roberta" in self.model_name_or_path:
-            model = AutoModelForSequenceClassification.from_pretrained(self.model_name_or_path)
         elif "gpt2" in self.model_name_or_path or "bloom" in self.model_name_or_path or "opt" in self.model_name_or_path:
             from transformers import AutoModelForCausalLM
             if os.path.exists(self.potential_model_path):
@@ -1201,12 +1179,6 @@ class PEFTTrainer:
             from transformers.adapters import ParallelConfig
             config = ParallelConfig(reduction_factor= self.peft_args.reduction_factor)
             self.load_peft_module(config)
-
-        elif self.model_args.tuning_mode == "embedding_tuning":
-            self.convert_to_embedding_tuning()
-            if self.peft_args.num_soft_tokens > 0:
-                self.peft_args.num_soft_tokens = 0
-                print("num_soft_tokens is set to 0 for embedding tuning mode")
         elif self.model_args.tuning_mode == "bitfit":
             self.load_peft_module()
         elif self.model_args.tuning_mode == "fine_tuning":
