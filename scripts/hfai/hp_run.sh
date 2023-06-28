@@ -126,7 +126,8 @@ default_logging_steps=$((default_eval_step/20)) # 5000/20=250
 
 if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
     config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
-    default_logging_steps=10
+    default_logging_steps=50
+    default_save_step=500
 fi
 
 if [[ $script_mode == "hfai" || $script_mode == "hfai_rm" ]]; then

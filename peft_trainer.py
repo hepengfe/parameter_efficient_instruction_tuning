@@ -15,6 +15,7 @@ from functools import partial
 from transformers import (
     AutoTokenizer,
     default_data_collator,
+    DataCollatorForSeq2Seq
 )
 from transformers.optimization import AdamW
 import transformers
@@ -43,6 +44,7 @@ from transformers import LlamaForCausalLM
 import logging
 from accelerate.logging import get_logger
 import accelerate
+import pandas as pd
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -142,9 +144,7 @@ class PEFTTrainer:
         
         if self.model_args.model_arch != "decoder":
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
-        
-        if training_args.do_search_hyperparams:
-            return
+
         
         
         self.accelerator = Accelerator(
@@ -227,10 +227,6 @@ class PEFTTrainer:
         self.model = self.load_pretrained_model()
         self.configure_n_load_peft_module() # always load model from scratch for accelerate
 
-        
-
-
-
     def load_optimizer_n_scheduler(self):
         if not self.distributed_type == DistributedType.DEEPSPEED:
             # DDP, keep parameters require_grad status
@@ -256,7 +252,6 @@ class PEFTTrainer:
                     num_warmup_steps=self.warmup_steps_for_scheduler
             )
 
-            
         else:
             # deepspeed
             # lora adapter and other adapter methods
@@ -273,8 +268,7 @@ class PEFTTrainer:
                         "weight_decay": 0.0
                     },
                 ]
-                
-                
+
                 for param in self.model.parameters():
                     param.requires_grad = True
                 self.optimizer = accelerate.utils.DummyOptim(
@@ -412,7 +406,8 @@ class PEFTTrainer:
         min_test_data_size_per_process = self.num_processes * self.training_args.per_device_test_batch_size
         if self.use_distributed:
             assert len(self.eval_dataset) >= min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
-            assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
+            if self.data_args.dataset_name != "alpaca":
+                assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
 
             if len(self.eval_dataset) % min_eval_data_size_per_process != 0:
                 org_len = len(self.eval_dataset)
@@ -421,16 +416,16 @@ class PEFTTrainer:
                 self.eval_dataset = self.eval_dataset.select(range(new_size))
                 new_len = len(self.eval_dataset)
                 self.print_log(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.num_processes}, truncating from {org_len} to {new_len} examples")
-                
-
-            if len(self.test_dataset) % min_test_data_size_per_process != 0:
-                org_len = len(self.test_dataset)
-                new_len = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
-                self.test_dataset = self.test_dataset.select(range(new_len))
-                self.print_log(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
+            if self.data_args.dataset_name != "alpaca":
+                if len(self.test_dataset) % min_test_data_size_per_process != 0:
+                    org_len = len(self.test_dataset)
+                    new_len = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
+                    self.test_dataset = self.test_dataset.select(range(new_len))
+                    self.print_log(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
             
             assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
-            assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
+            if self.data_args.dataset_name != "alpaca":
+                assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
         self.load_dataloader()
 
 
@@ -452,21 +447,23 @@ class PEFTTrainer:
             batch_size=self.training_args.per_device_train_batch_size,
             collate_fn=self.data_collator
         )
-        self.eval_dataloader = DataLoader(
-            self.eval_dataset,
-            shuffle=False,
-            batch_size=self.training_args.per_device_eval_batch_size,
-            # collate_fn=self.data_collator,
-            collate_fn=partial(self.data_collator, eval_mode=True)
-        )
-        
-        self.test_dataloader = DataLoader(
-            self.test_dataset,
-            shuffle=False,
-            batch_size=self.training_args.per_device_test_batch_size,
-            # collate_fn=self.data_collator,
-            collate_fn=partial(self.data_collator, eval_mode=True)
-        )
+        # no eval for alpaca dataset training
+        if self.data_args.dataset_name != "alpaca":
+            self.eval_dataloader = DataLoader(
+                self.eval_dataset,
+                shuffle=False,
+                batch_size=self.training_args.per_device_eval_batch_size,
+                # collate_fn=self.data_collator,
+                collate_fn=partial(self.data_collator, eval_mode=True)
+            )
+
+            self.test_dataloader = DataLoader(
+                self.test_dataset,
+                shuffle=False,
+                batch_size=self.training_args.per_device_test_batch_size,
+                # collate_fn=self.data_collator,
+                collate_fn=partial(self.data_collator, eval_mode=True)
+            )
 
 
     def load_dataset(self):
@@ -513,6 +510,39 @@ class PEFTTrainer:
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
             self.test_dataset = raw_datasets["test"]
+        elif self.data_args.dataset_name == "alpaca":
+            from utils import encode_with_messages_format
+            data_files = {}
+            dataset_args = {}
+            data_dir="data/processed/stanford_alpaca"
+            data_files["train"] = os.path.join(data_dir, "stanford_alpaca_data.jsonl")
+            raw_datasets = load_dataset(
+                "json",
+                data_files=data_files,
+                cache_dir=data_dir,
+                # use_auth_token=True if model_args.use_auth_token else None,
+                **dataset_args,
+            )
+            encode_function = partial(
+                encode_with_messages_format,
+                tokenizer=self.tokenizer,
+                max_seq_length=self.data_args.max_source_length, # self.data_args.max_seq_length,
+            )
+            lm_datasets = raw_datasets.map(
+                encode_function,
+                batched=False,
+                num_proc=1, # data_args.preprocessing_num_workers,
+                remove_columns=[name for name in raw_datasets["train"].column_names if name not in ["input_ids", "labels", "attention_mask"]],
+                load_from_cache_file=True, # not data_args.overwrite_cache,
+                desc="Tokenizing and reformatting instruction data",
+            )
+            lm_datasets.set_format(type="pt")
+            lm_datasets = lm_datasets.filter(lambda example: (example['labels'] != -100).any())
+
+            self.train_dataset = lm_datasets["train"]
+            if self.training_args.dev_test:
+                self.train_dataset = lm_datasets["train"].select(range(self.training_args.dev_test_data_size))
+
         else:
             raise NotImplementedError("New implementation no train,valid,test.   Dataset not supported: " + self.data_args.dataset_name)
 
@@ -537,6 +567,14 @@ class PEFTTrainer:
                 tk_instruct=self.data_args.tk_instruct
             )
             self.training_args.remove_unused_columns = False
+        elif self.data_args.dataset_name == "alpaca":
+            dataset_dependent_data_collator = DataCollatorForSeq2Seq(
+                                                tokenizer=self.tokenizer,
+                                                model=self.model,
+                                                padding="longest",
+                                                # batch_size=self.training_args.per_device_train_batch_size,
+            )
+        
         else:
             dataset_dependent_data_collator = default_data_collator
         self.data_collator = dataset_dependent_data_collator
@@ -666,9 +704,6 @@ class PEFTTrainer:
         )
         self.print_log(trainable_state, print_step=False)
         return trainable_state
-
-
-
 
     def train(self):
         """
@@ -838,7 +873,8 @@ class PEFTTrainer:
             self.print_log(f"epoch {epoch} finished, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
-            self.save_and_eval(self.global_step, force=True if not ( self.training_args.dev_train or self.training_args.dev_run or self.training_args.dev_test) else False)
+            # self.save_and_eval(self.global_step, force=True if not ( self.training_args.dev_train or self.training_args.dev_run or self.training_args.dev_test) else False)
+            self.save_and_eval(self.global_step, force=True)
             self.print_log(f"epoch {epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
             self.print_log(f"steps per epoch: {self.global_step/(epoch+1)}")
         
@@ -882,8 +918,160 @@ class PEFTTrainer:
                 print(s)
         elif self.accelerator.is_main_process:
             logger.info(s)
-
     def evaluate(self, mode="eval", step=None):
+        if mode=="test":
+            assert step is None
+        elif mode=="eval":
+            assert step is not None
+        else:
+            raise NotImplementedError(
+                "mode must be either eval or test mode"
+            )
+        self.model.eval()
+        # model = accelerate.utils.extract_model_from_parallel(self.model)
+
+        # load best checkpoint for test evaluation
+        if mode == "test":
+            torch.cuda.empty_cache()
+            # NOTE: test evaluation is done, finish
+            if self.test_eval_finished:
+                self.print_log("test evaluation is done, finish...")
+                return
+            best_cp_dir = None
+            # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
+            if self.data_args.dataset_name != "alpaca":
+                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+            else:
+                best_cp_dir = get_latest_checkpoint(self.training_args.output_dir)
+            print("load from existing state: ", best_cp_dir)
+            assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
+            # only in this case we need to first move loaded pretrained mdoel to cpu
+            # and load trained model weights into the model
+            # then we move model back to gpu
+            if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                self.model = self.model.to("cpu")
+                del self.optimizer
+                del self.scheduler
+                self.accelerator._optimizers = []
+                self.accelerator._schedulers = []
+                torch.cuda.empty_cache()
+                time.sleep(60)
+                self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                time.sleep(60)
+                print(f"Moving mdoel back to gpu {self.accelerator.device}")
+                self.model = self.model.to(self.accelerator.device)
+            else:
+                self.accelerator.load_state(best_cp_dir)
+
+        # load dataset for evaluation
+        if mode == "eval":
+            dataset2eval = self.eval_dataset
+            dataloader2eval = self.eval_dataloader
+        elif mode == "test":
+            if self.data_args.dataset_name != "alpaca":
+                # free memory in test mode 
+                dataset2eval = self.test_dataset
+                dataloader2eval = self.test_dataloader
+                self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
+            else:
+                
+                from utils import eval_hf_model
+                from data.eval.mmlu.categories import subcategories, categories
+                mmlu_result_d = {}
+                mmlu_data_dir="data/eval/mmlu/data"
+                save_dir = os.path.join(self.training_args.output_dir , "mmlu_eval")
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+
+                subjects = sorted(
+                    [
+                        f.split("_test.csv")[0]
+                        for f in os.listdir(os.path.join(mmlu_data_dir, "test"))
+                        if "_test.csv" in f
+                    ]
+                )
+
+                if self.training_args.dev_test or self.training_args.dev_train or self.training_args.dev_run:
+                    subjects = subjects[:5]
+                all_cors = []
+                subcat_cors = {
+                    subcat: [] for subcat_lists in subcategories.values() for subcat in subcat_lists
+                }
+                cat_cors = {cat: [] for cat in categories}
+                for subject in tqdm(subjects, desc=f"Evaluating subjects: "):
+                    dev_df = pd.read_csv(
+                        os.path.join(mmlu_data_dir, "dev", subject + "_dev.csv"), header=None
+                    )
+                    test_df = pd.read_csv(
+                        os.path.join(mmlu_data_dir, "test", subject + "_test.csv"), header=None
+                    )
+
+
+                    # if args.n_instances and args.n_instances < test_df.shape[0]:
+                    #     test_df = test_df.sample(args.n_instances, random_state=42)
+
+                    cors, acc, probs = eval_hf_model(self.data_args, subject, self.model, self.tokenizer, dev_df, test_df, 1)
+
+                    subcats = subcategories[subject]
+                    for subcat in subcats:
+                        subcat_cors[subcat].append(cors)
+                        for key in categories.keys():
+                            if subcat in categories[key]:
+                                cat_cors[key].append(cors)
+                    all_cors.append(cors)
+                    choices = ["A", "B", "C", "D"]
+                    test_df["correct"] = cors
+                    for j in range(probs.shape[1]):
+                        choice = choices[j]
+                        test_df["choice{}_probs".format(choice)] = probs[:, j]
+                    test_df.to_csv(
+                        os.path.join(
+                            save_dir, "{}.csv".format(subject)
+                        ),
+                        index=None,
+                    )
+
+
+                for subcat in subcat_cors:
+                    if subcat_cors[subcat]:
+                        subcat_acc = np.mean(np.concatenate(subcat_cors[subcat]))
+                    print("Average accuracy {:.3f} - {}".format(subcat_acc, subcat))
+                    mmlu_result_d["subcat/"+subcat] = subcat_acc
+
+                for cat in cat_cors:
+                    if cat_cors[cat]:
+                        cat_acc = np.mean(np.concatenate(cat_cors[cat]))
+                    print("Average accuracy {:.3f} - {}".format(cat_acc, cat))
+                    mmlu_result_d["cat/"+cat] = cat_acc
+                weighted_acc = np.mean(np.concatenate(all_cors))
+                mmlu_result_d["weighted_acc"] = weighted_acc
+                print("Average accuracy: {:.3f}".format(weighted_acc))
+                self.log(mmlu_result_d)
+                
+                # save results
+                # with open(os.path.join(save_dir, "metrics.json"), "w") as f:
+                #     json.dump(
+                #         {
+                #             "average_acc": weighted_acc,
+                #             "subcat_acc": {
+                #                 subcat: np.mean(np.concatenate(subcat_cors[subcat]))
+                #                 for subcat in subcat_cors
+                #             },
+                #             "cat_acc": {
+                #                 cat: np.mean(np.concatenate(cat_cors[cat]))
+                #                 for cat in cat_cors
+                #             },
+                #         },
+                #         f,
+                #     )
+
+        if mode == "test":
+            self.train_state.update({"test_eval_finished": True})
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            self.train_state.save_to_json(latest_cp)
+            self.print_log("Finished test dataset evaluation...")
+
+    def evaluate_dataset(self, dataset2eval, dataloader2eval, mode="eval", step=None):
         """
         eval mode: evaluate use loaded current model
         test mode: evaluate best model loaded from output_dir
@@ -1008,11 +1196,7 @@ class PEFTTrainer:
         self.train_state.save_to_json(get_latest_checkpoint(self.training_args.output_dir))
         metric="rougeL"
         self.print_log(f"{mode}/{metric}: {results_with_mode[f'{mode}/{metric}']}")
-        if mode == "test":
-            self.train_state.update({"test_eval_finished": True})
-            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-            self.train_state.save_to_json(latest_cp)
-            self.print_log("Finished test dataset evaluation...")
+        
             
         return results_with_mode
 
@@ -1196,7 +1380,10 @@ class PEFTTrainer:
         if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0):
             self.save(global_step)
 
-        
+        # no evaluation for alpaca
+        if self.data_args.dataset_name == "alpaca":
+            return
+
         if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0):
             results = self.evaluate(step=global_step)
             eval_metric_name = "eval/"+self.training_args.eval_metric
@@ -1259,6 +1446,7 @@ class PEFTTrainer:
                     # adapter pacakge
                     if hasattr(unwrapped_model, "save_all_adapters"):
                         unwrapped_model.save_all_adapters(sharded_model_path)
+
         # save new train state only if it is best checkpoint     
         if self.accelerator.is_main_process:
             self.train_state.save_to_json(checkpoint_folder_path_to_save)

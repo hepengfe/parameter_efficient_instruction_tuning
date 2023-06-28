@@ -519,10 +519,10 @@ def main():
     if training_args.dev_test:
         # test save and test eval OOM, also whether eval and test results are same
         # save at 4, 8, 10(epoch) steps
-        training_args.num_train_epochs = 30
-        training_args.dev_test_data_size = 100
-        training_args.save_steps = 60
-        training_args.eval_steps = 60
+        training_args.num_train_epochs = 1
+        training_args.dev_test_data_size = 50
+        training_args.save_steps = 10
+        training_args.eval_steps = 10
         training_args.logging_steps = 10
         training_args.per_device_eval_batch_size = 4
         training_args.per_device_train_batch_size = 1
@@ -534,10 +534,7 @@ def main():
     # pre tuning check
     assert data_args.dataset_name is not None, "dataset name is required"
     assert training_args.logging_steps > 0, "logging_steps should be larger than 0"
-    # search mode -> no do_train and do_eval
-    if training_args.do_search_hyperparams:
-        assert not training_args.do_train, "do_train should be false for search mode"
-        assert not training_args.do_test, "do_test should be false for search mode"
+
     
     if data_args.dataset_name == "ni":
         assert training_args.predict_with_generate, "predict_with_generate is required for ni"
@@ -563,7 +560,7 @@ def main():
         result = re.findall(r'\d+', data_args.data_dir)
         if len(result) != 0:
             num_validation_tasks = int(result[-1])
-    assert training_args.do_train or training_args.do_test or training_args.do_search_hyperparams, "At least one of `do_train` or `do_test` must be True."
+    assert training_args.do_train or training_args.do_test, "At least one of `do_train` or `do_test` must be True."
     assert not (training_args.do_train and training_args.do_test), "do_train and do_test cannot be both True"
 
 
