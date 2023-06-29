@@ -1,12 +1,8 @@
 # bash scripts/grid_search/grid_search_adapter_1.sh dev_cmd t5
 
 
-MODEL_NAMES=("google/t5-xxl-lm-adapt" "facebook/opt-13b" "facebook/llama-7b" )
-# temp changes
-# MODEL_NAMES=("google/t5-base-lm-adapt" "google/t5-xxl-lm-adapt")
-# MODEL_NAMES=("google/t5-xxl-lm-adapt")
+MODEL_NAMES=("google/t5-base-lm-adapt" "google/t5-large-lm-adapt" "google/t5-xl-lm-adapt" "google/t5-xxl-lm-adapt")
 script_mode=$1
-# model_name=$2
 random_seed=$2
 
 i=0
