@@ -229,19 +229,18 @@ def format_subject(subject):
     return s
 
 @torch.no_grad()
-def eval_hf_model(args, subject, model, tokenizer, dev_df, test_df, batch_size=1):
+def eval_hf_model(args, subject, model, tokenizer, dev_df, test_df, batch_size=1, k_shot=5):
     prompts = []
     for i in range(0, test_df.shape[0]):
-        k = 5
         prompt_end = format_example(test_df, i, include_answer=False)
-        train_prompt = gen_prompt(dev_df, subject, k)
+        train_prompt = gen_prompt(dev_df, subject, k_shot)
         prompt = train_prompt + prompt_end
         
         tokenized_prompt = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).input_ids
         # make sure every prompt is less than 2048 tokens
         while tokenized_prompt.shape[-1] > 2048:
-            k -= 1
-            train_prompt = gen_prompt(dev_df, subject, k)
+            k_shot -= 1
+            train_prompt = gen_prompt(dev_df, subject, k_shot)
             prompt = train_prompt + prompt_end
             tokenized_prompt = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).input_ids
 

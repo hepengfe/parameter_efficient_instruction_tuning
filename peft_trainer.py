@@ -993,60 +993,61 @@ class PEFTTrainer:
 
                 if self.training_args.dev_test or self.training_args.dev_train or self.training_args.dev_run:
                     subjects = subjects[:5]
-                all_cors = []
-                subcat_cors = {
-                    subcat: [] for subcat_lists in subcategories.values() for subcat in subcat_lists
-                }
-                cat_cors = {cat: [] for cat in categories}
-                for subject in tqdm(subjects, desc=f"Evaluating subjects: "):
-                    dev_df = pd.read_csv(
-                        os.path.join(mmlu_data_dir, "dev", subject + "_dev.csv"), header=None
-                    )
-                    test_df = pd.read_csv(
-                        os.path.join(mmlu_data_dir, "test", subject + "_test.csv"), header=None
-                    )
+                for k_shot in [0, 5]:
+                    all_cors = []
+                    subcat_cors = {
+                        subcat: [] for subcat_lists in subcategories.values() for subcat in subcat_lists
+                    }
+                    cat_cors = {cat: [] for cat in categories}
+                    for subject in tqdm(subjects, desc=f"Evaluating subjects: "):
+                        dev_df = pd.read_csv(
+                            os.path.join(mmlu_data_dir, "dev", subject + "_dev.csv"), header=None
+                        )
+                        test_df = pd.read_csv(
+                            os.path.join(mmlu_data_dir, "test", subject + "_test.csv"), header=None
+                        )
 
 
-                    # if args.n_instances and args.n_instances < test_df.shape[0]:
-                    #     test_df = test_df.sample(args.n_instances, random_state=42)
+                        # if args.n_instances and args.n_instances < test_df.shape[0]:
+                        #     test_df = test_df.sample(args.n_instances, random_state=42)
 
-                    cors, acc, probs = eval_hf_model(self.data_args, subject, self.model, self.tokenizer, dev_df, test_df, 1)
+                        cors, acc, probs = eval_hf_model(self.data_args, subject, self.model, self.tokenizer, dev_df, test_df, 1, k_shot)
 
-                    subcats = subcategories[subject]
-                    for subcat in subcats:
-                        subcat_cors[subcat].append(cors)
-                        for key in categories.keys():
-                            if subcat in categories[key]:
-                                cat_cors[key].append(cors)
-                    all_cors.append(cors)
-                    choices = ["A", "B", "C", "D"]
-                    test_df["correct"] = cors
-                    for j in range(probs.shape[1]):
-                        choice = choices[j]
-                        test_df["choice{}_probs".format(choice)] = probs[:, j]
-                    test_df.to_csv(
-                        os.path.join(
-                            save_dir, "{}.csv".format(subject)
-                        ),
-                        index=None,
-                    )
+                        subcats = subcategories[subject]
+                        for subcat in subcats:
+                            subcat_cors[subcat].append(cors)
+                            for key in categories.keys():
+                                if subcat in categories[key]:
+                                    cat_cors[key].append(cors)
+                        all_cors.append(cors)
+                        choices = ["A", "B", "C", "D"]
+                        test_df["correct"] = cors
+                        for j in range(probs.shape[1]):
+                            choice = choices[j]
+                            test_df["choice{}_probs".format(choice)] = probs[:, j]
+                        test_df.to_csv(
+                            os.path.join(
+                                save_dir, "{}.csv".format(subject)
+                            ),
+                            index=None,
+                        )
 
 
-                for subcat in subcat_cors:
-                    if subcat_cors[subcat]:
-                        subcat_acc = np.mean(np.concatenate(subcat_cors[subcat]))
-                    print("Average accuracy {:.3f} - {}".format(subcat_acc, subcat))
-                    mmlu_result_d["subcat/"+subcat] = subcat_acc
+                    for subcat in subcat_cors:
+                        if subcat_cors[subcat]:
+                            subcat_acc = np.mean(np.concatenate(subcat_cors[subcat]))
+                        print("Average accuracy {:.3f} - {}".format(subcat_acc, subcat))
+                        mmlu_result_d[f"mmlu/{k_shot}-shot/subcat/"+subcat] = subcat_acc
 
-                for cat in cat_cors:
-                    if cat_cors[cat]:
-                        cat_acc = np.mean(np.concatenate(cat_cors[cat]))
-                    print("Average accuracy {:.3f} - {}".format(cat_acc, cat))
-                    mmlu_result_d["cat/"+cat] = cat_acc
-                weighted_acc = np.mean(np.concatenate(all_cors))
-                mmlu_result_d["weighted_acc"] = weighted_acc
-                print("Average accuracy: {:.3f}".format(weighted_acc))
-                self.log(mmlu_result_d)
+                    for cat in cat_cors:
+                        if cat_cors[cat]:
+                            cat_acc = np.mean(np.concatenate(cat_cors[cat]))
+                        print("Average accuracy {:.3f} - {}".format(cat_acc, cat))
+                        mmlu_result_d[f"mmlu/{k_shot}-shot/cat/"+cat] = cat_acc
+                    weighted_acc = np.mean(np.concatenate(all_cors))
+                    mmlu_result_d[f"mmlu/{k_shot}-shot/weighted_acc"] = weighted_acc
+                    print(f"mmlu/{k_shot}-shot/ average accuracy: {weighted_acc}")
+                    self.log(mmlu_result_d)
                 
                 # save results
                 # with open(os.path.join(save_dir, "metrics.json"), "w") as f:

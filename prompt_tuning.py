@@ -538,7 +538,9 @@ def main():
     
     if data_args.dataset_name == "ni":
         assert training_args.predict_with_generate, "predict_with_generate is required for ni"
-
+        assert data_args.data_dir is not None, "data_dir is required for ni"
+    if data_args.dataset_name == "alpaca":
+        assert data_args.data_dir is None
     if model_args.tuning_mode == "layer_tuning":
         assert peft_args.layer_name is not None, "layer_name should be specified for layer tuning mode"
 
@@ -575,11 +577,17 @@ def main():
 
     
     peft_config_name = build_peft_config_name(model_args, peft_args, training_args)
-    
-    data_folder_name = os.path.basename(data_args.data_dir)
+
+    if data_args.data_dir:
+        data_folder_name = os.path.basename(data_args.data_dir)
+    else:
+        data_folder_name = "full_data"
     # output_dir:   xx/xx/xx
     # expr_dir/dataset/dataset_config/model/tuning_mode/model_config + training_config
-    data_config_name = f"num_validation_tasks_{num_validation_tasks}"
+    if data_args.data_dir:
+        data_config_name = f"num_validation_tasks_{num_validation_tasks}"
+    else:
+        data_config_name = f"NoneConfig"
     random_seed_name = f"random_seed_{training_args.seed}"
     dev_folder = ""
     if training_args.dev_run:

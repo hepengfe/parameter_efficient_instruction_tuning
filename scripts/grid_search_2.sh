@@ -9,4 +9,7 @@ for random_seed in "${random_seeds[@]}"; do
     for file in $(ls -d scripts/grid_search_2/*); do
         bash $file $script_mode t5 $random_seed &
     done
+    if [ $script_mode == "dev" ];then
+        break
+    fi
 done
