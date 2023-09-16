@@ -1,6 +1,6 @@
-
-DATA_FOLDERS=("default_train_8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50")
-lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
+# learning rate search is finished
+DATA_FOLDERS=("default_train_8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
+lrs=(1e-5)
 script_mode=$1
 model_name=$2
 random_seed=$3

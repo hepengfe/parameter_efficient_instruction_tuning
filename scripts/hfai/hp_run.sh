@@ -38,15 +38,19 @@ lora_rank2bs=(["8"]=15 ["32"]=15 ["64"]=15 ["128"]=15 ["256"]=10 ["512"]=5)
 
 # one can pass either abbreviation or a full path into MODEL_NAME
 if [ -v model_name2path["$MODEL_NAME"] ]; then
+    echo "MODEL_NAME is set to $MODEL_NAME"
     model=${model_name2path[$MODEL_NAME]}
 else
+    echo "MODEL_NAME is not set, use env value $MODEL_NAME"
     model=$MODEL_NAME
 fi
 
 
 if [ -v RANDOM_SEED ]; then
+    echo "RANDOM_SEED is set to $RANDOM_SEED"
     random_seed=$RANDOM_SEED
 else
+    echo "RANDOM_SEED is not set, use default value $default_random_seed"
     random_seed=$default_random_seed
 fi
 
@@ -62,7 +66,7 @@ if [ $tuning_mode == "fine_tuning" ]; then
     eval_bs=1
 elif [[ $tuning_mode == "lora_peft" || $tuning_mode == "lora_adapter" ]]; then
     eval_bs=${lora_rank2bs[$LORA_RANK]}
-    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
+    if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_peft.yaml"
         eval_bs=2
         echo "tuning mode has been changed to lora peft for large model"
@@ -124,7 +128,7 @@ default_logging_steps=$((default_eval_step/20)) # 5000/20=250
 
 
 
-if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" || $model == "facebook/llama-7b" ]]; then
+if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
     config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
     default_logging_steps=50
     default_save_step=500
@@ -137,10 +141,14 @@ fi
  
 # data
 data_folder=$default_data_folder
+dataset=$default_dataset
 if [ -v DATA_FOLDER ]; then
     data_folder=$DATA_FOLDER
 fi
-dataset=$default_dataset
+if [ -v DATASET ]; then
+    dataset=$DATASET
+fi
+
 # training/evaluation
 
 
@@ -211,13 +219,13 @@ launch_prefix="hfai python hfai_accelerate.py  launch --config_file ${config_fil
 launch_suffix="--is_cluster -- --nodes 1 --no_inherit --force --name $expr_name"
 
 if [ $script_mode == "dev" ]; then
-    launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
-    launch_prefix="CUDA_VISIABLE_DEVICES=0,1 accelerate launch --config_file configs/accelerate_A6000/default_config_ddp_2gpu.yaml"
+    # launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp.yaml"
+    # launch_prefix="CUDA_VISIABLE_DEVICES=0,1 accelerate launch --config_file configs/accelerate_A6000/default_config_ddp_2gpu.yaml"
     # launch_prefix="CUDA_VISIABLE_DEVICES=0,1 accelerate launch --config_file configs/accelerate_A6000/default_config_deepspeed_2gpu.yaml"
     
     
     # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed.yaml"
-    # launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
     
     launch_suffix="--dev_train"
 fi
@@ -225,7 +233,17 @@ spcecial_arg=""
 if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
     spcecial_arg="--overwrite_output_dir"
 fi
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks --predict_with_generate  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${default_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed $launch_suffix"
+
+if [ $dataset == "ni" ]; then
+    dataset_infix="--num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/${data_folder} --task_dir ../../data/tasks"
+elif [ $dataset == "alpaca" ]; then
+    dataset_infix="--num_train_epochs 3 --dataset_name alpaca --max_source_length 512 --max_target_length 256"
+else
+    echo "dataset ${dataset} is not supported"
+    exit 1
+fi
+
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} ${dataset_infix}  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${default_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed $launch_suffix"
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"
