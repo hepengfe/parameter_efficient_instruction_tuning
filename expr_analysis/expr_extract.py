@@ -10,7 +10,7 @@ model="facebook/opt-350m"
 model=flatten(model, "/-")
 peft_methods=["lora_adapter"]
 
-def extract_expr(log_dir, dataset, model, peft_method, rand_seeds):
+def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = None):
     """
     Extract peft method evaluation results with all random seeds of all peft parameters (rank or adapter size) into a dictionary.
 
@@ -47,7 +47,9 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds):
             #     # skip if random seed not match
             #     if str(rand_seed) != f.split("_")[f.split("_").index("seed")+1]:
             #         continue
+            
 
+            # extract potential keys
             # get the number after "r", "sz"
             if "lora" in peft_method:
                 size_or_rank = f.split("_")[f.split("_").index("r")+1]
@@ -55,6 +57,8 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds):
                 size_or_rank = f.split("_")[f.split("_").index("size")+1]
             elif "prompt_tuning" in peft_method:
                 size_or_rank = f.split("_")[f.split("_").index("len")+1]
+            elif "fine_tuning" in peft_method:
+                size_or_rank = "None"
             else:
                 raise ValueError(f"peft method {peft_method} not supported")
             f_path = os.path.join(search_dir, f)
@@ -67,18 +71,38 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds):
                 print(e)
                 continue
             # assert lastest_cp is not None, f"no checkpoint found in {f_path}"
-                
+            
+            lr = f.split("_")[f.split("_").index("lr")+1]
+
+
+            # determine key based on expr_type
+            if expr_type in ["2", "3", "single", "4"]:
+                key = size_or_rank
+            elif expr_type == "1":
+                key = lr
+            else:
+                raise NotImplementedError(f"expr_type {expr_type} not implemented")
+
             last_train_state = os.path.join(lastest_cp, "training_state.json")
             
             if os.path.exists(last_train_state):
-                train_state = json.load(open(last_train_state))
-                if train_state["state_dict"]["test_eval_finished"] == False:
-                    print(f"test eval not finished for {train_state['training_args/run_name']}")
-                    d[size_or_rank] = d.get(size_or_rank, []) + [None]
+                try:
+                    train_state = json.load(open(last_train_state))
+                except Exception as e:
+                    print(f"error loading {last_train_state}")
                     continue
+                # if train_state["state_dict"]["test_eval_finished"] == False:
+                #     # print(f"test eval not finished for {train_state['training_args/run_name']}")
+                #     print(f"test eval not finished for {f}")
+                #     d[size_or_rank] = d.get(size_or_rank, []) + [None]
+                #     continue
+                if "test/rougeL" not in train_state["state_dict"]:
+                    print(f"test eval not finished for {f}")
+                    d[key] = d.get(key, []) + [None]
+                    continue 
                 if "ni" in dataset:
                     best_metric_val = train_state["state_dict"]["test/rougeL"]
-                    d[size_or_rank] = d.get(size_or_rank, []) + [best_metric_val]
+                    d[key] = d.get(key, []) + [best_metric_val]
                     if args.show_all:
                         # print_state_info(train_state)
                         if args.peft_method == "lora_adapter" or args.peft_method == "lora_peft":
@@ -138,9 +162,14 @@ def print_state_info(state_d):
     print(f" run name: {state_d['training_args']['training_args/run_name']}")
     print("--------------------\n")
 
-# python expr_analysis/expr_extract.py --expr_type 2 --peft_method prompt_tuning --model google/t5-large-lm-adapt
-# 
+# python expr_analysis/expr_extract.py --expr_type 1 --peft_method fine_tuning --model google/t5-xl-lm-adapt
 
+# python expr_analysis/expr_extract.py --expr_type 2 --peft_method prompt_tuning --model google/t5-large-lm-adapt
+# python expr_analysis/expr_extract.py --expr_type 2 --peft_method adapter_peft --model google/t5-xl-lm-adapt
+# python expr_analysis/expr_extract.py --expr_type 2 --peft_method lora_peft --model google/t5-xl-lm-adapt
+# python expr_analysis/expr_extract.py --expr_type 2 --peft_method adapter --model google/t5-xl-lm-adapt
+# python expr_analysis/expr_extract.py --expr_type 2 --peft_method lora_adapter --model google/t5-xl-lm-adapt
+# python expr_analysis/expr_extract.py --expr_type 3 --peft_method adapter_peft --model google/t5-xxl-lm-adapt
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("--log_dir", type=str, default="cache/tmp")
@@ -157,26 +186,32 @@ if __name__ == "__main__":
     d = {}
     if args.expr_type == "single":
         assert len(args.random_seeds) == 1
-        d = extract_expr(args.log_dir, args.dataset, args.model, args.peft_method, args.random_seeds)
+        d = extract_expr(args.log_dir, args.dataset, args.model, args.peft_method, args.random_seeds, expr_type = "single")
+    elif args.expr_type == "1":
+        dataset = "ni/default_train_707_val_50"
+        model = "google/t5-xl-lm-adapt"
+        lrs = ("1e-5", "5e-5", "1e-4", "5e-4", "1e-3")
+
+        d = extract_expr(args.log_dir, dataset, model, args.peft_method, args.random_seeds, expr_type = "1")
     elif args.expr_type == "2":
         # dictionary structure
         # dataset -> peft method -> random seed 
         print("args.dataset is not used")
-        for dataset in ["ni/default_train_707_val_50", "ni/default_train_512_val_50", "ni/default_train_256_val_50", "default_train_128_val_50", "default_train_64_val_50", "default_train_32_val_50", "default_train_8_val_50"]:
-            d[dataset] = extract_expr(args.log_dir, dataset, args.model, args.peft_method, args.random_seeds)
+        for dataset in ["ni/default_train_707_val_50", "ni/default_train_512_val_50", "ni/default_train_256_val_50", "ni/default_train_128_val_50", "ni/default_train_64_val_50", "ni/default_train_32_val_50", "ni/default_train_8_val_50"]:
+            d[dataset] = extract_expr(args.log_dir, dataset, args.model, args.peft_method, args.random_seeds, expr_type = "2")
     elif args.expr_type == "3":
         for model in [
             "google/t5-base-lm-adapt","google/t5-large-lm-adapt","google/t5-xl-lm-adapt","google/t5-xxl-lm-adapt",
         ]:
             print('args.model is not used')
-            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds)
+            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds, expr_type = "3")
             
     elif args.expr_type == "4":
         for model in [
             "google/t5-xxl-lm-adapt", "facebook/opt-13b", "facebook/llama-7b"
         ]:
             print('args.model is not used')
-            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds)
+            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds, expr_type = "4")
             
     else:
         raise NotImplementedError(
