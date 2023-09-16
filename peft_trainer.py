@@ -142,7 +142,8 @@ class PEFTTrainer:
         self.global_step = 0
         self.test_eval_finished = False
         
-        if self.model_args.model_arch != "decoder":
+        self.model_lm_head_weight = None
+        if self.model_args.model_arch != "decoder" and self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
             self.model_lm_head_weight = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path).lm_head.weight
 
         
@@ -217,7 +218,8 @@ class PEFTTrainer:
                 self.optimizer, self.scheduler= self.accelerator.prepare(self.optimizer, self.scheduler)
             else:
                 raise NotImplementedError(f"self.distributed_type {self.distributed_type} is not implemented")
-            self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
+            if self.data_args.dataset_name != "alpaca":
+                self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
         else:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = self.model.to(self.device)
@@ -368,10 +370,12 @@ class PEFTTrainer:
             elif self.model_args.tuning_mode in PEFT_MODULES:
                 # NOTE: this is not compatible if loading for the first time as
                 # for peft package, loading by AutoModelForSeq2SeqLM is good enough
+                
                 if os.path.exists(self.potential_model_path):
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
+                
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
@@ -404,10 +408,11 @@ class PEFTTrainer:
 
         min_eval_data_size_per_process = self.num_processes * self.training_args.per_device_eval_batch_size
         min_test_data_size_per_process = self.num_processes * self.training_args.per_device_test_batch_size
-        if self.use_distributed:
+        # adjust dataset size based on distribution environment
+        if self.data_args.dataset_name != "alpaca" and self.use_distributed:
             assert len(self.eval_dataset) >= min_eval_data_size_per_process, f"eval dataset size {len(self.eval_dataset)} must be greater than {min_eval_data_size_per_process} examples"
-            if self.data_args.dataset_name != "alpaca":
-                assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
+
+            assert len(self.test_dataset) >= min_test_data_size_per_process, f"test dataset size {len(self.test_dataset)} must be greater than {min_test_data_size_per_process} examples"
 
             if len(self.eval_dataset) % min_eval_data_size_per_process != 0:
                 org_len = len(self.eval_dataset)
@@ -416,16 +421,15 @@ class PEFTTrainer:
                 self.eval_dataset = self.eval_dataset.select(range(new_size))
                 new_len = len(self.eval_dataset)
                 self.print_log(f"process {self.accelerator.process_index}: eval dataset size must be divisible by number of processes*eval_batch_size {self.num_processes}, truncating from {org_len} to {new_len} examples")
-            if self.data_args.dataset_name != "alpaca":
-                if len(self.test_dataset) % min_test_data_size_per_process != 0:
-                    org_len = len(self.test_dataset)
-                    new_len = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
-                    self.test_dataset = self.test_dataset.select(range(new_len))
-                    self.print_log(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
+
+            if len(self.test_dataset) % min_test_data_size_per_process != 0:
+                org_len = len(self.test_dataset)
+                new_len = len(self.test_dataset)  - len(self.test_dataset) % min_test_data_size_per_process
+                self.test_dataset = self.test_dataset.select(range(new_len))
+                self.print_log(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
             
             assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
-            if self.data_args.dataset_name != "alpaca":
-                assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
+            assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
         self.load_dataloader()
 
 
@@ -938,11 +942,23 @@ class PEFTTrainer:
                 self.print_log("test evaluation is done, finish...")
                 return
             best_cp_dir = None
-            # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-            if self.data_args.dataset_name != "alpaca":
-                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
-            else:
-                best_cp_dir = get_latest_checkpoint(self.training_args.output_dir)
+            try:
+                # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
+                if self.data_args.dataset_name != "alpaca":
+                    best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+                else:
+                    best_cp_dir = get_latest_checkpoint(self.training_args.output_dir)
+            except FileNotFoundError as e:
+                print("During test evaluation, found the error that will be raised later...")
+                print(f"Removing the experiment folder {self.training_args.output_dir} ...")
+                if os.path.exists(self.training_args.output_dir) and self.accelerator.is_local_main_process:
+                    shutil.rmtree(self.training_args.output_dir)
+                    print("output folder removed, please rerun the script to restart training")
+                if os.path.exists(self.training_args.logging_dir) and self.accelerator.is_local_main_process:
+                    shutil.rmtree(self.training_args.logging_dir)
+                    print("logging folder removed, please rerun the script to restart training")
+                raise e
+
             print("load from existing state: ", best_cp_dir)
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
             # only in this case we need to first move loaded pretrained mdoel to cpu
@@ -967,12 +983,17 @@ class PEFTTrainer:
         if mode == "eval":
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
+            ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
+            self.log(ni_eval_results)
+            return ni_eval_results
         elif mode == "test":
             if self.data_args.dataset_name != "alpaca":
                 # free memory in test mode 
                 dataset2eval = self.test_dataset
                 dataloader2eval = self.test_dataloader
-                self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
+                ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
+                self.log(ni_eval_results)
+                return ni_eval_results
             else:
                 
                 from utils import eval_hf_model
@@ -1046,8 +1067,10 @@ class PEFTTrainer:
                         mmlu_result_d[f"mmlu/{k_shot}-shot/cat/"+cat] = cat_acc
                     weighted_acc = np.mean(np.concatenate(all_cors))
                     mmlu_result_d[f"mmlu/{k_shot}-shot/weighted_acc"] = weighted_acc
-                    print(f"mmlu/{k_shot}-shot/ average accuracy: {weighted_acc}")
-                    self.log(mmlu_result_d)
+                self.log(mmlu_result_d)
+                return mmlu_result_d
+                # print(f"mmlu/{k_shot}-shot/ average accuracy: {weighted_acc}")
+                # self.log(mmlu_result_d)
                 
                 # save results
                 # with open(os.path.join(save_dir, "metrics.json"), "w") as f:
@@ -1114,8 +1137,11 @@ class PEFTTrainer:
             # then we move model back to gpu
             if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
                 self.model = self.model.to("cpu")
-                del self.optimizer
-                del self.scheduler
+                # check if class has attribute
+                if hasattr(self, "optimizer"):
+                    del self.optimizer
+                if hasattr(self, "scheduler"):
+                    del self.scheduler
                 self.accelerator._optimizers = []
                 self.accelerator._schedulers = []
                 torch.cuda.empty_cache()
@@ -1145,7 +1171,7 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
-                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning"]: # , "adapter_peft"]: # temp PEFT lora implementation
+                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning", "adapter_peft"]: # temp PEFT lora implementation
                     generation_inputs = inputs.pop("input_ids")
                     outputs = model.generate(generation_inputs, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
