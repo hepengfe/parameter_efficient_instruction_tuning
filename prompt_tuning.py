@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import shutil
 # import Optional
 from typing import Optional, List
-from utils import flatten, build_peft_config_name
+from utils import flatten, build_peft_config_name, eval_hf_model
 import logging
 from logging import getLogger
 import accelerate
@@ -225,10 +225,6 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     full_determinism: bool = field(
         default=True,
         metadata={ "help": "Whether to use full determinism." },
-    )
-    
-    seed: int = field(
-        default=42, metadata={"help": "Random seed that will be set at the beginning of training."}
     )
     
     predict_with_generate: bool = field(
@@ -588,7 +584,7 @@ def main():
         data_config_name = f"num_validation_tasks_{num_validation_tasks}"
     else:
         data_config_name = f"NoneConfig"
-    random_seed_name = f"random_seed_{training_args.seed}"
+    random_seed_name = f"random_seed_{training_args.random_seed}"
     dev_folder = ""
     if training_args.dev_run:
         dev_folder = "dev_run"
