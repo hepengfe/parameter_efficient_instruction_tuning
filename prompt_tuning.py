@@ -90,7 +90,7 @@ class PeftArguments:
     )
     
     bottleneck_size: int = field(
-        default=0,
+        default=32,
         metadata={"help": "bottleneck size"}
     )
 
@@ -324,6 +324,10 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     do_test: bool = field(
         default=False, metadata={"help": "Whether to run test."}
     )
+    do_traditional_test: bool = field(
+        default=False, metadata={"help": "Whether to run traditional test."}
+    )
+    
     expr_dir : str = field(
         default="cache/tmp/", metadata={"help": "The directory for all experiments logs, checkpoints, and results."}
     )
@@ -548,6 +552,9 @@ def main():
         training_args.learning_rate = 1e-5
         print("lr is set to 1e-5 due to fine_tuning mode")
 
+    if model_args.tuning_mode == "prefix_tuning":
+        assert peft_args.prefix_len is not None, "prefix_len should be specified for prefix tuning mode"
+
     if training_args.per_device_test_batch_size is None:
         training_args.per_device_test_batch_size = training_args.per_device_eval_batch_size
 
@@ -558,7 +565,7 @@ def main():
         result = re.findall(r'\d+', data_args.data_dir)
         if len(result) != 0:
             num_validation_tasks = int(result[-1])
-    assert training_args.do_train or training_args.do_test, "At least one of `do_train` or `do_test` must be True."
+    assert training_args.do_train or training_args.do_test or training_args.do_traditional_test, "At least one of `do_train` or `do_test` or `do_traditional_test` must be True."
     assert not (training_args.do_train and training_args.do_test), "do_train and do_test cannot be both True"
 
 
@@ -624,7 +631,7 @@ def main():
     print("logging_dir: ", training_args.logging_dir)
     print("output_dir: ", training_args.output_dir)
     print("run_name: ", training_args.run_name)
-    # exit()
+
     
     # either max_steps or num_train_epochs should be specified
     assert training_args.max_steps is not None or training_args.num_train_epochs is not None, "either max_steps or num_train_epochs should be specified"
@@ -635,13 +642,16 @@ def main():
         trainer.train() # train from scratch
         trainer.evaluate("test")
         logger.info(f"check the results in {training_args.output_dir}")
-        logger.info("*** Training finished ***")
+        logger.info("*** Training and Test finished ***")
 
     if training_args.do_test:
         trainer.evaluate("test")
         logger.info("*** Test finished ***")
 
 
+    if training_args.do_traditional_test:
+        trainer.evaluate("traditional_test")
+        logger.info("*** Traditional Test finished ***")
 
     
 if __name__ == "__main__":
