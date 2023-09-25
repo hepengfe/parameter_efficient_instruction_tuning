@@ -32,8 +32,9 @@ from accelerate.utils import DistributedType
 import time
 from transformers.trainer_pt_utils import LabelSmoother
 # modules use two pacakges 
-ADAPTER_TRANSFORMERS_MODULES=[ "compactor", "prefix_tuning", "ia3",  "parallel_adapter", "lora_adapter", "adapter_adapter"]
-PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit", "adapter_peft"]
+ADAPTER_TRANSFORMERS_MODULES=[]
+# ADAPTER_TRANSFORMERS_MODULES=[ "compactor", "prefix_tuning", "lora_adapter", "adapter_adapter","ia3"]
+PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit", "adapter_peft", "prefix_tuning", "ia3"]
 CAUSAL_LM=["gpt", "llama", "opt"]
 
 
@@ -150,7 +151,7 @@ class PEFTTrainer:
         
         self.accelerator = Accelerator(
                 log_with="tensorboard",
-                logging_dir=self.training_args.logging_dir,
+                # logging_dir=self.training_args.logging_dir,
                 project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
@@ -178,7 +179,9 @@ class PEFTTrainer:
         assert self.tokenizer is not None, "tokenizer should loaded"
         # resize token embedding will set requires_grad back to True
         # we need to set it back to False
-        if isinstance(self.model, PeftModel):
+
+        if isinstance(self.model, PeftModel) and self.model_args.tuning_mode not in ["prompt_tuning", "prefix_tuning"]:
+            # NOTE: for prompt tuning and prefix tuning, there is no model wrapper in peft package
             model = self.model.model
         else:
             model = self.model
@@ -355,6 +358,7 @@ class PEFTTrainer:
 
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
             if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
+                
                 if os.path.exists(self.potential_model_path):
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
@@ -428,8 +432,15 @@ class PEFTTrainer:
                 self.test_dataset = self.test_dataset.select(range(new_len))
                 self.print_log(f"test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
             
+            if len(self.traditional_test_dataset) % min_test_data_size_per_process != 0:
+                org_len = len(self.traditional_test_dataset)
+                new_len = len(self.traditional_test_dataset)  - len(self.traditional_test_dataset) % min_test_data_size_per_process
+                self.traditional_test_dataset = self.traditional_test_dataset.select(range(new_len))
+                self.print_log(f"traditional test dataset size must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}, truncating from {org_len} to {new_len} examples")
+
             assert len(self.eval_dataset) % min_eval_data_size_per_process == 0, f"eval dataset size {len(self.eval_dataset)} must be divisible by number of processes*eval_batch_size {min_eval_data_size_per_process}"
             assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
+            assert len(self.traditional_test_dataset) % min_test_data_size_per_process == 0, f"traditional test dataset size {len(self.traditional_test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
         self.load_dataloader()
 
 
@@ -463,6 +474,14 @@ class PEFTTrainer:
 
             self.test_dataloader = DataLoader(
                 self.test_dataset,
+                shuffle=False,
+                batch_size=self.training_args.per_device_test_batch_size,
+                # collate_fn=self.data_collator,
+                collate_fn=partial(self.data_collator, eval_mode=True)
+            )
+
+            self.traditional_test_dataloader = DataLoader(
+                self.traditional_test_dataset,
                 shuffle=False,
                 batch_size=self.training_args.per_device_test_batch_size,
                 # collate_fn=self.data_collator,
@@ -504,6 +523,7 @@ class PEFTTrainer:
                 # raw_datasets["train"] =  raw_datasets["train"]
                 # raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
+                raw_datasets["trainditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_train_data_size))
             elif self.training_args.dev_test:
                 # test compute metrics are same for validation and test as
                 # test evaluation load model from checkpoint and run on test dataset
@@ -514,6 +534,7 @@ class PEFTTrainer:
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
             self.test_dataset = raw_datasets["test"]
+            self.traditional_test_dataset = raw_datasets["traditional_test"]
         elif self.data_args.dataset_name == "alpaca":
             from utils import encode_with_messages_format
             data_files = {}
@@ -813,7 +834,7 @@ class PEFTTrainer:
                         except RuntimeError as e:
                             if self.accelerator.is_local_main_process:
                                 shutil.rmtree(self.training_args.output_dir)
-                                shutil.rmtree(self.training_args.logging_dir)
+                                # shutil.rmtree(self.training_args.logging_dir)
                             self.accelerator.wait_for_everyone()
                             print(f"this expr's output dir and logging dir have been removed due to error \n {e}")
                             raise e
@@ -890,12 +911,12 @@ class PEFTTrainer:
         )
         self.accelerator.end_training()
         # remove all step checkpoints after training is finished
-        if self.accelerator.is_main_process:
-            # only keep lastest checkpoint's train_state.json file
-            remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
-            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-            if latest_cp is not None:
-                remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
+        # if self.accelerator.is_main_process:
+        #     # only keep lastest checkpoint's train_state.json file
+        #     remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
+        #     latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+        #     if latest_cp is not None:
+        #         remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
         # wait for last eval saving and old checkpoint removal
         self.accelerator.wait_for_everyone()
 
@@ -927,6 +948,8 @@ class PEFTTrainer:
             assert step is None
         elif mode=="eval":
             assert step is not None
+        elif mode=="traditional_test":
+            assert step is None
         else:
             raise NotImplementedError(
                 "mode must be either eval or test mode"
@@ -986,11 +1009,14 @@ class PEFTTrainer:
             ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
             self.log(ni_eval_results)
             return ni_eval_results
-        elif mode == "test":
+        elif mode == "test" or mode == "traditional_test":
             if self.data_args.dataset_name != "alpaca":
                 # free memory in test mode 
                 dataset2eval = self.test_dataset
-                dataloader2eval = self.test_dataloader
+                if mode == "test":
+                    dataloader2eval = self.test_dataloader
+                elif mode == "traditional_test":
+                    dataloader2eval = self.traditional_test_dataloader
                 ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
                 self.log(ni_eval_results)
                 return ni_eval_results
@@ -1068,32 +1094,13 @@ class PEFTTrainer:
                     weighted_acc = np.mean(np.concatenate(all_cors))
                     mmlu_result_d[f"mmlu/{k_shot}-shot/weighted_acc"] = weighted_acc
                 self.log(mmlu_result_d)
-                return mmlu_result_d
-                # print(f"mmlu/{k_shot}-shot/ average accuracy: {weighted_acc}")
-                # self.log(mmlu_result_d)
-                
-                # save results
-                # with open(os.path.join(save_dir, "metrics.json"), "w") as f:
-                #     json.dump(
-                #         {
-                #             "average_acc": weighted_acc,
-                #             "subcat_acc": {
-                #                 subcat: np.mean(np.concatenate(subcat_cors[subcat]))
-                #                 for subcat in subcat_cors
-                #             },
-                #             "cat_acc": {
-                #                 cat: np.mean(np.concatenate(cat_cors[cat]))
-                #                 for cat in cat_cors
-                #             },
-                #         },
-                #         f,
-                #     )
 
-        if mode == "test":
-            self.train_state.update({"test_eval_finished": True})
-            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-            self.train_state.save_to_json(latest_cp)
-            self.print_log("Finished test dataset evaluation...")
+                self.train_state.update({"test_eval_finished": True})
+                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+                self.train_state.save_to_json(latest_cp)
+                self.print_log("Finished test dataset evaluation...")
+                return mmlu_result_d
+
 
     def evaluate_dataset(self, dataset2eval, dataloader2eval, mode="eval", step=None):
         """
@@ -1108,6 +1115,8 @@ class PEFTTrainer:
             assert step is None
         elif mode=="eval":
             assert step is not None
+        elif mode=="traditional_test":
+            assert step is None
         else:
             raise NotImplementedError(
                 "mode must be either eval or test mode"
@@ -1126,7 +1135,10 @@ class PEFTTrainer:
             
             # free memory in test mode 
             dataset2eval = self.test_dataset
-            dataloader2eval = self.test_dataloader
+            if mode == "test":
+                dataloader2eval = self.test_dataloader
+            elif mode == "traditional_test":
+                dataloader2eval = self.traditional_test_dataloader
             best_cp_dir = None
             # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
             best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
@@ -1171,9 +1183,13 @@ class PEFTTrainer:
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
-                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning", "adapter_peft"]: # temp PEFT lora implementation
-                    generation_inputs = inputs.pop("input_ids")
-                    outputs = model.generate(generation_inputs, **inputs,
+                if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning", "adapter_peft", "prefix_tuning"]: # temp PEFT lora implementation
+                    input_ids = inputs.pop("input_ids")
+                    attention_mask = inputs.pop("attention_mask")
+                    # print(generation_inputs.shape)
+                    # print(inputs)
+                    # exit()
+                    outputs = model.generate(input_ids= input_ids, attention_mask=attention_mask, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
                                         synced_gpus = True if self.use_distributed else False,
                                         pad_token_id=self.tokenizer.eos_token_id if self.model_args.model_arch == "decoder" else self.tokenizer.pad_token_id,
@@ -1297,15 +1313,29 @@ class PEFTTrainer:
             self.load_peft_module(config)
 
         elif self.model_args.tuning_mode == "prefix_tuning":
-            from transformers.adapters import PrefixTuningConfig
-            # from peft import PrefixTuningConfig
+            # from transformers.adapters import PrefixTuningConfig
+            # config = PrefixTuningConfig(
+            #             prefix_length=self.peft_args.prefix_len,        
+            #             bottleneck_size=self.peft_args.bottleneck_size,
+            #             encoder_prefix=True,
+            #             cross_prefix=True,
+            #             dropout=self.peft_args.dropout_rate,
+            # )
+
+            from peft import PrefixTuningConfig
+            # projection: embedding -> encoder_hidden_size -> layer hidden size
             config = PrefixTuningConfig(
-                        prefix_length=self.peft_args.prefix_len,        
-                        bottleneck_size=self.peft_args.bottleneck_size,
-                        encoder_prefix=True,
-                        cross_prefix=True,
-                        dropout=self.peft_args.dropout_rate,
+                task_type=task_type,
+                inference_mode=False,
+                num_virtual_tokens=self.peft_args.prefix_len,
+                # token_dim = 512, #  assume it is set automatically
+                # prefix_projection = False
+                prefix_projection = True,
+                encoder_hidden_size=self.peft_args.bottleneck_size,
             )
+            # num_virtual_tokens: int = field(default=None, metadata={"help": "Number of virtual tokens"})
+
+
             self.load_peft_module(config)
 
         
@@ -1335,12 +1365,20 @@ class PEFTTrainer:
 
 
         elif self.model_args.tuning_mode == "ia3":
-            from transformers.adapters import IA3Config
+            from peft import IA3Config
 
             config = IA3Config(
-                dropout=self.peft_args.dropout_rate,
+                task_type=task_type,
+                inference_mode=False,
             )
             self.load_peft_module(config)
+            # from transformers.adapters import IA3Config
+
+            # config = IA3Config(
+            #     dropout=self.peft_args.dropout_rate,
+            # )
+            self.load_peft_module(config)
+
         elif self.model_args.tuning_mode == "adapter_peft":
             from peft import AdapterConfig
             if "t5" in self.model_name_or_path:
