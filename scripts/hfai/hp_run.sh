@@ -17,9 +17,9 @@ default_dataset="ni"
 default_lora_modules="q,v"
 default_random_seed=42
 
-
+default_gradient_accumulation_steps=2
 default_scheduler="linear"
-
+default_expr_dir="cache/tmp"
 # optimizer and scheduler
 default_warmup_ratio=0.03
 
@@ -228,6 +228,18 @@ if [ $script_mode == "dev" ]; then
     launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml"
     
     launch_suffix="--dev_train"
+
+elif [ $script_mode == "local0" ]; then
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed_peft_bf16.yaml"
+    # use 6 gpus
+    default_gradient_accumulation_steps=3
+    default_expr_dir="/media/nvme_1"
+    launch_suffix=""
+elif [ $script_mode == "local1" ]; then
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp_2gpu_1.yaml"
+    default_gradient_accumulation_steps=8
+    default_expr_dir="/media/nvme_1"
+    launch_suffix=""
 fi
 spcecial_arg=""
 if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
@@ -243,7 +255,19 @@ else
     exit 1
 fi
 
-launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} ${dataset_infix}  --gradient_accumulation_steps 2 --do_train ${spcecial_arg} --logging_steps ${default_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed $launch_suffix"
+if [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $LORA_RANK == "512" && $tuning_mode == "lora_peft" ]]; then
+    evaluation_args="--do_traditional_test"
+elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $ADAPATER_SIZE == "256" && $tuning_mode == "adapter_peft" ]]; then
+    evaluation_args="--do_traditional_test"
+elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-5" && $tuning_mode == "fine_tuning" ]]; then
+    evaluation_args="--do_traditional_test"
+else
+    evaluation_args=""
+fi
+
+echo $evaluation_args
+
+launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} ${dataset_infix} ${evaluation_args} --gradient_accumulation_steps ${default_gradient_accumulation_steps} --do_train ${spcecial_arg} --logging_steps ${default_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed --expr_dir ${default_expr_dir} $launch_suffix "
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo "---------------cmd $CMD_INDEX-----------------"
@@ -253,7 +277,7 @@ if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo -e "\n\n"
     echo -e "launch command: \n $launch_command"
     echo -e "\n\n"
-elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" ]];then
+elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" || $script_mode == "local0" || $script_mode == "local1" || $script_mode == "local2" ]];then
     echo $launch_command
     eval $launch_command
 fi
