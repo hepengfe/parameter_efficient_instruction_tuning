@@ -135,6 +135,14 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                     "max_num_instances_per_task": self.config.max_num_instances_per_eval_task,
                     "subset": "test"
                 }),
+            datasets.SplitGenerator(
+                name="traditional_test",
+                gen_kwargs={
+                    "path": os.path.join(split_dir, "train_tasks.txt"), 
+                    "task_dir": task_dir, 
+                    "max_num_instances_per_task": self.config.max_num_instances_per_eval_task,
+                    "subset": "traditional_test"
+                }),
         ]
 
     def _generate_examples(self, path=None, task_dir=None, max_num_instances_per_task=None, subset=None):
@@ -178,9 +186,20 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                         instances = all_instances[:100]
                     else:
                         instances = all_instances
+                    length=max_num_instances_per_task
+                    numbers = list(range(len(all_instances)))
+                    # draw 200 numbers from 0 to len(all_instances)
+                    indices = random.sample(numbers, min(length*2, len(all_instances)))
+                    train_indices = indices[:length]
+                    test_indices = indices[length:]
+
                     if max_num_instances_per_task is not None and max_num_instances_per_task >= 0:
-                        random.shuffle(instances)
-                        instances = instances[:max_num_instances_per_task]
+                        # random.shuffle(instances)
+                        # instances = instances[:max_num_instances_per_task]
+                        if subset == "train":
+                            instances = [all_instances[i] for i in train_indices]
+                        elif subset == "traditional_test":
+                            instances = [all_instances[i] for i in test_indices]
                     for idx, instance in enumerate(instances):
                         example = task_data.copy()
                         example["id"] = instance["id"]
