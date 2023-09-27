@@ -112,7 +112,7 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
         task_dir = self.config.task_dir
         length=self.config.max_num_instances_per_task
         random_seed = self.config.random_seed
-        random.seed(random_seed)
+        random.seed(42)
         numbers = list(range(2*length))
         # draw 200 numbers from 0 to len(all_instances)
         random.shuffle(numbers)
