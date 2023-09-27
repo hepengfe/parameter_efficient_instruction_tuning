@@ -164,8 +164,11 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
-
+        self.total_step = 1
         self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
+        self.load_tokenzier()
+        self.build_dataloader()
+        exit()
         assert self.label_smoother is None
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
@@ -175,11 +178,11 @@ class PEFTTrainer:
         assert self.model is not None, "model should loaded"
 
         # also resize embedding here
-        self.load_tokenzier()
+        # self.load_tokenzier()
         assert self.tokenizer is not None, "tokenizer should loaded"
         # resize token embedding will set requires_grad back to True
         # we need to set it back to False
-
+        
         if isinstance(self.model, PeftModel) and self.model_args.tuning_mode not in ["prompt_tuning", "prefix_tuning"]:
             # NOTE: for prompt tuning and prefix tuning, there is no model wrapper in peft package
             model = self.model.model
@@ -201,8 +204,8 @@ class PEFTTrainer:
                 
         trainable_params_percent = self.check_trainable_parameters()
         
-        self.total_step = -1
-        self.build_dataloader()
+        # self.total_step = -1
+        # self.build_dataloader()
         assert self.total_step > 0
         if self.model_args.tuning_mode == "fine_tuning":
             assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"
@@ -510,6 +513,7 @@ class PEFTTrainer:
                 max_num_instances_per_task=self.data_args.max_num_instances_per_task,
                 max_num_instances_per_eval_task=self.data_args.max_num_instances_per_eval_task,
                 download_mode = "reuse_dataset_if_exists" if not self.data_args.overwrite_cache else "force_redownload",
+                random_seed = self.training_args.random_seed,
             )
 
             if self.training_args.dev_run:
@@ -958,7 +962,7 @@ class PEFTTrainer:
         # model = accelerate.utils.extract_model_from_parallel(self.model)
 
         # load best checkpoint for test evaluation
-        if mode == "test":
+        if mode == "test" and self.training_args.load_best_checkpoint:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
             if self.test_eval_finished:
@@ -1139,31 +1143,32 @@ class PEFTTrainer:
                 dataloader2eval = self.test_dataloader
             elif mode == "traditional_test":
                 dataloader2eval = self.traditional_test_dataloader
-            best_cp_dir = None
-            # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-            best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
-            print("load from existing state: ", best_cp_dir)
-            assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
-            # only in this case we need to first move loaded pretrained mdoel to cpu
-            # and load trained model weights into the model
-            # then we move model back to gpu
-            if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-                self.model = self.model.to("cpu")
-                # check if class has attribute
-                if hasattr(self, "optimizer"):
-                    del self.optimizer
-                if hasattr(self, "scheduler"):
-                    del self.scheduler
-                self.accelerator._optimizers = []
-                self.accelerator._schedulers = []
-                torch.cuda.empty_cache()
-                time.sleep(60)
-                self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                time.sleep(60)
-                print(f"Moving mdoel back to gpu {self.accelerator.device}")
-                self.model = self.model.to(self.accelerator.device)
-            else:
-                self.accelerator.load_state(best_cp_dir)
+            if self.training_args.load_best_checkpoint:
+                best_cp_dir = None
+                # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
+                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
+                print("load from existing state: ", best_cp_dir)
+                assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
+                # only in this case we need to first move loaded pretrained mdoel to cpu
+                # and load trained model weights into the model
+                # then we move model back to gpu
+                if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                    self.model = self.model.to("cpu")
+                    # check if class has attribute
+                    if hasattr(self, "optimizer"):
+                        del self.optimizer
+                    if hasattr(self, "scheduler"):
+                        del self.scheduler
+                    self.accelerator._optimizers = []
+                    self.accelerator._schedulers = []
+                    torch.cuda.empty_cache()
+                    time.sleep(60)
+                    self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                    time.sleep(60)
+                    print(f"Moving mdoel back to gpu {self.accelerator.device}")
+                    self.model = self.model.to(self.accelerator.device)
+                else:
+                    self.accelerator.load_state(best_cp_dir)
 
         input_host = []
         output_host = []
