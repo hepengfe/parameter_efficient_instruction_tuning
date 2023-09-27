@@ -43,11 +43,12 @@ through an iterative peer review process to ensure their quality.
 _URL = "https://instructions.apps.allenai.org/"
 
 class NIConfig(datasets.BuilderConfig):
-    def __init__(self, *args, task_dir=None, max_num_instances_per_task=None, max_num_instances_per_eval_task=None, **kwargs):
+    def __init__(self, *args, task_dir=None, max_num_instances_per_task=None, max_num_instances_per_eval_task=None, random_seed = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.task_dir: str = task_dir
         self.max_num_instances_per_task: int = max_num_instances_per_task
         self.max_num_instances_per_eval_task: int = max_num_instances_per_eval_task
+        self.random_seed = random_seed if random_seed is not None else 42
 
 
 class NaturalInstructions(datasets.GeneratorBasedBuilder):
@@ -109,7 +110,15 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
 
         split_dir = self.config.data_dir
         task_dir = self.config.task_dir
-
+        length=self.config.max_num_instances_per_task
+        random_seed = self.config.random_seed
+        random.seed(42)
+        numbers = list(range(2*length))
+        # draw 200 numbers from 0 to len(all_instances)
+        random.shuffle(numbers)
+        self.indices = numbers
+        self.train_indices = self.indices[:length]
+        self.test_indices = self.indices[length:]
         return [
             datasets.SplitGenerator(
                 name=datasets.Split.TRAIN,
@@ -186,20 +195,23 @@ class NaturalInstructions(datasets.GeneratorBasedBuilder):
                         instances = all_instances[:100]
                     else:
                         instances = all_instances
-                    length=max_num_instances_per_task
-                    numbers = list(range(len(all_instances)))
-                    # draw 200 numbers from 0 to len(all_instances)
-                    indices = random.sample(numbers, min(length*2, len(all_instances)))
-                    train_indices = indices[:length]
-                    test_indices = indices[length:]
-
+                    
+                    
                     if max_num_instances_per_task is not None and max_num_instances_per_task >= 0:
+                        if len(all_instances) < 200:
+                            train_indices = list(range(100))
+                            test_indices = list(range(100, len(all_instances)))
+                        else:
+                            train_indices = self.train_indices
+                            test_indices = self.test_indices
                         # random.shuffle(instances)
                         # instances = instances[:max_num_instances_per_task]
                         if subset == "train":
-                            instances = [all_instances[i] for i in train_indices]
+                            instances = [all_instances[i] for i in train_indices if i < len(all_instances)]
                         elif subset == "traditional_test":
-                            instances = [all_instances[i] for i in test_indices]
+                            instances = [all_instances[i] for i in test_indices if i < len(all_instances)]
+                        else:
+                            instances = instances[:max_num_instances_per_task]
                     for idx, instance in enumerate(instances):
                         example = task_data.copy()
                         example["id"] = instance["id"]
