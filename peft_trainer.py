@@ -1391,7 +1391,7 @@ class PEFTTrainer:
                     task_type = TaskType.SEQ_2_SEQ_LM,
                     adapter_size = self.peft_args.adapter_size,
                     target_modules = ["encoder.block", "decoder.block"],
-                    model_config = self.model.config,
+                    model_config = self.model.config.to_dict(),
                     inference_mode=False
                 )
             elif "opt" in self.model_name_or_path:
@@ -1399,7 +1399,7 @@ class PEFTTrainer:
                     task_type = TaskType.CAUSAL_LM,
                     adapter_size = self.peft_args.adapter_size,
                     target_modules =["model.decoder.layers"],
-                    model_config = self.model.config,
+                    model_config = self.model.config.to_dict(),
                     inference_mode=False
                 )
             elif "llama" in self.model_name_or_path:
@@ -1407,7 +1407,7 @@ class PEFTTrainer:
                     adapter_size = self.peft_args.adapter_size,
                     task_type = TaskType.CAUSAL_LM,
                     target_modules = ["model.layers"],
-                    model_config = self.model.config,
+                    model_config = self.model.config.to_dict(),
                     inference_mode=False
                 )
             else:
