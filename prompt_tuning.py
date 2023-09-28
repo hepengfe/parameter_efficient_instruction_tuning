@@ -425,7 +425,7 @@ def main():
             raise ValueError(f"model name or path {model_args.model_name_or_path} is not categorized into encoder-decoder or decoder. If it's model path, please specify model_arch.")
 
 
-    
+    training_args._frozen = False
     if training_args.is_cluster:
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ['HF_DATASETS_OFFLINE']= "1"
