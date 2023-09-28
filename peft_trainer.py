@@ -168,6 +168,7 @@ class PEFTTrainer:
         self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
         self.load_tokenzier()
         self.build_dataloader()
+        # exit()
         assert self.label_smoother is None
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
