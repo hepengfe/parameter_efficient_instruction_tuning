@@ -235,11 +235,17 @@ elif [ $script_mode == "local0" ]; then
     default_gradient_accumulation_steps=3
     default_expr_dir="/media/nvme_1"
     launch_suffix=""
-elif [ $script_mode == "jieyu" ]; then
-    launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp_2gpu.yaml"
-    default_gradient_accumulation_steps=8 # 2 x 8 
+elif [ $script_mode == "jieyu0" ]; then
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_no_dist.yaml"
+    default_gradient_accumulation_steps=16 # 1x16
     default_expr_dir="/mnt/sdb1/"
     launch_suffix=""
+elif [ $script_mode == "jieyu1" ]; then
+    launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_no_dist_1.yaml"
+    default_gradient_accumulation_steps=16 # 1x16
+    default_expr_dir="/mnt/sdb1/"
+    launch_suffix=""
+
 elif [ $script_mode == "yizhong" ]; then
     launch_prefix="accelerate launch --config_file configs/accelerate_A6000/default_config_ddp_2gpu.yaml"
     default_gradient_accumulation_steps=8
@@ -282,7 +288,7 @@ if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo -e "\n\n"
     echo -e "launch command: \n $launch_command"
     echo -e "\n\n"
-elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" || $script_mode == "local0" || $script_mode == "local1" || $script_mode == "local2" || $script_mode == "jieyu" || $script_mode == "yizhong" ]];then
+elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" || $script_mode == "local0" || $script_mode == "local1" || $script_mode == "local2" || $script_mode == "jieyu0" ||  $script_mode == "jieyu1" || $script_mode == "yizhong" ]];then
     echo $launch_command
     eval $launch_command
 fi
