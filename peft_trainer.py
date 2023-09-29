@@ -168,7 +168,6 @@ class PEFTTrainer:
         self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
         self.load_tokenzier()
         self.build_dataloader()
-        # exit()
         assert self.label_smoother is None
         # model needs to be loaded on all machines
         self.load_model_n_peft_module()
@@ -445,7 +444,8 @@ class PEFTTrainer:
             assert len(self.test_dataset) % min_test_data_size_per_process == 0, f"test dataset size {len(self.test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
             assert len(self.traditional_test_dataset) % min_test_data_size_per_process == 0, f"traditional test dataset size {len(self.traditional_test_dataset)} must be divisible by number of processes*test_batch_size {min_test_data_size_per_process}"
         self.load_dataloader()
-
+        if self.training_args.early_exit:
+            exit()
 
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
@@ -513,7 +513,7 @@ class PEFTTrainer:
                 max_num_instances_per_task=self.data_args.max_num_instances_per_task,
                 max_num_instances_per_eval_task=self.data_args.max_num_instances_per_eval_task,
                 download_mode = "reuse_dataset_if_exists" if not self.data_args.overwrite_cache else "force_redownload",
-                random_seed = self.training_args.random_seed,
+                random_seed = 42, # it will affect the cache file name, so better fix it
             )
 
             if self.training_args.dev_run:
@@ -998,9 +998,9 @@ class PEFTTrainer:
                 self.accelerator._optimizers = []
                 self.accelerator._schedulers = []
                 torch.cuda.empty_cache()
-                time.sleep(60)
+                # time.sleep(60)
                 self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                time.sleep(60)
+                # time.sleep(60)
                 print(f"Moving mdoel back to gpu {self.accelerator.device}")
                 self.model = self.model.to(self.accelerator.device)
             else:
@@ -1031,7 +1031,10 @@ class PEFTTrainer:
                 mmlu_result_d = {}
                 mmlu_data_dir="data/eval/mmlu/data"
                 save_dir = os.path.join(self.training_args.output_dir , "mmlu_eval")
-                if not os.path.exists(save_dir):
+                # only make dir on main process
+                # if the file exists, the condition will be false
+                # if not on main process, the condition will be false
+                if self.accelerator.is_main_process and not os.path.exists(save_dir):
                     os.makedirs(save_dir)
 
                 subjects = sorted(
@@ -1162,9 +1165,9 @@ class PEFTTrainer:
                     self.accelerator._optimizers = []
                     self.accelerator._schedulers = []
                     torch.cuda.empty_cache()
-                    time.sleep(60)
+                    # time.sleep(60)
                     self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                    time.sleep(60)
+                    # time.sleep(60)
                     print(f"Moving mdoel back to gpu {self.accelerator.device}")
                     self.model = self.model.to(self.accelerator.device)
                 else:
@@ -1538,9 +1541,11 @@ class PEFTTrainer:
 
                 # if no checkpoint, then remove the folder and re-init the tracker
                 if latest_cp is None and self.accelerator.is_local_main_process:
-                    # if os.path.exists(self.training_args.output_dir):
-                    shutil.rmtree(self.training_args.output_dir)
-                    logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+                    # if os.path.exists(self.training_args.output_dir) and not not os.listdir(self.training_args.output_dir):
+                    #     shutil.rmtree(self.training_args.output_dir)
+                    #     logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+                    logger.warn(f"no checkpoint found but folder exists, check the folder {self.training_args.output_dir}")
+                    exit()
                     time.sleep(3)
 
                 # try to load the latest checkpoint
@@ -1568,9 +1573,9 @@ class PEFTTrainer:
                     if self.test_eval_finished:
                         self.print_log("test evaluation is already finished,  exit...")
                         exit()
-                    time.sleep(60)
+                    # time.sleep(60)
                     self.accelerator.load_state(latest_cp)
-                    time.sleep(60)
+                    # time.sleep(60)
                     loaded = True
                 except Exception as e:
                     # it can be state dict file corrupted or model checkpoint corrupted
@@ -1584,7 +1589,8 @@ class PEFTTrainer:
                     continue
             else:
                 self.print_log(f"no previous run found, create a new one at {self.training_args.output_dir}")
-                os.makedirs(self.training_args.output_dir)
+                if self.accelerator.is_main_process and not os.path.exists(self.training_args.output_dir):
+                    os.makedirs(self.training_args.output_dir)
                 self.accelerator.init_trackers(
                         self.training_args.run_name,
                         config=self.train_state.state_dict,
