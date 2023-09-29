@@ -405,6 +405,16 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         metadata={ "help": "The random seed." },
     )
 
+    early_exit : bool = field(
+        default=False,
+        metadata={ "help": "Whether to use early exit after dataset processing." },
+    )
+
+    load_best_checkpoint: bool = field(
+        default=True,
+        metadata={ "help": "Whether to load best checkpoint." },
+    )
+
 ENCODER_DECODER_MODEL_NAMES = ["t5"]
 DECODER_MODEL_NAMES = ["opt", "llama", "gpt2"]
 def main():
@@ -433,7 +443,21 @@ def main():
         os.environ["WANDB_MODE"] = "offline"
         # logging_dir
         training_args.logging_dir = os.path.join(
-            "/ceph-jd/pub/jupyter/wangyizhong/notebooks/", training_args.logging_dir)  
+            "/ceph-jd/pub/jupyter/wangyizhong/notebooks/", training_args.logging_dir)
+        
+        training_args.expr_dir = os.path.join(
+            "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit", training_args.expr_dir)
+        training_args.cache_dir = os.path.join(
+            "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit", training_args.cache_dir)
+        data_args.task_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/data/tasks"
+        data_args.data_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/data/splits/" + data_args.data_dir.split("/")[-1]
+        print("---- cluster mode ----")
+        print("logging_dir: ", training_args.logging_dir)
+        print("expr_dir: ", training_args.expr_dir)
+        print("cache_dir: ", training_args.cache_dir)
+        print("task_dir: ", data_args.task_dir)
+        print("data_dir: ", data_args.data_dir)
+        print("---- cluster mode ----")
         logging.getLogger().setLevel(logging.ERROR) # set all logging to error to prevent error message in warnings
     else:
         training_args.logging_dir = os.path.join("./logs", training_args.logging_dir)
