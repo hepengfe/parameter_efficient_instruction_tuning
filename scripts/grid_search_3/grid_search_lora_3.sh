@@ -6,9 +6,9 @@ i=0
 export LABEL_SMOOTHING_FACTOR=0
 export DROPOUT_RATE=0.1
 export WEIGHT_DECAY=0.01
-export LR=5e-4
+export LR=1e-4
 export RANDOM_SEED=$random_seed
-lora_r=32
+lora_r=512
 
 for model_name in "${MODEL_NAMES[@]}"; do
 
