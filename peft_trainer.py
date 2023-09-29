@@ -1584,7 +1584,7 @@ class PEFTTrainer:
                     continue
             else:
                 self.print_log(f"no previous run found, create a new one at {self.training_args.output_dir}")
-                os.makedirs(self.training_args.output_dir, exist_ok = True)
+                os.makedirs(self.training_args.output_dir)
                 self.accelerator.init_trackers(
                         self.training_args.run_name,
                         config=self.train_state.state_dict,
