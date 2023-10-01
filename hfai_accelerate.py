@@ -37,9 +37,18 @@ def main():
     subprocess.check_output('ninja --version'.split())
 
     hfai_proj_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "7,6,5,4,3,2,1,0"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "6,7,5,4,3,2,1,0"
+    # NCCL_IB_GID_INDEX=3 NCCL_DEBUG=INFO
+    os.environ["NCCL_DEBUG"] = "INFO"
+    # os.environ["NCCL_IB_GID_INDEX"] = "3"
+    os.environ["TORCH_DISTRIBUTED_DEBUG"]="INFO"
+    # os.environ["NCCL_P2P_LEVEL"]="NVL"
+    # os.environ["NCCL_P2P_DISABLE"]="1"
     if args.config_file is not None:
         args.config_file = os.path.join(hfai_proj_dir, args.config_file)
+
+
+
 
     # Run
     args.func(args)
