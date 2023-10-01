@@ -69,10 +69,10 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
     folders = os.listdir(search_dir) # it also include all random seeds
 
     # rename all files to have random seed suffix
-    for f in folders:
-        if "seed" in f:
-            continue
-        os.rename(os.path.join(search_dir, f), os.path.join(search_dir, f"{f}_random_seed_{42}"))
+    # for f in folders:
+    #     if "seed" in f:
+    #         continue
+    #     os.rename(os.path.join(search_dir, f), os.path.join(search_dir, f"{f}_random_seed_{42}"))
 
     train_state = None
     best_train_state = {}
@@ -175,7 +175,7 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
                         # filter non-optimal lr which are not needed for expr type other than 1
                         lr = train_state["training_args"]['training_args/run_name'].split("_")[train_state["training_args"]['training_args/run_name'].split("_").index("lr")+1]
                         if args.peft_method == "lora_adapter" or args.peft_method == "lora_peft":
-                            if lr != "5e-4":
+                            if lr != "1e-4":
                                 # d[key][metric_key] = d[key].get(metric_key, []) + [None]
                                 print(f"lr {lr} not optimal for {args.peft_method}, skip results...")
                                 continue
@@ -195,6 +195,7 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
                                 
                                 best_metric_val = train_state["state_dict"][metric_key]
                                 d[key][metric_key] = d[key].get(metric_key, []) + [best_metric_val]
+                                print(f"parameter count: {train_state['state_dict']['trainable_params']} trainable ratio {train_state['state_dict']['trainable_ratio']} and total model params {train_state['state_dict']['total_model_params']}")
                                 if args.show_all:
                                     # print_state_info(train_state)
                                     if args.peft_method == "lora_adapter" or args.peft_method == "lora_peft":
@@ -469,7 +470,7 @@ if __name__ == "__main__":
                 for index, row in subset.iterrows():
                     if (args.peft_method == "adapter" or args.peft_method == "adapter_peft") and row['peft_k'] != "256":
                         continue
-                    if "lora" in args.peft_method and row['peft_k'] != "32":
+                    if "lora" in args.peft_method and row['peft_k'] != "512":
                         continue
                     print(row)
                     color = np.random.rand(3,)
@@ -480,9 +481,11 @@ if __name__ == "__main__":
             plt.xlabel('Data Size')
             plt.ylabel('RougeL Score')
 
+
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             plt.legend(by_label.values(), by_label.keys())
+
 
         elif args.plot_interest == "model_size":
             assert args.expr_type  == "3", "only expr_type 3 has model size plot"
