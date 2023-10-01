@@ -31,10 +31,10 @@ declare -A model_name2path
 declare -A lora_rank2bs
 declare -A adapter_size2bs
 
-adapter_size2bs=(["8"]=10 ["32"]=10 ["64"]=10 ["128"]=10 ["256"]=2)
+adapter_size2bs=(["8"]=10 ["32"]=10 ["64"]=10 ["128"]=10 ["256"]=2 ["512"]=1)
 
 model_name2path=(["t5"]="google/t5-xl-lm-adapt" ["t5-11b"]="google/t5-xxl-lm-adapt" ["opt"]="facebook/opt-13b" ["opt-350m"]="facebook/opt-350m" ["opt-2.7b"]="facebook/opt-2.7b" ["opt-6.7b"]="facebook/opt-6.7b" ["llama"]="facebook/llama-7b" ["gpt2"]="gpt2")
-lora_rank2bs=(["8"]=15 ["32"]=15 ["64"]=15 ["128"]=15 ["256"]=10 ["512"]=5)
+lora_rank2bs=(["8"]=15 ["32"]=10 ["64"]=15 ["128"]=10 ["256"]=5 ["512"]=2)
 
 # one can pass either abbreviation or a full path into MODEL_NAME
 if [ -v model_name2path["$MODEL_NAME"] ]; then
@@ -81,7 +81,6 @@ elif [ $tuning_mode == "adapter_peft" ]; then
     if [[ $model == "facebook/opt-13b" || $model == "google/t5-xxl-lm-adapt" ]]; then
         config_file="configs/hfai/default_config_deepspeed_hfai_large_model.yaml"
         eval_bs=2
-        
     else
         config_file="configs/hfai/default_config_ddp.yaml"
     fi
@@ -235,6 +234,9 @@ elif [ $script_mode == "local0" ]; then
     default_gradient_accumulation_steps=3
     default_expr_dir="/media/nvme_1"
     launch_suffix=""
+elif [ $script_mode == "dataset" ]; then
+    launch_prefix="python "
+    launch_suffix="--dev_train --is_cluster"
 elif [ $script_mode == "jieyu0" ]; then
     launch_prefix="accelerate launch --config_file configs/accelerate_rtx3090/default_config_no_dist.yaml"
     default_gradient_accumulation_steps=16 # 1x16
@@ -252,9 +254,12 @@ elif [ $script_mode == "yizhong" ]; then
     default_expr_dir="/media/nvme_1"
     launch_suffix=""
 fi
+
 spcecial_arg=""
 if [[  $script_mode == "hfai_rm" || $script_mode == "dev_rm_cmd" ]]; then
     spcecial_arg="--overwrite_output_dir"
+elif [ $script_mode == "dataset" ]; then
+    spcecial_arg="--early_exit"
 fi
 
 if [ $dataset == "ni" ]; then
@@ -266,6 +271,8 @@ else
     exit 1
 fi
 
+
+
 if [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $LORA_RANK == "512" && $tuning_mode == "lora_peft" ]]; then
     evaluation_args="--do_traditional_test"
 elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $ADAPATER_SIZE == "256" && $tuning_mode == "adapter_peft" ]]; then
@@ -275,6 +282,8 @@ elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-l
 else
     evaluation_args=""
 fi
+
+
 
 echo $evaluation_args
 
@@ -288,7 +297,7 @@ if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
     echo -e "\n\n"
     echo -e "launch command: \n $launch_command"
     echo -e "\n\n"
-elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" || $script_mode == "local0" || $script_mode == "local1" || $script_mode == "local2" || $script_mode == "jieyu0" ||  $script_mode == "jieyu1" || $script_mode == "yizhong" ]];then
+elif [[ $script_mode == "hfai" || $script_mode == "dev" || $script_mode == "hfai_rm" || $script_mode == "dataset" || $script_mode == "local0" || $script_mode == "local1" || $script_mode == "local2" || $script_mode == "jieyu0" ||  $script_mode == "jieyu1" || $script_mode == "yizhong" ]];then
     echo $launch_command
     eval $launch_command
 fi
