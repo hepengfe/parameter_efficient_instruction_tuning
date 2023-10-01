@@ -7,4 +7,5 @@ deepspeed==0.9.3
 tensorboard
 SentencePiece
 # 0.20.3 npu issue that requires by deepspeed
-accelerate==0.21.0 # npu fixed
+accelerate==0.22.0 # npu fixed
+scipy
