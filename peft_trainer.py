@@ -1220,10 +1220,12 @@ class PEFTTrainer:
                 return
             
             # free memory in test mode 
-            dataset2eval = self.test_dataset
+            
             if mode == "test":
+                dataset2eval = self.test_dataset
                 dataloader2eval = self.test_dataloader
             elif mode == "traditional_test":
+                dataset2eval = self.traditional_test_dataset
                 dataloader2eval = self.traditional_test_dataloader
             if self.training_args.load_best_checkpoint:
                 best_cp_dir = None
@@ -1255,7 +1257,6 @@ class PEFTTrainer:
                     self.model = self.model.to(self.accelerator.device)
                 else:
                     self.accelerator.load_state(best_cp_dir)
-
         input_host = []
         output_host = []
         label_host = []
