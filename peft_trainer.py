@@ -22,7 +22,7 @@ import transformers
 from peft import get_peft_model, TaskType, PromptTuningConfig
 from util.ni_dataset_collator import DataCollatorForNI
 from copy import deepcopy
-from utils import get_latest_checkpoint, remove_old_checkpoints, remove_files_and_folders_other_than
+from utils import get_latest_checkpoint, remove_old_checkpoints, remove_files_and_folders_other_than, verify_complete_random_states, check_all_checkpoints_and_remove
 import json
 from accelerate import Accelerator
 from tqdm.auto import tqdm
@@ -74,6 +74,8 @@ class TrainingState:
             "best_metric_val":best_metric_val,
             "eval_metric":eval_metric,
             "test_eval_finished": False,
+            "traditional_test_eval_finished": False,
+            "train_finished": False,
             "trainable_params": 0,
             "total_model_params": 0,
             "trainable_ratio": 0,
@@ -83,6 +85,10 @@ class TrainingState:
     def get(self, k):
         if k in self.state_dict:
             return self.state_dict[k]
+        elif "train_finished" == k: # if it's not in k, then it's false
+            return False
+        elif "traditional_test_eval_finished" == k:
+            return False
         else:
             if hasattr(self, k):
                 return getattr(self,k)
@@ -141,7 +147,9 @@ class PEFTTrainer:
         self.start_epoch = 0
         self.start_step = 0
         self.global_step = 0
+        self.train_finished = False
         self.test_eval_finished = False
+        self.traditional_test_eval_finished = False
         
         self.model_lm_head_weight = None
         if self.model_args.model_arch != "decoder" and self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
@@ -755,27 +763,72 @@ class PEFTTrainer:
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         expected_num_train_step_per_epoch = len(self.train_dataset) // train_bs_per_step
         assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
+        
 
 
 
         loss = 0
+
+        # handle early stopping separately
+        # parallel accessing one file is fine
+        if os.path.exists(self.training_args.output_dir):
+            # if not os.listdir(self.training_args.output_dir):
+            #     print("output dir is ", self.training_args.output_dir)
+                # exit("output dir exists but empty, please double check and remove it")
+                # shutil.rmtree(self.training_args.output_dir)
+            self.print_log("load from existing state", print_step=False)
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            if latest_cp is not None:
+                try:
+                    self.train_state.load_from_json(latest_cp)
+                    self.test_eval_finished =self.train_state.get("test_eval_finished")
+                    if self.test_eval_finished:
+                        self.print_log("test evaluation is already finished,  exit...")
+                        exit()
+                # very rare that train state is not saved correctly
+                except Exception as e:
+                    # posssibly train state is not saved correctly
+                    if self.accelerator.is_local_main_process:
+                        print(f"train state is not saved correctly, remove {latest_cp} and restart training")
+                        shutil.rmtree(latest_cp)
+                    raise e
+                
+                
 
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
         # NOTE: only main process load previous run
         # single process bc there could file access/deletion conflict and it returns an object
         if self.accelerator.is_local_main_process:
-            loaded = self.load_previous_run()
-    
-
-
-        
+            self.load_previous_run()
+            print(f"{self.accelerator.device}: finished loading previous run")
+        self.accelerator.wait_for_everyone()
+        # after main process checked and finished loading random states
+        if not self.accelerator.is_local_main_process:
+            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+            # latest_cp is guaranteed to be not None if there is expr history
+            # if latest cp is not None, it's wrong
+            # if it's None, it's a new expr
+            if latest_cp is not None:
+                self.accelerator.load_state(latest_cp)
+                print(f"{self.accelerator.device}: finished loading previous run")
         # NOTE: gradient accumulation step is not unrelated to the computation below
 
-        
-        if self.global_step >= self.total_step:
+        # async loading
+        time.sleep(0.2 * self.accelerator.device.index)
+        if latest_cp:
+            self.train_state.load_from_json(latest_cp)
+            self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
+            self.train_finished = self.train_state.get("train_finished")
+            self.global_step = self.train_state.get("global_step")
+            self.start_epoch = self.train_state.get("epoch")
+        print(f"{self.accelerator.device}: train_finished state: {self.train_finished}")
+
+        if self.global_step + 1 >= self.total_step or self.train_finished:
             self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
             self.print_log("Ending training...")
+            self.train_state.update({"train_finished": True})
+            self.train_state.save_to_json(latest_cp)
             return
 
 
@@ -817,9 +870,10 @@ class PEFTTrainer:
         
 
         for epoch in range(self.start_epoch, self.training_args.num_train_epochs):
-            if self.accelerator.is_local_main_process:
-                self.print_log(f"------------new epoch: {epoch} global_step: {self.global_step}")
-            for step, inputs in enumerate(self.train_dataloader, start=self.start_step-1):
+            # it can show the processes to reach here
+            self.print_log(f"------------{self.accelerator.device}: new epoch: {epoch} global_step: {self.global_step}")
+            
+            for step, inputs in enumerate(self.train_dataloader, start=self.start_step):
                 self.train_state.update(
                             {
                                 "epoch": epoch,
@@ -874,7 +928,9 @@ class PEFTTrainer:
                         if hfai.client.receive_suspend_command(): 
                             self.print_log(f"Received suspend command, saving model at {self.global_step} steps")
                             self.save(self.global_step)
+                            self.accelerator.wait_for_everyone()
                             self.print_log(f"Model checkpoint at {self.global_step} steps is saved. Going suspend...")
+                            
                             hfai.client.go_suspend()
                             
 
@@ -990,12 +1046,24 @@ class PEFTTrainer:
                     print("logging folder removed, please rerun the script to restart training")
                 raise e
 
-            print("load from existing state: ", best_cp_dir)
+            print(f"{self.accelerator.device}: load from existing state: ", best_cp_dir)
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
+
+
+            if self.training_args.is_cluster and not verify_complete_random_states(best_cp_dir):
+                shutil.rmtree(best_cp_dir)
+                check_all_checkpoints_and_remove(self.training_args.output_dir)
+                exit(f"Not found complete random states in {best_cp_dir} remove the best checkpoint folder: {best_cp_dir}, exiting...")
+                
             # only in this case we need to first move loaded pretrained mdoel to cpu
             # and load trained model weights into the model
             # then we move model back to gpu
             if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
+                # self.accelerator.load_state(best_cp_dir)
+                # with self.accelerator.main_process_first():
+                    # self.accelerator.load_state(best_cp_dir)
+
+
                 self.model = self.model.to("cpu")
                 del self.optimizer
                 del self.scheduler
@@ -1003,9 +1071,14 @@ class PEFTTrainer:
                 self.accelerator._schedulers = []
                 torch.cuda.empty_cache()
                 # time.sleep(60)
+
+
+                # self.accelerator.load_state(best_cp_dir)
+                self.accelerator.wait_for_everyone()
                 self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                # time.sleep(60)
-                print(f"Moving mdoel back to gpu {self.accelerator.device}")
+                # print(f"Moving mdoel back to gpu {self.accelerator.device}")
+                # # time.sleep(60)
+                self.accelerator.wait_for_everyone()
                 self.model = self.model.to(self.accelerator.device)
             else:
                 self.accelerator.load_state(best_cp_dir)
@@ -1105,8 +1178,10 @@ class PEFTTrainer:
                     weighted_acc = np.mean(np.concatenate(all_cors))
                     mmlu_result_d[f"mmlu/{k_shot}-shot/weighted_acc"] = weighted_acc
                 self.log(mmlu_result_d)
-
-                self.train_state.update({"test_eval_finished": True})
+                if mode == "test":
+                    self.train_state.update({"test_eval_finished": True})
+                elif mode == "traditional_test":
+                    self.train_state.update({"traditional_test_eval_finished": True})
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                 self.train_state.save_to_json(latest_cp)
                 self.print_log("Finished test dataset evaluation...")
@@ -1156,6 +1231,10 @@ class PEFTTrainer:
                 best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
                 print("load from existing state: ", best_cp_dir)
                 assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
+                if self.training_args.is_cluster and not verify_complete_random_states(best_cp_dir):
+                    shutil.rmtree(best_cp_dir)
+                    check_all_checkpoints_and_remove(self.training_args.output_dir)
+                    exit(f"Not found complete random states in {best_cp_dir} for testing, removed the best checkpoint folder: {best_cp_dir}, exiting...")
                 # only in this case we need to first move loaded pretrained mdoel to cpu
                 # and load trained model weights into the model
                 # then we move model back to gpu
@@ -1320,7 +1399,7 @@ class PEFTTrainer:
                 task_type=task_type,
                 num_virtual_tokens=self.peft_args.prompt_len,
                 inference_mode=False,
-                device= str(self.accelerator.device),
+                # device= str(self.accelerator.device),
                 # prompt_tuning_init="TEXT",
                 # prompt_tuning_init_text=prompt_tuning_init_text,
                 # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
@@ -1401,7 +1480,7 @@ class PEFTTrainer:
                     task_type = TaskType.SEQ_2_SEQ_LM,
                     adapter_size = self.peft_args.adapter_size,
                     target_modules = ["encoder.block", "decoder.block"],
-                    model_config = self.model.config.to_dict(),
+                    model_config = self.model.config,
                     inference_mode=False
                 )
             elif "opt" in self.model_name_or_path:
@@ -1492,7 +1571,7 @@ class PEFTTrainer:
         
         if save_best_checkpoint is True, then save to best checkpoint folder path.
         """
-        
+        self.accelerator.wait_for_everyone()
         start_time = time.time()
         cp_folder_name = f"checkpoint-{global_step}"
         # remove old checkpoint if eval and has a better checkpoint
@@ -1506,10 +1585,24 @@ class PEFTTrainer:
             # checkpoint_folder_path_to_save = self.training_args.output_dir
             checkpoint_dir_path = os.path.join(self.training_args.output_dir)
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
-        
-        # 
-        self.accelerator.save_state(checkpoint_folder_path_to_save)
+        self.accelerator.wait_for_everyone()
+        if self.training_args.is_cluster:
+            save_counter = 0
+            while not verify_complete_random_states(checkpoint_folder_path_to_save):
+                self.accelerator.wait_for_everyone()
+                self.accelerator.save_state(checkpoint_folder_path_to_save)
+                # make sure two savings are async
+                self.accelerator.wait_for_everyone()
+                save_counter +=1
+                if save_counter > 10:
+                    raise ValueError(f"{self.accelerator.device}: tried save accelerator state to {checkpoint_folder_path_to_save} after {save_counter} times but failed. please check the folder state {checkpoint_folder_path_to_save}")
 
+            print(f"{self.accelerator.device}: tried save accelerator state to {checkpoint_folder_path_to_save} after {save_counter} times")
+        else:
+            self.accelerator.wait_for_everyone()
+            self.accelerator.save_state(checkpoint_folder_path_to_save)
+            # make sure two savings are async
+            self.accelerator.wait_for_everyone()
         # save new train state no matter if it's best checkpoint
         # save train state earlier than model
         if self.accelerator.is_main_process:
@@ -1517,7 +1610,6 @@ class PEFTTrainer:
             if remove_old_cp:
                 remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
         self.print_log(f"save accelerator state to {checkpoint_folder_path_to_save}")
-
         # save sharded checkpoint into another model
         sharded_model_path = os.path.join(checkpoint_folder_path_to_save, "save_pretrained")
         if save_best_checkpoint:
@@ -1537,16 +1629,19 @@ class PEFTTrainer:
                     if hasattr(unwrapped_model, "save_all_adapters"):
                         unwrapped_model.save_all_adapters(sharded_model_path)
 
+        self.accelerator.wait_for_everyone()
         if self.accelerator.is_main_process:
             print("Model saving time in seconds:", time.time() - start_time)
         if self.accelerator.is_main_process and remove_old_cp:
             remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
+        
 
     def load_previous_run(self):
         """
         load previous run from checkpoint folder, if failed, then init a new run.
         """
         loaded = False
+        trial_times = 0 # record how many times we have tried to load from existing state, if there are more than 5 times of failure, then remove the output dir
         while not loaded:
             if os.path.exists(self.training_args.output_dir):
                 # if not os.listdir(self.training_args.output_dir):
@@ -1555,7 +1650,10 @@ class PEFTTrainer:
                     # shutil.rmtree(self.training_args.output_dir)
                 self.print_log("load from existing state", print_step=False)
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-                
+                # if latest cp is not None and is in cluster environment, then check if it has complete random states
+                if self.training_args.is_cluster and latest_cp is not None and  not verify_complete_random_states(latest_cp):
+                    check_all_checkpoints_and_remove(self.training_args.output_dir)
+                    latest_cp = None
 
                 # if no checkpoint, then remove the folder and re-init the tracker
                 # if latest_cp is None:
@@ -1576,13 +1674,14 @@ class PEFTTrainer:
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                     )
                     self.start_epoch = self.train_state.get("epoch")
-                    self.start_step = self.train_state.get("step")
+                    # self.start_step = self.train_state.get("step")
+                    self.start_step = int(latest_cp.split("-")[-1])
                     self.global_step =  self.train_state.get("global_step")
                     # NOTE: hacky way to force one more training step before evaluation to prevent NCCL issue when reloading
-                    if self.global_step >= self.total_step:
-                        self.global_step = self.total_step - 20 # 20 > grad accumulation steps
-                    else:
-                        self.global_step -= 20
+                    # if self.global_step >= self.total_step:
+                    #     self.global_step = self.total_step - 20 # 20 > grad accumulation steps
+                    # else:
+                    #     self.global_step -= 20
                     self.test_eval_finished = self.train_state.get("test_eval_finished")
                     self.best_metric_step = self.train_state.get("best_metric_step")
                     # if training is finished, then only load the state
@@ -1590,33 +1689,76 @@ class PEFTTrainer:
                     if self.global_step >= self.total_step:
                         self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
                         self.print_log("Only train state is loaded...")
+                        # self.train_finished = True
+                        self.train_state.update({"train_finished": True})
+                        self.train_state.save_to_json(latest_cp)
                         return True
+                    
                     
                     # only train state exists in latest checkpoint
                     # so no further state loading
-                    if self.test_eval_finished:
-                        self.print_log("test evaluation is already finished,  exit...")
-                        exit()
+                    # if self.test_eval_finished:
+                    #     self.print_log("test evaluation is already finished,  exit...")
+                    #     exit()
+
                     # time.sleep(60)
-                    print("loading from accelerator state")
+                    # check it earlier
+                    # if self.training_args.is_cluster and not verify_complete_random_states(latest_cp):
+                    #     raise ValueError(f"Not found complete random states in {latest_cp} for testing.")
+                    print(f"{self.accelerator.device}:  loading from accelerator state")
                     self.accelerator.load_state(latest_cp)
                     # time.sleep(60)
                     loaded = True
                 except Exception as e:
+                    trial_times += 1
+                    error_message = str(e)
+                    
                     # it can be state dict file corrupted or model checkpoint corrupted
                     # in any case, remove the checkpoint folder and reload the previous one
                     # remove the latest checkpoint
                     # output_dir might already has been removed
-                    if latest_cp is not None and self.accelerator.is_local_main_process:
+                    if trial_times > 10:
+                        print("Tried to load more than 10 times, remove the output dir and re-init the tracker")
+                        shutil.rmtree(self.training_args.output_dir)
+                        self.start_epoch = 0
+                        self.start_step = 0
+                        self.global_step = 0
+                    elif "state_dict" in error_message:
+                        print("state dict file corrupted, remove the latest checkpoint and reload the previous one")
+                        shutil.rmtree(latest_cp)
+                    elif "random states" in error_message:
+                        print(f"Not found complete random states in {latest_cp} for testing. Removing the folder...")
+                        shutil.rmtree(latest_cp)
+                    elif latest_cp is not None and self.accelerator.is_local_main_process:
                         self.print_log(f"remove the latest checkpoint {latest_cp} due to\n\n {e}")
                         self.print_log(f"latest checkpoint is not None but has the loading issue")
                         self.print_log(f"output dir is {self.training_args.output_dir}, consider remove it")
                         shutil.rmtree(latest_cp)
-                        exit(f"latest checkpoint is not None and has the loading issue {e}. So it's removed.")
-                    elif latest_cp is None:
-                        if os.path.exists(self.training_args.output_dir) and not os.listdir(self.training_args.output_dir):
-                            shutil.rmtree(self.training_args.output_dir)
-                            logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+                        # exit(f"latest checkpoint is not None and has the loading issue {e}. So it's removed.")
+                    elif latest_cp is None and self.accelerator.is_local_main_process:
+                        if os.path.exists(self.training_args.output_dir):
+                            if "best_checkpoint" in os.listdir(self.training_args.output_dir):
+                                # if no latest checkpoint but has best checkpoint, then copy best checkpoint to output dir
+                                best_cp_dir = os.path.join(self.training_args.output_dir, "best_checkpoint")
+                                
+                                best_cp = get_latest_checkpoint(best_cp_dir)
+                                if best_cp is None: # not latest checkpoint and no best checkpoint to move neither
+                                    shutil.rmtree(self.training_args.output_dir)
+                                    print(f"latest checkpoint is None and no best checkpoint to move neither, remove the folder {self.training_args.output_dir} and restart the experiment")
+                                    self.start_epoch = 0
+                                    self.start_step = 0
+                                    self.global_step = 0
+                                else:
+                                    print(f"latest checkpoint is None, copy best checkpoint {best_cp} to output dir {self.training_args.output_dir}")
+                                    cp_name = os.path.basename(best_cp)
+                                    shutil.copytree(best_cp, os.path.join(self.training_args.output_dir, cp_name))
+                            else:
+                                # if no latest checkpoint and no best checkpoint, then remove the folder
+                                shutil.rmtree(self.training_args.output_dir)
+                                logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
+                                self.start_epoch = 0
+                                self.start_step = 0
+                                self.global_step = 0
                     else:
                         print("Not sure the situation raise the error instead")
                         print(f"latest checkpoint is {latest_cp}")
