@@ -815,7 +815,7 @@ class PEFTTrainer:
         # NOTE: gradient accumulation step is not unrelated to the computation below
 
         # async loading
-        time.sleep(0.2 * self.accelerator.device.index)
+        time.sleep(0.5 * self.accelerator.device.index)
         if latest_cp:
             self.train_state.load_from_json(latest_cp)
             self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
@@ -1024,8 +1024,11 @@ class PEFTTrainer:
         if mode == "test" and self.training_args.load_best_checkpoint:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
-            if self.test_eval_finished:
+            if self.test_eval_finished and mode == "test":
                 self.print_log("test evaluation is done, finish...")
+                exit()
+            if self.traditional_test_eval_finished and mode == "traditional_test":
+                self.print_log("traditional test evaluation is done, finish...")
                 exit()
             best_cp_dir = None
             try:
@@ -1212,7 +1215,7 @@ class PEFTTrainer:
         if mode == "eval":
             dataset2eval = self.eval_dataset
             dataloader2eval = self.eval_dataloader
-        elif mode == "test":
+        elif mode in ["test", "traditional_test"]:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
             if self.test_eval_finished:
@@ -1255,6 +1258,10 @@ class PEFTTrainer:
                     self.model = self.model.to(self.accelerator.device)
                 else:
                     self.accelerator.load_state(best_cp_dir)
+        else:
+            raise NotImplementedError(
+                "mode must be either eval or test mode or traditional_test mode"
+            )
 
         input_host = []
         output_host = []
