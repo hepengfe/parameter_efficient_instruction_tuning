@@ -784,7 +784,7 @@ class PEFTTrainer:
                     self.test_eval_finished =self.train_state.get("test_eval_finished")
                     if self.test_eval_finished:
                         self.print_log("test evaluation is already finished,  exit...")
-                        exit()
+                        return
                 # very rare that train state is not saved correctly
                 except Exception as e:
                     # posssibly train state is not saved correctly
@@ -814,6 +814,8 @@ class PEFTTrainer:
                 print(f"{self.accelerator.device}: finished loading previous run")
         # NOTE: gradient accumulation step is not unrelated to the computation below
 
+        # reload latest checkpoint
+        latest_cp = get_latest_checkpoint(self.training_args.output_dir)
         # async loading
         time.sleep(0.5 * self.accelerator.device.index)
         if latest_cp:
@@ -1489,7 +1491,7 @@ class PEFTTrainer:
                     task_type = TaskType.SEQ_2_SEQ_LM,
                     adapter_size = self.peft_args.adapter_size,
                     target_modules = ["encoder.block", "decoder.block"],
-                    model_config = self.model.config,
+                    model_config = self.model.config.to_dict(),
                     inference_mode=False
                 )
             elif "opt" in self.model_name_or_path:
