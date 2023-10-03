@@ -272,3 +272,20 @@ def eval_hf_model(args, subject, model, tokenizer, dev_df, test_df, batch_size=1
     all_probs = np.array(all_probs)
     print("Average accuracy {:.3f} - {}".format(acc, subject))
     return cors, acc, all_probs
+
+def verify_complete_random_states(cp_dir):
+    # check if 8 random states is in the checkpoint dir
+    for i in range(8):
+        if not os.path.exists(os.path.join(cp_dir, f"random_states_{i}.pkl")):
+            print(f"random_states_{i}.pkl is not in {cp_dir}")
+            return False
+    return True
+
+def check_all_checkpoints_and_remove(proj_dir):
+    for root, dirs, files in os.walk(proj_dir):
+        for d in dirs:
+            if d.startswith("checkpoint"):
+                cp_dir = os.path.join(root, d)
+                if not verify_complete_random_states(cp_dir):
+                    print(f"checkpoint {cp_dir} random states is not complete, removing it")
+                    shutil.rmtree(cp_dir)
