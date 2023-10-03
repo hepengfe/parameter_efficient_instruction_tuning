@@ -5,6 +5,7 @@ import argparse
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+from typing import Optional
 log_dir = "cache/tmp"
 
 "logs/ni/default_train_707_val_50/google_t5-xl-lm-adapt/lora_adapter/r_8_alpha_8_modules_qv"
@@ -285,7 +286,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--peft_method", type=str, default="lora_adapter")
     arg_parser.add_argument("--random_seeds", type=int, nargs="+", default=[42, 127, 894])
     arg_parser.add_argument("--expr_type", type=str, default="single")
-    arg_parser.add_argument("--plot_interest", type=str)
+    arg_parser.add_argument("--plot_interest", type=str, default=None)
     arg_parser.add_argument("--show_all", action="store_true")
     args = arg_parser.parse_args()
     assert args.expr_type in ["single", "1", "2", "3", "4"]
@@ -367,7 +368,7 @@ if __name__ == "__main__":
                     continue
                 filtered_v2 = [item for item in v2 if item is not None]
                 avg = sum(filtered_v2) / len(filtered_v2)
-                test_rougeL_rows.append({"lr": lr_k, "peft_k": peft_k, "cat_task_metric": "test/rougeL", "avg": avg})
+                test_rougeL_rows.append({"lr": lr_k, "peft_k": peft_k, "cat_task_metric": "test/rougeL", "avg": avg, "metric_vals": filtered_v2})
     if args.expr_type == "1":
         assert len(test_rougeL_rows) > 0, "no test_rougeL_rows extracted"
     else:
@@ -424,10 +425,56 @@ if __name__ == "__main__":
         print(f"writing test_rougeL df to {test_rougeL_file_name}")
         test_rougeL_df.to_csv(test_rougeL_file_name)
 
+    if args.plot_interest is None:
+        exit()
+    if args.expr_type == "1":
+        if args.plot_interest == "peft_k":
+            # found the rank, lr and training stability
+            # x is rank and legends are lr
+            assert args.plot_interest is None or args.plot_interest == "peft_k", "only peft_k plot supported for expr_type 1"
+            
+            test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
+            peft_setups = test_rougeL_df['peft_k'].unique()
+            peft_setups = sorted(peft_setups, key=lambda x: int(x) if x != "None" else 0)
 
-        
+            num_lr = len(test_rougeL_df['lr'].unique())
+            colors = np.random.rand(num_lr, 3)
+            color_map = {lr: color for lr, color in zip(test_rougeL_df['lr'].unique(), colors)}
+            x_pos = np.zeros(3)
+            position_map = {setup: i for i, setup in enumerate(peft_setups)}
+            for setup in peft_setups:
+                # draw by iterating rank
+                subset = test_rougeL_df[test_rougeL_df['peft_k'] == setup]
+                
+                for index, row in subset.iterrows():
+                    # print(row)
+                    # if row['model'] != "ni/default_train_707_val_50":
+                    #     print("skip non full dataset due to peft_k plot")
+                    #     continue
+                    print(row)
+                    color = color_map[row['lr']]
+                    # for each lr and each rank, draw one data point
+                    num_data = 1
+                    ys = row['metric_vals'][:num_data]
+                    
+                    # size = len(row['metric_vals'])
+                    plt.scatter((x_pos)[:num_data], ys, color=color, label=f"{row['lr']}", s=18)
+                x_pos += 1
+            plt.xticks(list(position_map.values()), peft_setups)
+            if "lora" in args.peft_method.lower():
+                plt.xlabel('LoRA Rank')
+            elif args.peft_method == "adapter" or args.peft_method == "adapter_peft":
+                plt.xlabel('Adapter Size')
+            else:
+                raise NotImplementedError(f"peft method {args.peft_method} not supported for expr_type 1")
+            plt.ylabel('RougeL Score')
 
-    if args.expr_type in ["2", "3"]: # only 2 and 3 have plots
+            handles, labels = plt.gca().get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            plt.legend(by_label.values(), by_label.keys())
+            plt.legend(by_label.values(), by_label.keys())
+
+    elif args.expr_type in ["2", "3"]: # only 2 and 3 have plots
         if args.plot_interest == "peft_k":
             x_pos = np.zeros(3)
             jitter_values = [-0.1, 0, 0.1]
@@ -459,7 +506,7 @@ if __name__ == "__main__":
             plt.legend(by_label.values(), by_label.keys())
         elif args.plot_interest == "data_size":
             x_pos = np.zeros(3)
-            jitter_values = [-0.1, 0, 0.1]
+
             test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
             peft_setups = test_rougeL_df['model'].unique()
             peft_setups = sorted(peft_setups, key=lambda x: int(x.split('_')[2]) if x != "None" else 0)
@@ -475,7 +522,7 @@ if __name__ == "__main__":
                     print(row)
                     color = np.random.rand(3,)
                     size = len(row['metric_vals'])
-                    plt.scatter( (x_pos + jitter_values)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                    plt.scatter( x_pos[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
                 x_pos += 1
             plt.xticks(list(position_map.values()), peft_setups)
             plt.xlabel('Data Size')
@@ -490,7 +537,7 @@ if __name__ == "__main__":
         elif args.plot_interest == "model_size":
             assert args.expr_type  == "3", "only expr_type 3 has model size plot"
             x_pos = np.zeros(3)
-            jitter_values = [-0.1, 0, 0.1]
+
             test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
             peft_setups = test_rougeL_df['model'].unique()
 
@@ -502,7 +549,7 @@ if __name__ == "__main__":
                 for index, row in subset.iterrows():
                     color = np.random.rand(3,)
                     size = len(row['metric_vals'])
-                    plt.scatter((x_pos + jitter_values)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                    plt.scatter((x_pos)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
                 x_pos += 1
             plt.xticks(list(position_map.values()), peft_setups)
             plt.xlabel('Model size')
@@ -511,6 +558,31 @@ if __name__ == "__main__":
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             plt.legend(by_label.values(), by_label.keys())
-        plt.savefig(os.path.join(out_dir, f"{args.peft_method}_test_rougeL_{args.plot_interest}.png"))
-        print(f"saved plot to {os.path.join(out_dir, f'{args.peft_method}_test_rougeL_{args.plot_interest}.png')}")
+        elif args.plot_interest == "model_size_n_peft_k":
+            assert args.expr_type  == "3", "only expr_type 3 has model size plot"
+            x_pos = np.zeros(3)
+
+            test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
+            peft_setups = test_rougeL_df['model'].unique()
+
+            position_map = {setup: i for i, setup in enumerate(peft_setups)}
+            for setup in peft_setups:
+                subset = test_rougeL_df[test_rougeL_df['model'] == setup]
+                
+                
+                for index, row in subset.iterrows():
+                    color = np.random.rand(3,)
+                    size = len(row['metric_vals'])
+                    plt.scatter((x_pos)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                x_pos += 1
+            plt.xticks(list(position_map.values()), peft_setups)
+            plt.xlabel('Model size')
+            plt.ylabel('RougeL Score')
+
+            handles, labels = plt.gca().get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            plt.legend(by_label.values(), by_label.keys())
+
+    plt.savefig(os.path.join(out_dir, f"{args.peft_method}_test_rougeL_{args.plot_interest}.png"))
+    print(f"saved plot to {os.path.join(out_dir, f'{args.peft_method}_test_rougeL_{args.plot_interest}.png')}")
 
