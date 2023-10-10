@@ -98,8 +98,10 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
             # get the number after "r", "sz"
             if "lora" in peft_method:
                 size_or_rank = f.split("_")[f.split("_").index("r")+1]
-                if expr_type == "3" and size_or_rank != "32":
+                if expr_type == "3" and size_or_rank != "512":
                     continue
+                # if expr_type == "4":
+                #     continue
             elif args.peft_method == "adapter" or args.peft_method == "adapter_peft":
                 size_or_rank = f.split("_")[f.split("_").index("size")+1]
                 if expr_type == "3" and size_or_rank != "256":
@@ -131,7 +133,7 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
 
 
             # determine key based on expr_type
-            if expr_type in ["1", "2", "3", "single", "4"]:
+            if expr_type in ["1", "2", "3", "single", "4", "5"]:
                 key = size_or_rank
             # elif expr_type == "1":
             #     key = lr
@@ -171,17 +173,16 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
                             continue 
                         best_metric_val = train_state["state_dict"][metric_key]
                         d[key][lr] = d[key].get(lr, []) + [best_metric_val]
-                        
                     else:
                         # filter non-optimal lr which are not needed for expr type other than 1
                         lr = train_state["training_args"]['training_args/run_name'].split("_")[train_state["training_args"]['training_args/run_name'].split("_").index("lr")+1]
                         if args.peft_method == "lora_adapter" or args.peft_method == "lora_peft":
-                            if lr != "1e-4":
+                            if lr != args.lr:
                                 # d[key][metric_key] = d[key].get(metric_key, []) + [None]
                                 print(f"lr {lr} not optimal for {args.peft_method}, skip results...")
                                 continue
                         if args.peft_method == "adapter" or args.peft_method == "adapter_peft":
-                            if lr != "1e-4":
+                            if lr != args.lr:
                                 print(f"lr {lr} not optimal for {args.peft_method}, skip results...")
                                 continue
 
@@ -257,6 +258,33 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
         #     return None
     return d
 
+def convert(s):
+    d = {
+        "0.001": "1e-3",
+        "0.0005": "5e-4",
+        "0.0001": "1e-4",
+        "0.00001": "5e-5",
+        "0.00005": "1e-5",
+        "ni/default_train_707_val_50":707, # "$n=707$",
+        "ni/default_train_512_val_50":512, # "$n=512$",
+        "ni/default_train_256_val_50":256, # "$n=256$",
+        "ni/default_train_128_val_50":128, # "$n=128$",
+        "ni/default_train_64_val_50":64, # "$n=64$",
+        "ni/default_train_32_val_50":32, # "$n=32$",
+        "ni/default_train_8_val_50": 8, # "$n=8$",
+        "google/t5-base-lm-adapt": "T5-base",
+        "google/t5-large-lm-adapt": "T5-large",
+        "google/t5-xl-lm-adapt": "T5-xl",
+        "google/t5-xxl-lm-adapt": "T5-xxl",
+    }
+    if s in d:
+        return d[s]
+    else:
+        print(f"no match for {s} whiling converting")
+        return s
+
+
+
 def print_state_info(state_d):
     
     print("test rougel: ", state_d["state_dict"]["test/rougeL"])
@@ -287,9 +315,10 @@ if __name__ == "__main__":
     arg_parser.add_argument("--random_seeds", type=int, nargs="+", default=[42, 127, 894])
     arg_parser.add_argument("--expr_type", type=str, default="single")
     arg_parser.add_argument("--plot_interest", type=str, default=None)
+    arg_parser.add_argument("--lr", type=str, default="1e-4")
     arg_parser.add_argument("--show_all", action="store_true")
     args = arg_parser.parse_args()
-    assert args.expr_type in ["single", "1", "2", "3", "4"]
+    assert args.expr_type in ["single", "1", "2", "3", "4", "5"]
     search_dir = os.path.join(args.log_dir, args.dataset, args.model, args.peft_method)
     peft_methods = [args.peft_method]
     d = {}
@@ -308,12 +337,12 @@ if __name__ == "__main__":
         print("args.dataset is not used")
         for dataset in ["ni/default_train_707_val_50", "ni/default_train_512_val_50", "ni/default_train_256_val_50", "ni/default_train_128_val_50", "ni/default_train_64_val_50", "ni/default_train_32_val_50", "ni/default_train_8_val_50"]:
             d[dataset] = extract_expr(args.log_dir, dataset, args.model, args.peft_method, args.random_seeds, expr_type = "2")
-    elif args.expr_type == "3":
+    elif args.expr_type in ["3", "5"]:
         for model in [
             "google/t5-base-lm-adapt","google/t5-large-lm-adapt","google/t5-xl-lm-adapt"
         ]:
             print('args.model is not used')
-            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds, expr_type = "3")
+            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds, expr_type = args.expr_type )
             
     elif args.expr_type == "4":
         for model in [
@@ -336,11 +365,9 @@ if __name__ == "__main__":
     test_rougeL_rows = []
 
 
-    
-    
-    
+
     peft_setups = []
-    if args.expr_type in ["2", "3"]:
+    if args.expr_type in ["2", "3", "4", "5"]:
         
         for model_k, v in d.items():
             
@@ -348,9 +375,7 @@ if __name__ == "__main__":
                 for cat_task_metric, v3 in v2.items():
                     if all(item is None for item in v3):
                         continue
-                    
                     filtered_v3 = [item for item in v3 if item is not None]
-
                     avg = sum(filtered_v3) / len(filtered_v3)
                     assert len(filtered_v3) <= 3, f"more than 3 random seeds for {model_k}, {peft_k}, {cat_task_metric}"
                     rows.append({"model": model_k, "peft_k": peft_k, "cat_task_metric": cat_task_metric, "avg": avg})
@@ -369,6 +394,8 @@ if __name__ == "__main__":
                 filtered_v2 = [item for item in v2 if item is not None]
                 avg = sum(filtered_v2) / len(filtered_v2)
                 test_rougeL_rows.append({"lr": lr_k, "peft_k": peft_k, "cat_task_metric": "test/rougeL", "avg": avg, "metric_vals": filtered_v2})
+    else:
+        raise NotImplementedError(f"expr_type {args.expr_type} not implemented")
     if args.expr_type == "1":
         assert len(test_rougeL_rows) > 0, "no test_rougeL_rows extracted"
     else:
@@ -376,6 +403,7 @@ if __name__ == "__main__":
         assert len(task_rows) > 0, "no task_rows extracted"
         assert len(cat_rows) > 0, "no cat_rows extracted"
         assert len(test_rougeL_rows) > 0, "no test_rougeL_rows extracted"
+
 
     # df = pd.DataFrame(rows)
     # df = df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
@@ -389,44 +417,46 @@ if __name__ == "__main__":
 
     if args.expr_type == "1":
         test_rougeL_df = pd.DataFrame(test_rougeL_rows)
-        test_rougeL_df = test_rougeL_df.pivot_table(index='peft_k', columns=['lr',], values='avg')
-        test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_test_rougeL.csv")
-        print(test_rougeL_df)
+        pivoted_test_rougeL_df = test_rougeL_df.pivot_table(index='peft_k', columns=['lr',], values='avg')
+        test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_{args.lr}_test_rougeL.csv")
+        print(pivoted_test_rougeL_df)
         print(f"writing test_rougeL df to {test_rougeL_file_name}")
-        test_rougeL_df.to_csv(test_rougeL_file_name)
+        pivoted_test_rougeL_df.to_csv(test_rougeL_file_name)
     elif args.expr_type in ["2"]:
         test_rougeL_df = pd.DataFrame(test_rougeL_rows)
-        test_rougeL_df = test_rougeL_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
-        test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_test_rougeL.csv")
-        print(test_rougeL_df)
+        pivoted_test_rougeL_df = test_rougeL_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
+        test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_{args.lr}_test_rougeL.csv")
+        print(pivoted_test_rougeL_df)
         print(f"writing test_rougeL df to {test_rougeL_file_name}")
-        test_rougeL_df.to_csv(test_rougeL_file_name)
+        pivoted_test_rougeL_df.to_csv(test_rougeL_file_name)
 
-    elif args.expr_type == "3":
+    elif args.expr_type in ["3", "5"]: # model centric
         # convert to data frame and save as csv
         task_df = pd.DataFrame(task_rows)
         task_df = task_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
-        task_file_name = os.path.join(out_dir, f"{args.peft_method}_task.csv")
+        task_file_name = os.path.join(out_dir, f"{args.peft_method}_task_{args.lr}.csv")
         print(task_df)
         print(f"writing task df to {task_file_name}")
         task_df.to_csv(task_file_name)
 
         cat_df = pd.DataFrame(cat_rows)
         cat_df = cat_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
-        cat_file_name = os.path.join(out_dir, f"{args.peft_method}_cat.csv")
+        cat_file_name = os.path.join(out_dir, f"{args.peft_method}_cat_{args.lr}.csv")
         print(cat_df)
         print(f"writing cat df to {cat_file_name}")
         cat_df.to_csv(cat_file_name)
 
         test_rougeL_df = pd.DataFrame(test_rougeL_rows)
-        test_rougeL_df = test_rougeL_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
-        test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_test_rougeL.csv")
-        print(test_rougeL_df)
+        pivoted_test_rougeL_df = test_rougeL_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
+        test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_{args.lr}_test_rougeL.csv")
+        print(pivoted_test_rougeL_df)
         print(f"writing test_rougeL df to {test_rougeL_file_name}")
-        test_rougeL_df.to_csv(test_rougeL_file_name)
+        pivoted_test_rougeL_df.to_csv(test_rougeL_file_name)
 
     if args.plot_interest is None:
         exit()
+    # plt.rcParams['font.family'] = 'Times'
+    plt.rcParams['font.family'] = "Times New Roman"
     if args.expr_type == "1":
         if args.plot_interest == "peft_k":
             # found the rank, lr and training stability
@@ -458,7 +488,7 @@ if __name__ == "__main__":
                     ys = row['metric_vals'][:num_data]
                     
                     # size = len(row['metric_vals'])
-                    plt.scatter((x_pos)[:num_data], ys, color=color, label=f"{row['lr']}", s=18)
+                    plt.scatter((x_pos)[:num_data], ys, color=color, label=f"{convert(row['lr'])}", s=18)
                 x_pos += 1
             plt.xticks(list(position_map.values()), peft_setups)
             if "lora" in args.peft_method.lower():
@@ -471,10 +501,14 @@ if __name__ == "__main__":
 
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
-            plt.legend(by_label.values(), by_label.keys())
+            # sort legend by lr
+            by_label = {k: by_label[k] for k in sorted(by_label.keys(), key=lambda x: float(x))}
+            
+
             plt.legend(by_label.values(), by_label.keys())
 
-    elif args.expr_type in ["2", "3"]: # only 2 and 3 have plots
+
+    elif args.expr_type in ["2", "3", "5"]: # only 2 and 3 have plots
         if args.plot_interest == "peft_k":
             x_pos = np.zeros(3)
             jitter_values = [-0.1, 0, 0.1]
@@ -492,7 +526,7 @@ if __name__ == "__main__":
                     print(row)
                     color = np.random.rand(3,)
                     size = len(row['metric_vals'])
-                    plt.scatter((x_pos + jitter_values)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                    plt.scatter((x_pos + jitter_values)[:size], row['metric_vals'], color=color, label=f"{convert(row['model'])} {convert(row['peft_k'])}")
                 x_pos += 1
             plt.xticks(list(position_map.values()), peft_setups)
             if "lora" in args.peft_method.lower():
@@ -508,6 +542,7 @@ if __name__ == "__main__":
             x_pos = np.zeros(3)
 
             test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
+            # it's data size actually
             peft_setups = test_rougeL_df['model'].unique()
             peft_setups = sorted(peft_setups, key=lambda x: int(x.split('_')[2]) if x != "None" else 0)
             position_map = {setup: i for i, setup in enumerate(peft_setups)}
@@ -522,18 +557,43 @@ if __name__ == "__main__":
                     print(row)
                     color = np.random.rand(3,)
                     size = len(row['metric_vals'])
-                    plt.scatter( x_pos[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                    plt.scatter( x_pos[:size], row['metric_vals'], color=color, label=f"{convert(row['model'])} {convert(row['peft_k'])}")
                 x_pos += 1
-            plt.xticks(list(position_map.values()), peft_setups)
+            plt.xticks(list(position_map.values()), [convert(item) for item in list(peft_setups)])
             plt.xlabel('Data Size')
             plt.ylabel('RougeL Score')
 
 
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
+            # plt.legend(by_label.values(), by_label.keys())
+
+        elif args.plot_interest == "data_size_n_peft_k":
+            assert args.expr_type  == "2", "only expr_type 3 has model size and peft k plot"
+            pivoted_test_rougeL_df = test_rougeL_df.pivot_table(index='peft_k', columns=['model', 'cat_task_metric'], values='avg')
+            x_pos = 0
+
+            num_data_size = len(test_rougeL_df['model'].unique())# it's actually data size
+            colors = np.random.rand(num_data_size, 3)
+            color_map = {data_size: color for data_size, color in zip(test_rougeL_df['model'].unique(), colors)}
+            test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
+            peft_setups = test_rougeL_df['peft_k'].unique()
+            peft_setups = sorted(peft_setups, key=lambda x: int(x) if x != "None" else 0)
+
+            position_map = {setup: i for i, setup in enumerate(peft_setups)}
+            for setup in peft_setups:
+                subset = test_rougeL_df[test_rougeL_df['peft_k'] == setup]
+                for index, row in subset.iterrows():
+                    color = color_map[row['model']]
+                    
+                    plt.scatter(x_pos, row['avg'], color=color, label=f"$n=${convert(row['model'])}")
+                x_pos += 1
+            plt.xticks(list(position_map.values()), peft_setups)
+            plt.xlabel('LoRA rank')
+            plt.ylabel('RougeL Score')
+            handles, labels = plt.gca().get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
             plt.legend(by_label.values(), by_label.keys())
-
-
         elif args.plot_interest == "model_size":
             assert args.expr_type  == "3", "only expr_type 3 has model size plot"
             x_pos = np.zeros(3)
@@ -549,40 +609,35 @@ if __name__ == "__main__":
                 for index, row in subset.iterrows():
                     color = np.random.rand(3,)
                     size = len(row['metric_vals'])
-                    plt.scatter((x_pos)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                    plt.scatter((x_pos)[:size], row['metric_vals'], color=color, label=f"{convert(row['model'])}  $r={convert(row['peft_k'])}$")
                 x_pos += 1
-            plt.xticks(list(position_map.values()), peft_setups)
-            plt.xlabel('Model size')
+            plt.xticks(list(position_map.values()), [convert(item) for item in list(peft_setups)])
+            plt.xlabel('Model Size')
             plt.ylabel('RougeL Score')
 
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             plt.legend(by_label.values(), by_label.keys())
-        elif args.plot_interest == "model_size_n_peft_k":
-            assert args.expr_type  == "3", "only expr_type 3 has model size plot"
-            x_pos = np.zeros(3)
-
+        elif args.plot_interest ==  "model_size_n_peft_k":
+            assert args.expr_type  == "5", "only expr_type 3 has model size and peft k plot"
+            x_pos = 0
             test_rougeL_df = pd.DataFrame(test_rougeL_rows) # reset dataframe
             peft_setups = test_rougeL_df['model'].unique()
 
             position_map = {setup: i for i, setup in enumerate(peft_setups)}
             for setup in peft_setups:
                 subset = test_rougeL_df[test_rougeL_df['model'] == setup]
-                
-                
                 for index, row in subset.iterrows():
                     color = np.random.rand(3,)
-                    size = len(row['metric_vals'])
-                    plt.scatter((x_pos)[:size], row['metric_vals'], color=color, label=f"{row['model']} {row['peft_k']}")
+                    plt.scatter(x_pos, row['avg'], color=color, label=f"{row['model']} {row['peft_k']}")
                 x_pos += 1
             plt.xticks(list(position_map.values()), peft_setups)
-            plt.xlabel('Model size')
+            plt.xlabel('Model Size')
             plt.ylabel('RougeL Score')
-
             handles, labels = plt.gca().get_legend_handles_labels()
             by_label = dict(zip(labels, handles))
             plt.legend(by_label.values(), by_label.keys())
-
-    plt.savefig(os.path.join(out_dir, f"{args.peft_method}_test_rougeL_{args.plot_interest}.png"))
-    print(f"saved plot to {os.path.join(out_dir, f'{args.peft_method}_test_rougeL_{args.plot_interest}.png')}")
+    plot_path = os.path.join(out_dir, f"{args.peft_method}_test_rougeL_{args.plot_interest}_{args.lr}.pdf")
+    plt.savefig(plot_path)
+    print(f"saved plot to {plot_path}")
 
