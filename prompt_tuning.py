@@ -298,7 +298,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     )
 
     checkpoint_save_total_limit: Optional[int] = field(
-        default=1, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
+        default=3, metadata={"help": "The maximum total amount of checkpoints to save. Defaults to 3."}
     )
     
     best_checkpoint_save_total_limit:  Optional[int] = field(
@@ -327,6 +327,7 @@ class TrainingArguments(Seq2SeqTrainingArguments):
     do_traditional_test: bool = field(
         default=False, metadata={"help": "Whether to run traditional test."}
     )
+
     
     expr_dir : str = field(
         default="cache/tmp/", metadata={"help": "The directory for all experiments logs, checkpoints, and results."}
@@ -572,9 +573,9 @@ def main():
         if peft_args.bias_name is None:
             peft_args.bias_name = "encoder_decoder_bias"
             print("bias_name is set to encoder_decoder_bias since args.bias_name is not specified")
-    if model_args.tuning_mode == "fine_tuning":
-        training_args.learning_rate = 1e-5
-        print("lr is set to 1e-5 due to fine_tuning mode")
+    # if model_args.tuning_mode == "fine_tuning":
+    #     training_args.learning_rate = 1e-5
+    #     print("lr is set to 1e-5 due to fine_tuning mode")
 
     if model_args.tuning_mode == "prefix_tuning":
         assert peft_args.prefix_len is not None, "prefix_len should be specified for prefix tuning mode"
@@ -662,6 +663,7 @@ def main():
     training_args.label_names = [training_args.label_names]
     trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
    
+
     if training_args.do_train:
         trainer.train() # train from scratch
         trainer.evaluate("test")
