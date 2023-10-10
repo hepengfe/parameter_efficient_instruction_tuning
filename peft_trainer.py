@@ -163,6 +163,7 @@ class PEFTTrainer:
                 project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
+        
         # deepspeed setting can be considered as distributed
         self.use_distributed = self.accelerator.use_distributed or self.accelerator.distributed_type == DistributedType.DEEPSPEED
         self.distributed_type = self.accelerator.distributed_type
@@ -172,6 +173,11 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
+        self.accelerator.init_trackers(
+                        self.training_args.run_name,
+                        config=self.train_state.state_dict,
+                        init_kwargs={"tensorboard": {"flush_secs": 60}},
+                    )
         self.total_step = 1
         self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
         self.load_tokenzier()
@@ -802,7 +808,12 @@ class PEFTTrainer:
         if self.accelerator.is_local_main_process:
             self.load_previous_run()
             print(f"{self.accelerator.device}: finished loading previous run")
-        self.accelerator.wait_for_everyone()
+        
+        # DDP wait works fine but not for deepspeed, so we add a sleep
+        # self.accelerator.wait_for_everyone()
+        if not self.accelerator.is_local_main_process:
+            print(f"{self.accelerator.device}: wait for main process to load previous run")
+            time.sleep(30)
         # after main process checked and finished loading random states
         if not self.accelerator.is_local_main_process:
             latest_cp = get_latest_checkpoint(self.training_args.output_dir)
@@ -1008,7 +1019,11 @@ class PEFTTrainer:
                 print(s)
         elif self.accelerator.is_main_process:
             logger.info(s)
+
     def evaluate(self, mode="eval", step=None):
+        """
+        Generic evaluate method that could be used during training for evaluation or after training for test evaluation (needs to reload model checkpoint).
+        """
         if mode=="test":
             assert step is None
         elif mode=="eval":
@@ -1028,7 +1043,7 @@ class PEFTTrainer:
             # NOTE: test evaluation is done, finish
             if self.test_eval_finished and mode == "test":
                 self.print_log("test evaluation is done, finish...")
-                exit()
+                return
             if self.traditional_test_eval_finished and mode == "traditional_test":
                 self.print_log("traditional test evaluation is done, finish...")
                 exit()
@@ -1097,14 +1112,18 @@ class PEFTTrainer:
             return ni_eval_results
         elif mode == "test" or mode == "traditional_test":
             if self.data_args.dataset_name != "alpaca":
-                # free memory in test mode 
-                dataset2eval = self.test_dataset
+                # free memory in test mode
                 if mode == "test":
+                    dataset2eval = self.test_dataset
                     dataloader2eval = self.test_dataloader
                 elif mode == "traditional_test":
+                    dataset2eval = self.traditional_test_dataset
                     dataloader2eval = self.traditional_test_dataloader
                 ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
-                self.log(ni_eval_results)
+                # it's possible that the test evaluation is done and
+                # ni_eval_results is None
+                if ni_eval_results is not None:
+                    self.log(ni_eval_results)
                 return ni_eval_results
             else:
                 
@@ -1220,10 +1239,12 @@ class PEFTTrainer:
         elif mode in ["test", "traditional_test"]:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
-            if self.test_eval_finished:
+            if self.test_eval_finished and mode == "test":
                 self.print_log("test evaluation is done, finish...")
                 return
-            
+            if self.traditional_test_eval_finished and mode == "traditional_test":
+                self.print_log("traditional test evaluation is done, finish...")
+                exit()
             # free memory in test mode 
             
             if mode == "test":
@@ -1281,9 +1302,10 @@ class PEFTTrainer:
                                 miniters=0 if not self.training_args.is_cluster else 500,
                                 disable=self.training_args.is_cluster)
             for inputs in progress_bar:
-                if not self.use_distributed:
-                    for k in inputs:
-                        inputs[k] = inputs[k].to(self.device)
+                # if not self.use_distributed:
+                # might need to differentiate between DEEPSPEED, DDP, and single gpu
+                for k in inputs:
+                    inputs[k] = inputs[k].to(self.accelerator.device)
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
