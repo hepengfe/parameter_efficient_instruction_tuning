@@ -59,7 +59,11 @@ scheduler=$default_scheduler
 
 # tuning mode fixed setup
 if [ $tuning_mode == "fine_tuning" ]; then
-    config_file="configs/hfai/default_config_deepspeed_hfai_ft.yaml"
+    if [[ $model == "google/t5-base-lm-adapt" || $model == "google/t5-large-lm-adapt" ]]; then
+        config_file="configs/hfai/default_config_ddp.yaml"
+    else
+        config_file="configs/hfai/default_config_deepspeed_hfai_ft.yaml"
+    fi
     default_eval_step=5000
     scheduler="constant"
     default_warmup_ratio=0
@@ -290,6 +294,15 @@ echo $evaluation_args
 launch_command="${launch_prefix} prompt_tuning.py --model_name_or_path ${model}  --per_device_train_batch_size 1 --per_device_eval_batch_size $eval_bs --eval_steps ${default_eval_step} --save_steps ${default_save_step}  ${tuning_args} ${dataset_infix} ${evaluation_args} --gradient_accumulation_steps ${default_gradient_accumulation_steps} --do_train ${spcecial_arg} --logging_steps ${default_logging_steps} --run_name $expr_name --logging_dir $expr_dir  --random_seed $random_seed --expr_dir ${default_expr_dir} $launch_suffix "
 
 if [[ $script_mode  == "dev_cmd" || $script_mode  == "dev_rm_cmd" ]];then
+    # if [[ $evaluation_args == "--do_traditional_test" ]];then
+    #     echo "---------------cmd $CMD_INDEX-----------------"
+    #     echo -e "expr_name: \n $expr_name"
+    #     echo -e "\n\n"
+    #     echo -e "expr_dir: \n $expr_dir"
+    #     echo -e "\n\n"
+    #     echo -e "launch command: \n $launch_command"
+    #     echo -e "\n\n"
+    # fi
     echo "---------------cmd $CMD_INDEX-----------------"
     echo -e "expr_name: \n $expr_name"
     echo -e "\n\n"
