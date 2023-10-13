@@ -238,7 +238,7 @@ class PEFTTrainer:
             else:
                 raise NotImplementedError(f"self.distributed_type {self.distributed_type} is not implemented")
             if self.data_args.dataset_name != "alpaca":
-                self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
+                self.eval_dataloader, self.test_dataloader,  self.traditional_test_dataloader= self.accelerator.prepare(self.eval_dataloader, self.test_dataloader, self.traditional_test_dataloader)
         else:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = self.model.to(self.device)
@@ -541,13 +541,14 @@ class PEFTTrainer:
                 # raw_datasets["train"] =  raw_datasets["train"]
                 # raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
-                raw_datasets["trainditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_train_data_size))
+                raw_datasets["traditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_train_data_size))
             elif self.training_args.dev_test:
                 # test compute metrics are same for validation and test as
                 # test evaluation load model from checkpoint and run on test dataset
                 raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_test_data_size))
                 raw_datasets["validation"] = raw_datasets["train"]
                 raw_datasets["test"] = raw_datasets["train"]
+                raw_datasets["traditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_test_data_size))
 
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
@@ -1124,6 +1125,12 @@ class PEFTTrainer:
                 # ni_eval_results is None
                 if ni_eval_results is not None:
                     self.log(ni_eval_results)
+                if mode == "test":
+                    self.train_state.update({"test_eval_finished": True})
+                elif mode == "traditional_test":
+                    self.train_state.update({"traditional_test_eval_finished": True})
+                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+                self.train_state.save_to_json(latest_cp)
                 return ni_eval_results
             else:
                 
