@@ -213,9 +213,11 @@ class PEFTTrainer:
         
         # self.total_step = -1
         # self.build_dataloader()
-        assert self.total_step > 0
+        # assert self.total_step > 0
         if self.model_args.tuning_mode == "fine_tuning":
             assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"
+        elif self.model_args.tuning_mode == "off_the_shelf":
+            pass
         else:
             assert self.warmup_steps > 0, f"lr warmup steps should be larger than 0, but got {self.warmup_steps}"
         # some scheduler require num_training_steps which is depedent on len(dataset)
@@ -232,7 +234,7 @@ class PEFTTrainer:
             else:
                 raise NotImplementedError(f"self.distributed_type {self.distributed_type} is not implemented")
             if self.data_args.dataset_name != "alpaca":
-                self.eval_dataloader, self.test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader)
+                self.eval_dataloader, self.test_dataloader, self.traditional_test_dataloader = self.accelerator.prepare(self.eval_dataloader, self.test_dataloader, self.traditional_test_dataloader)
         else:
             self.device = "cuda" if torch.cuda.is_available() else "cpu"
             self.model = self.model.to(self.device)
@@ -367,7 +369,7 @@ class PEFTTrainer:
         logging.info(f"Ensure this directory is persistent if you do not want to download model files again!")
 
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
-            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
+            if self.model_args.tuning_mode in ["fine_tuning","off_the_shelf", "prompt_tuning"]:
                 
                 if os.path.exists(self.potential_model_path):
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
@@ -394,7 +396,7 @@ class PEFTTrainer:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
         elif "llama" in self.model_name_or_path.lower():
-            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning", "adapter_peft", "lora_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+            if self.model_args.tuning_mode in ["fine_tuning", "off_the_shelf", "prompt_tuning", "adapter_peft", "lora_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 model = LlamaForCausalLM.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
@@ -1008,7 +1010,14 @@ class PEFTTrainer:
                 print(s)
         elif self.accelerator.is_main_process:
             logger.info(s)
-    def evaluate(self, mode="eval", step=None):
+    def evaluate(self, mode="eval", step=None, during_training=True):
+        """
+        There are two cases calling evaluate function:
+        1. During training, it's called after each epoch or each eval step
+        2. During test evaluation, it's called after loading the best checkpoint (dry train).
+        """
+
+
         if mode=="test":
             assert step is None
         elif mode=="eval":
@@ -1023,12 +1032,12 @@ class PEFTTrainer:
         # model = accelerate.utils.extract_model_from_parallel(self.model)
 
         # load best checkpoint for test evaluation
-        if mode == "test" and self.training_args.load_best_checkpoint:
+        if mode in ["test", "traditional_test"] and self.training_args.load_best_checkpoint:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
             if self.test_eval_finished and mode == "test":
                 self.print_log("test evaluation is done, finish...")
-                exit()
+                return
             if self.traditional_test_eval_finished and mode == "traditional_test":
                 self.print_log("traditional test evaluation is done, finish...")
                 exit()
@@ -1052,6 +1061,14 @@ class PEFTTrainer:
                 raise e
 
             print(f"{self.accelerator.device}: load from existing state: ", best_cp_dir)
+            # in independent evaluation, trackers need to be initialized
+            # if not hasattr(self.accelerator, "trackers"):
+            #     self.accelerator.init_trackers(
+            #             self.training_args.run_name,
+            #             config=self.train_state.state_dict,
+            #             init_kwargs={"tensorboard": {"flush_secs": 60}},
+            #         )
+            #     print("warning: init trackers in independent evaluation. a tracker shoud be init earlier")
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
 
 
@@ -1080,14 +1097,26 @@ class PEFTTrainer:
 
                 # self.accelerator.load_state(best_cp_dir)
                 self.accelerator.wait_for_everyone()
+                # load state will load optimizer and scheduler so we load everything into cpu
+                # and then move model back to gpu
                 self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                self.train_state.load_from_json(best_cp_dir)
                 # print(f"Moving mdoel back to gpu {self.accelerator.device}")
                 # # time.sleep(60)
                 self.accelerator.wait_for_everyone()
                 self.model = self.model.to(self.accelerator.device)
+                
             else:
                 self.accelerator.load_state(best_cp_dir)
-
+                self.train_state.load_from_json(best_cp_dir)
+            if not hasattr(self.accelerator, "trackers"):
+                self.accelerator.init_trackers(
+                        self.training_args.run_name,
+                        config=self.train_state.state_dict,
+                        init_kwargs={"tensorboard": {"flush_secs": 60}},
+                    )
+                if during_training:
+                    print("warning: tracker is expected to exist during training")
         # load dataset for evaluation
         if mode == "eval":
             dataset2eval = self.eval_dataset
@@ -1104,7 +1133,8 @@ class PEFTTrainer:
                 elif mode == "traditional_test":
                     dataloader2eval = self.traditional_test_dataloader
                 ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
-                self.log(ni_eval_results)
+                if ni_eval_results is not None:
+                    self.log(ni_eval_results)
                 return ni_eval_results
             else:
                 
@@ -1220,7 +1250,7 @@ class PEFTTrainer:
         elif mode in ["test", "traditional_test"]:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
-            if self.test_eval_finished:
+            if self.test_eval_finished and mode == "test":
                 self.print_log("test evaluation is done, finish...")
                 return
             
@@ -1281,9 +1311,13 @@ class PEFTTrainer:
                                 miniters=0 if not self.training_args.is_cluster else 500,
                                 disable=self.training_args.is_cluster)
             for inputs in progress_bar:
-                if not self.use_distributed:
+                
+                if self.distributed_type == DistributedType.MULTI_GPU:
                     for k in inputs:
-                        inputs[k] = inputs[k].to(self.device)
+                        inputs[k] = inputs[k].to(self.accelerator.device)
+                # if not self.use_distributed:   non deepspeed
+                # for k in inputs:
+                # inputs[k] = inputs[k].to(self.device)
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
@@ -1294,8 +1328,8 @@ class PEFTTrainer:
                     # print(inputs)
                     # exit()
                     # generation_inputs is removed from later package
-                    
-                    outputs = model.generate(input_ids = input_ids, attention_mask=attention_mask, **inputs,
+                    # adapter_peft generate requires generation_inputs
+                    outputs = model.generate(generation_inputs = input_ids, attention_mask=attention_mask, **inputs,
                                         max_new_tokens = self.data_args.max_target_length,
                                         synced_gpus = True if self.use_distributed else False,
                                         pad_token_id=self.tokenizer.eos_token_id if self.model_args.model_arch == "decoder" else self.tokenizer.pad_token_id,
@@ -1330,6 +1364,10 @@ class PEFTTrainer:
                 cnt = len(label_host)
                 if cnt % 100 == 0:
                     print(f"evaluated {cnt} {mode} data")
+                if cnt < 100:
+                    # check if there are duplicated labels
+                    # if there are, it means dataloader is not prepared for multi-gpu setup
+                    print(f"{self.accelerator.device}: {label_host}")
                 self.accelerator.wait_for_everyone()
 
         results = self.compute_metrics(
@@ -1538,6 +1576,8 @@ class PEFTTrainer:
         elif self.model_args.tuning_mode == "fine_tuning":
             # no converting needed
             pass
+        elif self.model_args.tuning_mode == "off_the_shelf":
+            pass
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
@@ -1556,6 +1596,8 @@ class PEFTTrainer:
 
         if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0):
             results = self.evaluate(step=global_step)
+            if results is None:
+                return
             eval_metric_name = "eval/"+self.training_args.eval_metric
             cur_metric_val = results[eval_metric_name]
             self.print_log(f"current metric_val: {cur_metric_val}")
@@ -1649,7 +1691,9 @@ class PEFTTrainer:
 
     def load_previous_run(self):
         """
-        load previous run from checkpoint folder, if failed, then init a new run.
+        load previous training state and model checkpoint from checkpoint folder, if failed, then init a new run.
+        It tries to run and probably fails and delete checkpoint in a single process. So it's expected to run this function in a single process and then loads other states in other processes.
+        - if a checkpoint folder doesn't contain all random states, remove it and reload the previous checkpoint.
         """
         loaded = False
         trial_times = 0 # record how many times we have tried to load from existing state, if there are more than 5 times of failure, then remove the output dir
