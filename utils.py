@@ -34,8 +34,10 @@ def build_peft_config_name(model_args, peft_args, training_args):
         peft_config_name += "phm_dimension_" + str(peft_args.phm_dimension)
     elif model_args.tuning_mode == "parallel_adapter":
         peft_config_name +=f"reduction_factor_{peft_args.reduction_factor:.4f}"
-    elif model_args.tuning_mode == "fine_tuning":
+    elif model_args.tuning_mode  == "fine_tuning":
         pass
+    elif model_args.tuning_mode ==  "off_the_shelf":
+        peft_config_name += model_args.tuning_mode
     elif model_args.tuning_mode == "pelt":
         peft_config_name += "use_pelt_gate_" + str(peft_args.use_pelt_gate)
         raise NotImplementedError("Should be more configs for pelt")
