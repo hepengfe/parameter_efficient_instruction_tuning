@@ -1440,18 +1440,22 @@ class PEFTTrainer:
             # )
 
             from peft import PrefixTuningConfig
-            # projection: embedding -> encoder_hidden_size -> layer hidden size
-            config = PrefixTuningConfig(
-                task_type=task_type,
-                inference_mode=False,
-                num_virtual_tokens=self.peft_args.prefix_len,
-                # token_dim = 512, #  assume it is set automatically
-                # prefix_projection = False
-                prefix_projection = True,
-                encoder_hidden_size=self.peft_args.bottleneck_size,
-            )
-            # num_virtual_tokens: int = field(default=None, metadata={"help": "Number of virtual tokens"})
-
+            # prefix reparameterization enabled
+            if self.peft_args.bottleneck_size > 0:
+                # projection: embedding -> encoder_hidden_size -> layer hidden size
+                config = PrefixTuningConfig(
+                    task_type=task_type,
+                    inference_mode=False,
+                    num_virtual_tokens=self.peft_args.prefix_len,
+                    prefix_projection = True,
+                    encoder_hidden_size=self.peft_args.bottleneck_size,
+                )
+            else:
+                config = PrefixTuningConfig(
+                    task_type=task_type,
+                    inference_mode=False,
+                    num_virtual_tokens=self.peft_args.prefix_len,
+                )
 
             self.load_peft_module(config)
 
