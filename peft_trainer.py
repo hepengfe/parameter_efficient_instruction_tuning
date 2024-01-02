@@ -459,7 +459,10 @@ class PEFTTrainer:
 
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
-        self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        if self.training_args.num_train_epochs > 0:
+            self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
+        else:
+            self.total_step = 1
         self.warmup_steps = self.total_step * self.training_args.warmup_ratio
         self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}", print_step=False)
         
@@ -533,10 +536,19 @@ class PEFTTrainer:
 
             elif self.training_args.dev_train:
                 raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
-                raw_datasets["validation"] = raw_datasets["train"]
+                # raw_datasets["validation"] = raw_datasets["train"]
                 # raw_datasets["train"] =  raw_datasets["train"]
+
+                # short train
                 # raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
-                raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
+                # raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
+                
+                # long train
+                # select random 300 examples from validation and 500 examples from test
+                import random
+                random.seed(42)
+                raw_datasets["validation"] = raw_datasets["validation"].select(random.sample(range(len(raw_datasets["validation"])), 300))
+                raw_datasets["test"] = raw_datasets["test"].select(random.sample(range(len(raw_datasets["test"])), 500))
                 raw_datasets["trainditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_train_data_size))
             elif self.training_args.dev_test:
                 # test compute metrics are same for validation and test as
@@ -816,15 +828,19 @@ class PEFTTrainer:
                 print(f"{self.accelerator.device}: finished loading previous run")
         # NOTE: gradient accumulation step is not unrelated to the computation below
 
-        # reload latest checkpoint
+        # reload latest checkpoint for non-main processes
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
         # async loading
-        time.sleep(0.5 * self.accelerator.device.index)
+        if self.accelerator.device.index is not None:
+            time.sleep(0.5 * self.accelerator.device.index)
+        # NOTE: there is some duplicated code below from load_previous_run()
+        # it's designed for running in non main process
         if latest_cp:
             self.train_state.load_from_json(latest_cp)
             self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
             self.train_finished = self.train_state.get("train_finished")
-            self.global_step = self.train_state.get("global_step")
+            self.start_step = int(latest_cp.split("-")[-1])
+            self.global_step = self.start_step
             self.start_epoch = self.train_state.get("epoch")
         print(f"{self.accelerator.device}: train_finished state: {self.train_finished}")
 
@@ -834,7 +850,8 @@ class PEFTTrainer:
             self.train_state.update({"train_finished": True})
             self.train_state.save_to_json(latest_cp)
             return
-
+        if self.global_step + 1 >= self.total_step or self.train_finished:
+            return
 
         self.print_log(f"Per step batch size (no grad acc): {train_bs_per_step}")
         # NOTE: only loss computation will be affected by gradient accumulation
@@ -848,7 +865,7 @@ class PEFTTrainer:
             self.accelerator.log(self.training_args.to_dict())
 
             progress_bar = tqdm(
-                range(self.global_step, self.total_step),
+                range(0, self.total_step),
                 disable=not self.accelerator.is_local_main_process or self.training_args.is_cluster,
                 initial=self.global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
@@ -861,7 +878,7 @@ class PEFTTrainer:
                 self.print_log(f"skip first {self.start_step} steps in train_dataloader", print_step=False)
         else:
             progress_bar = tqdm(
-                range(self.global_step, self.total_step),
+                range(0, self.total_step),
                 initial=self.global_step,
                 # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
                 miniters=self.training_args.logging_steps,
@@ -871,7 +888,6 @@ class PEFTTrainer:
 
         self.model.train()
         logging_loss = 0
-        
 
         for epoch in range(self.start_epoch, self.training_args.num_train_epochs):
             # it can show the processes to reach here
@@ -903,10 +919,8 @@ class PEFTTrainer:
                                 # shutil.rmtree(self.training_args.logging_dir)
                             print(f"this expr's output dir and logging dir have been removed due to error \n {e}")
                             raise e
-
                         # log before backward
                         self.accelerator.backward(loss) # it does gradient acc internally
-                        
                         # under accelerator.accumulate context
                         # it steps until gradient_accumulation_steps
                         self.optimizer.step()
@@ -973,7 +987,8 @@ class PEFTTrainer:
         # log best metric val at final step for easy comparison
         self.log(
         {
-            "best_metric_val": self.best_metric_val
+            "best_metric_val": self.best_metric_val,
+            "train_finished": True,
         }
         )
         self.accelerator.end_training()
@@ -1002,7 +1017,7 @@ class PEFTTrainer:
         """
         print log under different training system.
         """
-        if print_step:
+        if self.total_step > 0 and print_step:
             s = f"global_step {self.global_step}/{self.total_step}  ({self.global_step/self.total_step}): {s}"
         if self.training_args.is_cluster:
             import hfai
@@ -1081,25 +1096,17 @@ class PEFTTrainer:
             # and load trained model weights into the model
             # then we move model back to gpu
             if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-                # self.accelerator.load_state(best_cp_dir)
-                # with self.accelerator.main_process_first():
-                    # self.accelerator.load_state(best_cp_dir)
-
-
                 self.model = self.model.to("cpu")
                 del self.optimizer
                 del self.scheduler
                 self.accelerator._optimizers = []
                 self.accelerator._schedulers = []
                 torch.cuda.empty_cache()
-                # time.sleep(60)
-
-
-                # self.accelerator.load_state(best_cp_dir)
                 self.accelerator.wait_for_everyone()
                 # load state will load optimizer and scheduler so we load everything into cpu
                 # and then move model back to gpu
-                self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                # self.accelerator.load_state(best_cp_dir, map_location="cpu")
+                self.accelerator.load_state(best_cp_dir)
                 self.train_state.load_from_json(best_cp_dir)
                 # print(f"Moving mdoel back to gpu {self.accelerator.device}")
                 # # time.sleep(60)
@@ -1117,6 +1124,8 @@ class PEFTTrainer:
                     )
                 if during_training:
                     print("warning: tracker is expected to exist during training")
+        
+
         # load dataset for evaluation
         if mode == "eval":
             dataset2eval = self.eval_dataset
@@ -1255,47 +1264,13 @@ class PEFTTrainer:
                 return
             
             # free memory in test mode 
-            
             if mode == "test":
                 dataset2eval = self.test_dataset
                 dataloader2eval = self.test_dataloader
             elif mode == "traditional_test":
                 dataset2eval = self.traditional_test_dataset
                 dataloader2eval = self.traditional_test_dataloader
-            if self.training_args.load_best_checkpoint:
-                best_cp_dir = None
-                # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
-                print("load from existing state: ", best_cp_dir)
-                assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
-                if self.training_args.is_cluster and not verify_complete_random_states(best_cp_dir):
-                    shutil.rmtree(best_cp_dir)
-                    check_all_checkpoints_and_remove(self.training_args.output_dir)
-                    exit(f"Not found complete random states in {best_cp_dir} for testing, removed the best checkpoint folder: {best_cp_dir}, exiting...")
-                # only in this case we need to first move loaded pretrained mdoel to cpu
-                # and load trained model weights into the model
-                # then we move model back to gpu
-                if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
-                    self.model = self.model.to("cpu")
-                    # check if class has attribute
-                    if hasattr(self, "optimizer"):
-                        del self.optimizer
-                    if hasattr(self, "scheduler"):
-                        del self.scheduler
-                    self.accelerator._optimizers = []
-                    self.accelerator._schedulers = []
-                    torch.cuda.empty_cache()
-                    # time.sleep(60)
-                    self.accelerator.load_state(best_cp_dir, map_location="cpu")
-                    # time.sleep(60)
-                    print(f"Moving mdoel back to gpu {self.accelerator.device}")
-                    self.model = self.model.to(self.accelerator.device)
-                else:
-                    self.accelerator.load_state(best_cp_dir)
-        else:
-            raise NotImplementedError(
-                "mode must be either eval or test mode or traditional_test mode"
-            )
+
 
         input_host = []
         output_host = []
@@ -1305,14 +1280,13 @@ class PEFTTrainer:
         # it handles deepspeed and DDP
 
         # wait for everyone to finish prepare dataset
-        
         with torch.no_grad():
             progress_bar = tqdm(dataloader2eval,
                                 miniters=0 if not self.training_args.is_cluster else 500,
                                 disable=self.training_args.is_cluster)
             for inputs in progress_bar:
                 
-                if self.distributed_type == DistributedType.MULTI_GPU:
+                if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.accelerator.device)
                 # if not self.use_distributed:   non deepspeed
@@ -1364,10 +1338,10 @@ class PEFTTrainer:
                 cnt = len(label_host)
                 if cnt % 100 == 0:
                     print(f"evaluated {cnt} {mode} data")
-                if cnt < 100:
-                    # check if there are duplicated labels
-                    # if there are, it means dataloader is not prepared for multi-gpu setup
-                    print(f"{self.accelerator.device}: {label_host}")
+                # if cnt < 100:
+                #     # check if there are duplicated labels
+                #     # if there are, it means dataloader is not prepared for multi-gpu setup
+                #     print(f"{self.accelerator.device}: {label_host}")
                 self.accelerator.wait_for_everyone()
 
         results = self.compute_metrics(
@@ -1626,9 +1600,9 @@ class PEFTTrainer:
         """
         self.accelerator.wait_for_everyone()
         start_time = time.time()
+        self.log({"global_step": global_step})
         cp_folder_name = f"checkpoint-{global_step}"
         # remove old checkpoint if eval and has a better checkpoint
-
         if save_best_checkpoint:
             checkpoint_dir_path = os.path.join(self.training_args.output_dir, "best_checkpoint")
             checkpoint_folder_path_to_save = os.path.join(checkpoint_dir_path, cp_folder_name)
@@ -1694,6 +1668,7 @@ class PEFTTrainer:
         load previous training state and model checkpoint from checkpoint folder, if failed, then init a new run.
         It tries to run and probably fails and delete checkpoint in a single process. So it's expected to run this function in a single process and then loads other states in other processes.
         - if a checkpoint folder doesn't contain all random states, remove it and reload the previous checkpoint.
+        - Note: variables such as self.start_step is loaded in first process only.
         """
         loaded = False
         trial_times = 0 # record how many times we have tried to load from existing state, if there are more than 5 times of failure, then remove the output dir
@@ -1710,14 +1685,6 @@ class PEFTTrainer:
                     check_all_checkpoints_and_remove(self.training_args.output_dir)
                     latest_cp = None
 
-                # if no checkpoint, then remove the folder and re-init the tracker
-                # if latest_cp is None:
-                #     if os.path.exists(self.training_args.output_dir) and not not os.listdir(self.training_args.output_dir):
-                #         shutil.rmtree(self.training_args.output_dir)
-                #         logger.warn(f"no checkpoint found, remove the folder {self.training_args.output_dir} and re-init the tracker")
-                    # logger.warn(f"no checkpoint found but folder exists, check the folder {self.training_args.output_dir}")
-                    # exit(f"no checkpoint found but folder exists, check the folder {self.training_args.output_dir}")
-                    # time.sleep(3)
 
                 # try to load the latest checkpoint
                 try:
@@ -1731,12 +1698,8 @@ class PEFTTrainer:
                     self.start_epoch = self.train_state.get("epoch")
                     # self.start_step = self.train_state.get("step")
                     self.start_step = int(latest_cp.split("-")[-1])
-                    self.global_step =  self.train_state.get("global_step")
-                    # NOTE: hacky way to force one more training step before evaluation to prevent NCCL issue when reloading
-                    # if self.global_step >= self.total_step:
-                    #     self.global_step = self.total_step - 20 # 20 > grad accumulation steps
-                    # else:
-                    #     self.global_step -= 20
+                    self.global_step = self.start_step
+
                     self.test_eval_finished = self.train_state.get("test_eval_finished")
                     self.best_metric_step = self.train_state.get("best_metric_step")
                     # if training is finished, then only load the state
@@ -1744,7 +1707,7 @@ class PEFTTrainer:
                     if self.global_step >= self.total_step:
                         self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
                         self.print_log("Only train state is loaded...")
-                        # self.train_finished = True
+                        self.train_finished = True
                         self.train_state.update({"train_finished": True})
                         self.train_state.save_to_json(latest_cp)
                         return True
