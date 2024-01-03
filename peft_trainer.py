@@ -787,8 +787,6 @@ class PEFTTrainer:
                         shutil.rmtree(latest_cp)
                     raise e
                 
-                
-
         # it has past run but might not have model checkpoint and wandb file
         # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
         # NOTE: only main process load previous run
@@ -797,15 +795,6 @@ class PEFTTrainer:
             self.load_previous_run()
             print(f"{self.accelerator.device}: finished loading previous run")
         self.accelerator.wait_for_everyone()
-        # after main process checked and finished loading random states
-        if not self.accelerator.is_local_main_process:
-            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-            # latest_cp is guaranteed to be not None if there is expr history
-            # if latest cp is not None, it's wrong
-            # if it's None, it's a new expr
-            if latest_cp is not None:
-                self.accelerator.load_state(latest_cp)
-                print(f"{self.accelerator.device}: finished loading previous run")
 
         # reload latest checkpoint for non-main processes
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
