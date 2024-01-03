@@ -275,7 +275,7 @@ fi
 
 if [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $LORA_RANK == "512" && $tuning_mode == "lora_peft" ]]; then
     evaluation_args="--do_traditional_test"
-elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $ADAPATER_SIZE == "256" && $tuning_mode == "adapter_peft" ]]; then
+elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-4" && $ADAPATER_SIZE == "512" && $tuning_mode == "adapter_peft" ]]; then
     evaluation_args="--do_traditional_test"
 elif [[ $data_folder == "default_train_707_val_50" && ($model == "google/t5-xl-lm-adapt" || $model == "google/t5-xxl-lm-adapt") && $LR == "1e-5" && $tuning_mode == "fine_tuning" ]]; then
     evaluation_args="--do_traditional_test"
