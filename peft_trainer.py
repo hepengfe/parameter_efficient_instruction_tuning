@@ -682,11 +682,8 @@ class PEFTTrainer:
                 param.requires_grad = False
             for name, module in self.model.named_modules():
                 if hasattr(module, "bias"):
-                    # print(name)
                     if module.bias is None:
                         print("found none bias, init bias for ", name)
-                    # print('')
-                    # module.bias = torch.nn.Parameter(torch.randn(module.out_features))
                         module.bias = torch.nn.Parameter(torch.zeros(module.out_features))
                     if not module.bias.requires_grad:
                         print("activate gradient for ", name)
