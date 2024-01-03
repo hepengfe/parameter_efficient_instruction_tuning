@@ -1399,23 +1399,10 @@ class PEFTTrainer:
                 task_type=task_type,
                 num_virtual_tokens=self.peft_args.prompt_len,
                 inference_mode=False,
-                # device= str(self.accelerator.device),
-                # prompt_tuning_init="TEXT",
-                # prompt_tuning_init_text=prompt_tuning_init_text,
-                # tokenizer_name_or_path=init_text_tokenizer_name_or_path,
             )
             self.load_peft_module(config)
 
         elif self.model_args.tuning_mode == "prefix_tuning":
-            # from transformers.adapters import PrefixTuningConfig
-            # config = PrefixTuningConfig(
-            #             prefix_length=self.peft_args.prefix_len,        
-            #             bottleneck_size=self.peft_args.bottleneck_size,
-            #             encoder_prefix=True,
-            #             cross_prefix=True,
-            #             dropout=self.peft_args.dropout_rate,
-            # )
-
             from peft import PrefixTuningConfig
             # prefix reparameterization enabled
             if self.peft_args.bottleneck_size > 0:
