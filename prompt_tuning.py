@@ -518,13 +518,24 @@ def main():
         # test overfitting
         training_args.logging_steps = 10
         # async eval and save
-        training_args.num_train_epochs = 5
+        training_args.num_train_epochs = 2
         training_args.save_steps = 60
         training_args.eval_steps = 60
 
-        training_args.save_steps = 600
-        training_args.eval_steps = 200
+        
+        # long train test lora svd capability
+        # training_args.num_train_epochs = 2
+        # training_args.save_steps = 2000
+        # training_args.eval_steps = 2000
+        # training_args.dev_train_data_size = 10000
+
+        # short train
+        training_args.num_train_epochs = 5
+        training_args.save_steps = 10
+        training_args.eval_steps = 10
         training_args.dev_train_data_size = 30
+
+
         training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
         training_args.per_device_train_batch_size = 1
@@ -662,6 +673,8 @@ def main():
     training_args.label_names = [training_args.label_names]
     trainer = PEFTTrainer(training_args, data_args, model_args, peft_args)
    
+    # assert sum([training_args.do_train, training_args.do_test, training_args.do_traditional_test]) == 1, "only one of do_train, do_test, do_traditional_test can be True"
+
     if training_args.do_train:
         trainer.train() # train from scratch
         trainer.evaluate("test")
@@ -669,12 +682,12 @@ def main():
         logger.info("*** Training and Test finished ***")
 
     if training_args.do_test:
-        trainer.evaluate("test")
+        trainer.evaluate("test", during_training=False)
         logger.info("*** Test finished ***")
 
 
     if training_args.do_traditional_test:
-        trainer.evaluate("traditional_test")
+        trainer.evaluate("traditional_test", during_training=False)
         logger.info("*** Traditional Test finished ***")
 
     
