@@ -540,16 +540,16 @@ class PEFTTrainer:
                 # raw_datasets["train"] =  raw_datasets["train"]
 
                 # short train
-                # raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
-                # raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
+                raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
+                raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
                 
                 # long train
                 # select random 300 examples from validation and 500 examples from test
-                import random
-                random.seed(42)
-                raw_datasets["validation"] = raw_datasets["validation"].select(random.sample(range(len(raw_datasets["validation"])), 300))
-                raw_datasets["test"] = raw_datasets["test"].select(random.sample(range(len(raw_datasets["test"])), 500))
-                raw_datasets["trainditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_train_data_size))
+                # import random
+                # random.seed(42)
+                # raw_datasets["validation"] = raw_datasets["validation"].select(random.sample(range(len(raw_datasets["validation"])), 300))
+                # raw_datasets["test"] = raw_datasets["test"].select(random.sample(range(len(raw_datasets["test"])), 500))
+                # raw_datasets["trainditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_train_data_size))
             elif self.training_args.dev_test:
                 # test compute metrics are same for validation and test as
                 # test evaluation load model from checkpoint and run on test dataset
@@ -680,36 +680,19 @@ class PEFTTrainer:
         elif self.model_args.tuning_mode == "bitfit":
             for param in self.model.parameters():
                 param.requires_grad = False
-            layers = []
-            if self.peft_args.bias_name == "encoder_bias":
-                modules = self.model.encoder.block
-                for m in modules:
-                    layers.append(m.layer[0])
-            elif self.peft_args.bias_name == "decoder_bias":
-                modules = self.model.decoder.block
-                for m in modules:
-                    layers.append(m.layer[0])
-            elif  self.peft_args.bias_name == "encoder_decoder_bias":
-                modules = self.model.encoder.block
-                for m in modules:
-                    layers.append(m.layer[0])
-                modules = self.model.decoder.block
-                for m in modules:
-                    layers.append(m.layer[0])
-            else:
-                raise ValueError("bias name not supported: ", arguments.bias_name)
-
-            for l in layers:
-                for name, module in l.named_modules():
-
-                    # first check if bias is settable
-                    if hasattr(module, "bias") and type(module) == transformers.adapters.lora.Linear:
-                        if module.bias is None:
-                            print("found none bias, init bias for ", name)
-                            module.bias = torch.nn.Parameter(torch.randn(module.out_features))
-                        if not module.bias.requires_grad:
-                            print("activate gradient for ", name)
-                            module.bias.requires_grad = True
+            for name, module in self.model.named_modules():
+                if hasattr(module, "bias"):
+                    # print(name)
+                    if module.bias is None:
+                        print("found none bias, init bias for ", name)
+                    # print('')
+                    # module.bias = torch.nn.Parameter(torch.randn(module.out_features))
+                        module.bias = torch.nn.Parameter(torch.zeros(module.out_features))
+                    if not module.bias.requires_grad:
+                        print("activate gradient for ", name)
+                        module.bias.requires_grad = True
+                    else:
+                        print("gradient already activated for ", name)
         else:
             # NOTE: prompt tuning
             # general peft converting based on different peft config
@@ -826,7 +809,6 @@ class PEFTTrainer:
             if latest_cp is not None:
                 self.accelerator.load_state(latest_cp)
                 print(f"{self.accelerator.device}: finished loading previous run")
-        # NOTE: gradient accumulation step is not unrelated to the computation below
 
         # reload latest checkpoint for non-main processes
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
@@ -938,7 +920,6 @@ class PEFTTrainer:
                     self.optimizer.step()
                     self.scheduler.step()
                     self.save_and_eval(self.global_step)
-
                 if self.training_args.is_cluster:
                     import hfai
                     # cluster pre-interrupt saving
