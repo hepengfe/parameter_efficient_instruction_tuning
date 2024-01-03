@@ -163,6 +163,7 @@ class PEFTTrainer:
                 project_dir=self.training_args.output_dir,
                 gradient_accumulation_steps = self.training_args.gradient_accumulation_steps,
         )
+        
         # deepspeed setting can be considered as distributed
         self.use_distributed = self.accelerator.use_distributed or self.accelerator.distributed_type == DistributedType.DEEPSPEED
         self.distributed_type = self.accelerator.distributed_type
@@ -172,6 +173,11 @@ class PEFTTrainer:
             self.training_args.to_dict(), 
             eval_metric = self.training_args.eval_metric
         )
+        self.accelerator.init_trackers(
+                        self.training_args.run_name,
+                        config=self.train_state.state_dict,
+                        init_kwargs={"tensorboard": {"flush_secs": 60}},
+                    )
         self.total_step = 1
         self.label_smoother = LabelSmoother(epsilon=self.training_args.label_smoothing_factor) if self.training_args.label_smoothing_factor > 0 else None
         self.load_tokenzier()
@@ -556,6 +562,7 @@ class PEFTTrainer:
                 raw_datasets["train"] =  raw_datasets["train"].select(range(self.training_args.dev_test_data_size))
                 raw_datasets["validation"] = raw_datasets["train"]
                 raw_datasets["test"] = raw_datasets["train"]
+                raw_datasets["traditional_test"] = raw_datasets["traditional_test"].select(range(self.training_args.dev_test_data_size))
 
             self.train_dataset = raw_datasets["train"]
             self.eval_dataset = raw_datasets["validation"]
@@ -1102,11 +1109,12 @@ class PEFTTrainer:
             return ni_eval_results
         elif mode == "test" or mode == "traditional_test":
             if self.data_args.dataset_name != "alpaca":
-                # free memory in test mode 
-                dataset2eval = self.test_dataset
+                # free memory in test mode
                 if mode == "test":
+                    dataset2eval = self.test_dataset
                     dataloader2eval = self.test_dataloader
                 elif mode == "traditional_test":
+                    dataset2eval = self.traditional_test_dataset
                     dataloader2eval = self.traditional_test_dataloader
                 ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
                 if ni_eval_results is not None:
@@ -1229,7 +1237,9 @@ class PEFTTrainer:
             if self.test_eval_finished and mode == "test":
                 self.print_log("test evaluation is done, finish...")
                 return
-            
+            if self.traditional_test_eval_finished and mode == "traditional_test":
+                self.print_log("traditional test evaluation is done, finish...")
+                exit()
             # free memory in test mode 
             if mode == "test":
                 dataset2eval = self.test_dataset
