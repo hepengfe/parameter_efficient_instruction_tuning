@@ -1180,7 +1180,7 @@ class PEFTTrainer:
                     print("update train state traditional_test_eval_finished to True")
                     self.train_state.update({"traditional_test_eval_finished": True})
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-                self.train_state.save_to_json(latest_cp)
+                self.save_train_state(latest_cp)
                 self.print_log("Finished test dataset evaluation...")
                 return mmlu_result_d
 
@@ -1314,7 +1314,7 @@ class PEFTTrainer:
         elif mode == "traditional_test":
             print("update train state traditional_test_eval_finished to True")
             self.train_state.update({"traditional_test_eval_finished": True})
-        self.train_state.save_to_json(get_latest_checkpoint(self.training_args.output_dir))
+        self.save_train_state(get_latest_checkpoint(self.training_args.output_dir))
         metric="rougeL"
         self.print_log(f"{mode}/{metric}: {results_with_mode[f'{mode}/{metric}']}")
         
@@ -1616,8 +1616,9 @@ class PEFTTrainer:
         # train state and model checkpoint are loaded in main process
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
         if latest_cp and not self.accelerator.is_local_main_process:
-            self.print_by_rank(f"loading last accelerator state")
-            self.accelerator.load_state(latest_cp)
+            # OOM issue: only load state in main process is needed?
+            # self.print_by_rank(f"loading last accelerator state")
+            # self.accelerator.load_state(latest_cp)
             self.print_by_rank(f"loading last train state")
             self.load_last_train_state()
 
@@ -1634,7 +1635,7 @@ class PEFTTrainer:
             self.print_log("Only train state is loaded...")
             self.train_finished = True
             self.train_state.update({"train_finished": True})
-            self.train_state.save_to_json(latest_cp)
+            self.save_train_state(latest_cp)
 
 
     def load_last_train_state(self):
@@ -1767,3 +1768,7 @@ class PEFTTrainer:
                 )
                 loaded = True
         return loaded
+
+    def save_train_state(self, path):
+        if self.accelerator.is_main_process:
+            self.train_state.save_to_json(path)
