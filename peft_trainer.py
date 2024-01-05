@@ -142,11 +142,13 @@ class PEFTTrainer:
         # init
         self.best_metric_val = -1
         self.best_metric_step = -1
-        self.warmup_steps = -1
+        
         
         self.start_epoch = 0
         self.start_step = 0
         self.global_step = 0
+
+
         self.train_finished = False
         self.test_eval_finished = False
         self.traditional_test_eval_finished = False
@@ -220,12 +222,7 @@ class PEFTTrainer:
         # self.total_step = -1
         # self.build_dataloader()
         # assert self.total_step > 0
-        if self.model_args.tuning_mode == "fine_tuning":
-            assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"
-        elif self.model_args.tuning_mode == "off_the_shelf":
-            pass
-        else:
-            assert self.warmup_steps > 0, f"lr warmup steps should be larger than 0, but got {self.warmup_steps}"
+        
         # some scheduler require num_training_steps which is depedent on len(dataset)
         self.load_optimizer_n_scheduler()
         
@@ -375,7 +372,7 @@ class PEFTTrainer:
         logging.info(f"Ensure this directory is persistent if you do not want to download model files again!")
 
         if "t5" in self.model_name_or_path or "bart" in self.model_name_or_path:
-            if self.model_args.tuning_mode in ["fine_tuning","off_the_shelf", "prompt_tuning"]:
+            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning"]:
                 
                 if os.path.exists(self.potential_model_path):
                     model = AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
@@ -397,12 +394,11 @@ class PEFTTrainer:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, config = config)
                 else:
                     model =AutoModelForSeq2SeqLM.from_pretrained(self.potential_model_path, cache_dir=self.training_args.cache_dir, config = config)
-                
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
 
         elif "llama" in self.model_name_or_path.lower():
-            if self.model_args.tuning_mode in ["fine_tuning", "off_the_shelf", "prompt_tuning", "adapter_peft", "lora_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
+            if self.model_args.tuning_mode in ["fine_tuning", "prompt_tuning", "adapter_peft", "lora_peft"] or self.model_args.tuning_mode in ADAPTER_TRANSFORMERS_MODULES:
                 model = LlamaForCausalLM.from_pretrained(self.potential_model_path, config = config)
             else:
                 raise NotImplementedError("Tuning mode not supported: " + self.model_args.tuning_mode)
@@ -471,6 +467,11 @@ class PEFTTrainer:
             self.total_step = 1
         self.warmup_steps = self.total_step * self.training_args.warmup_ratio
         self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}", print_step=False)
+
+        if self.model_args.tuning_mode == "fine_tuning":
+            assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"
+        else:
+            assert self.warmup_steps > 0, f"lr warmup steps should be larger than 0, but got {self.warmup_steps}"
         
         self.num_training_steps_for_scheduler = self.total_step * self.accelerator.num_processes
         self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
@@ -792,41 +793,15 @@ class PEFTTrainer:
                         shutil.rmtree(latest_cp)
                     raise e
                 
-        # it has past run but might not have model checkpoint and wandb file
-        # we should first guarantee that it has the model checkpoint and it's correctly loaded, otherwise, we re-init the tracker
-        # NOTE: only main process load previous run
-        # single process bc there could file access/deletion conflict and it returns an object
-        if self.accelerator.is_local_main_process:
-            self.load_previous_run()
-            print(f"{self.accelerator.device}: finished loading previous run")
-        self.accelerator.wait_for_everyone()
 
-        # reload latest checkpoint for non-main processes
-        latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-        # async loading
-        if self.accelerator.device.index is not None:
-            time.sleep(0.5 * self.accelerator.device.index)
-        # NOTE: there is some duplicated code below from load_previous_run()
-        # it's designed for running in non main process
-        if latest_cp:
-            self.train_state.load_from_json(latest_cp)
-            self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
-            self.train_finished = self.train_state.get("train_finished")
-            self.best_metric_val = self.train_state.get("best_metric_val")
-            self.best_metric_step = self.train_state.get("best_metric_step")
-            self.start_step = self.train_state.get("step")
-            self.global_step = int(latest_cp.split("-")[-1])
-            self.start_epoch = self.train_state.get("epoch")
-        print(f"{self.accelerator.device}: train_finished state: {self.train_finished}")
+        self.load_last_run_multi_proc()
 
-        if self.global_step + 1 >= self.total_step or self.train_finished:
+
+        if self.train_finished:
             self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
             self.print_log("Ending training...")
-            self.train_state.update({"train_finished": True})
-            self.train_state.save_to_json(latest_cp)
             return
-        if self.global_step + 1 >= self.total_step or self.train_finished:
-            return
+
 
         self.print_log(f"Per step batch size (no grad acc): {train_bs_per_step}")
         # NOTE: only loss computation will be affected by gradient accumulation
@@ -962,6 +937,7 @@ class PEFTTrainer:
                     return
 
             self.start_step = 0
+            self.start_epoch = epoch + 1
             self.print_log(f"epoch {epoch} finished, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
@@ -978,14 +954,7 @@ class PEFTTrainer:
         }
         )
         self.accelerator.end_training()
-        # remove all step checkpoints after training is finished
-        # if self.accelerator.is_main_process:
-        #     # only keep lastest checkpoint's train_state.json file
-        #     remove_old_checkpoints(self.training_args.output_dir, num_to_keep=1)
-        #     latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-        #     if latest_cp is not None:
-        #         remove_files_and_folders_other_than(latest_cp, self.train_state.file_name)
-        # wait for last eval saving and old checkpoint removal
+
 
 
 
@@ -1529,8 +1498,6 @@ class PEFTTrainer:
         elif self.model_args.tuning_mode == "fine_tuning":
             # no converting needed
             pass
-        elif self.model_args.tuning_mode == "off_the_shelf":
-            pass
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
@@ -1540,14 +1507,15 @@ class PEFTTrainer:
 
         force is used in end of training or after each epoch.
         """
-        if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.save_steps == 0):
+        force = False if self.training_args.dev_run or self.training_args.dev_train or self.training_args.dev_test else force
+        if force or global_step % self.training_args.save_steps == 0:
             self.save(global_step)
 
         # no evaluation for alpaca
         if self.data_args.dataset_name == "alpaca":
             return
 
-        if force or ((global_step != 0 or self.training_args.dev_run) and global_step % self.training_args.eval_steps == 0):
+        if force or global_step % self.training_args.eval_steps == 0:
             results = self.evaluate(step=global_step)
             if results is None:
                 return
@@ -1640,9 +1608,58 @@ class PEFTTrainer:
             print("Model saving time in seconds:", time.time() - start_time)
         if self.accelerator.is_main_process and remove_old_cp:
             remove_old_checkpoints(checkpoint_dir_path, self.training_args.checkpoint_save_total_limit)
-        
 
-    def load_previous_run(self):
+    def load_last_run_multi_proc(self):
+        # load last state
+        if self.accelerator.is_local_main_process:
+            self.load_last_accelerator_state()
+            self.load_last_train_state()
+        self.accelerator.wait_for_everyone()
+        # train state and model checkpoint are loaded in main process
+        latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+        if latest_cp and not self.accelerator.is_local_main_process:
+            print(f"{self.accelerator.device}:  loading last accelerator state")
+            self.accelerator.load_state(latest_cp)
+            print(f"{self.accelerator.device}:  loading last train state")
+            self.load_last_train_state()
+
+
+        self.accelerator.init_trackers(
+                self.training_args.run_name,
+                config=self.train_state.state_dict,
+                init_kwargs={"tensorboard": {"flush_secs": 60}},
+            )
+
+        # some extra post-loading check
+        if self.global_step >= self.total_step:
+            self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
+            self.print_log("Only train state is loaded...")
+            self.train_finished = True
+            self.train_state.update({"train_finished": True})
+            self.train_state.save_to_json(latest_cp)
+
+
+    def load_last_train_state(self):
+        """
+        load training state from checkpoint folder.
+        It only tries to load once and if failed, then remove the checkpoint folder and raise error.
+        """
+        latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+        if latest_cp:
+            self.start_epoch = self.train_state.get("epoch")
+            self.start_step = self.train_state.get("step")
+            self.global_step = int(latest_cp.split("-")[-1])
+            # train/test status
+            self.train_finished = self.train_state.get("train_finished")
+            self.test_eval_finished = self.train_state.get("test_eval_finished")
+            self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
+            self.best_metric_step = self.train_state.get("best_metric_step")
+            self.best_metric_val = self.train_state.get("best_metric_val")
+        else:
+            print(f"latest checkpoint not found in {self.training_args.output_dir}")
+
+
+    def load_last_accelerator_state(self):
         """
         load previous training state and model checkpoint from checkpoint folder, if failed, then init a new run.
         It tries to run and probably fails and delete checkpoint in a single process. So it's expected to run this function in a single process and then loads other states in other processes.
@@ -1653,10 +1670,6 @@ class PEFTTrainer:
         trial_times = 0 # record how many times we have tried to load from existing state, if there are more than 5 times of failure, then remove the output dir
         while not loaded:
             if os.path.exists(self.training_args.output_dir):
-                # if not os.listdir(self.training_args.output_dir):
-                #     print("output dir is ", self.training_args.output_dir)
-                    # exit("output dir exists but empty, please double check and remove it")
-                    # shutil.rmtree(self.training_args.output_dir)
                 self.print_log("load from existing state", print_step=False)
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                 # if latest cp is not None and is in cluster environment, then check if it has complete random states
@@ -1667,30 +1680,30 @@ class PEFTTrainer:
 
                 # try to load the latest checkpoint
                 try:
-                    print("loading from training state")
-                    self.train_state.load_from_json(latest_cp)
-                    self.accelerator.init_trackers(
-                        self.training_args.run_name,
-                        config=self.train_state.state_dict,
-                        init_kwargs={"tensorboard": {"flush_secs": 60}},
-                    )
-                    self.start_epoch = self.train_state.get("epoch")
-                    self.start_step = self.train_state.get("step")
-                    # self.start_step = int(latest_cp.split("-")[-1])
-                    self.global_step = int(latest_cp.split("-")[-1])
+                    # print("loading from training state")
+                    # self.train_state.load_from_json(latest_cp)
+                    # self.accelerator.init_trackers(
+                    #     self.training_args.run_name,
+                    #     config=self.train_state.state_dict,
+                    #     init_kwargs={"tensorboard": {"flush_secs": 60}},
+                    # )
+                    # self.start_epoch = self.train_state.get("epoch")
+                    # self.start_step = self.train_state.get("step")
+                    # # self.start_step = int(latest_cp.split("-")[-1])
+                    # self.global_step = int(latest_cp.split("-")[-1])
 
-                    self.test_eval_finished = self.train_state.get("test_eval_finished")
-                    self.best_metric_step = self.train_state.get("best_metric_step")
-                    self.best_metric_val = self.train_state.get("best_metric_val")
-                    # if training is finished, then only load the state
-                    # because the model checkpoint is already removed
-                    if self.global_step >= self.total_step:
-                        self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
-                        self.print_log("Only train state is loaded...")
-                        self.train_finished = True
-                        self.train_state.update({"train_finished": True})
-                        self.train_state.save_to_json(latest_cp)
-                        return True
+                    # self.test_eval_finished = self.train_state.get("test_eval_finished")
+                    # self.best_metric_step = self.train_state.get("best_metric_step")
+                    # self.best_metric_val = self.train_state.get("best_metric_val")
+                    # # if training is finished, then only load the state
+                    # # because the model checkpoint is already removed
+                    # if self.global_step >= self.total_step:
+                    #     self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
+                    #     self.print_log("Only train state is loaded...")
+                    #     self.train_finished = True
+                    #     self.train_state.update({"train_finished": True})
+                    #     self.train_state.save_to_json(latest_cp)
+                    #     return True
                     
                     
                     # only train state exists in latest checkpoint
@@ -1701,8 +1714,8 @@ class PEFTTrainer:
 
                     # time.sleep(60)
                     # check it earlier
-                    # if self.training_args.is_cluster and not verify_complete_random_states(latest_cp):
-                    #     raise ValueError(f"Not found complete random states in {latest_cp} for testing.")
+                    if self.training_args.is_cluster and not verify_complete_random_states(latest_cp):
+                        raise ValueError(f"Not found complete random states in {latest_cp} for testing.")
                     print(f"{self.accelerator.device}:  loading from accelerator state")
                     self.accelerator.load_state(latest_cp)
                     # time.sleep(60)
