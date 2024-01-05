@@ -144,9 +144,12 @@ class PEFTTrainer:
         self.best_metric_step = -1
         
         
-        self.start_epoch = 0
-        self.start_step = 0
-        self.global_step = 0
+        self.start_epoch = 0 # start epoch from last checkpoint if exists, otherwise 0. when saving training state, it will be updated to latest epoch.
+        
+        self.start_step = 0 # start step from last checkpoint if exists
+        self.epoch = 0 # current epoch
+        self.step = 0 # current step at each epoch
+        self.global_step = 0 # current global step
 
 
         self.train_finished = False
@@ -839,15 +842,15 @@ class PEFTTrainer:
         self.model.train()
         logging_loss = 0
 
-        for epoch in range(self.start_epoch, self.training_args.num_train_epochs):
+        for self.epoch in range(self.start_epoch, self.training_args.num_train_epochs):
             # it can show the processes to reach here
-            self.print_log(f"------------{self.accelerator.device}: new epoch: {epoch} global_step: {self.global_step}")
+            self.print_log(f"------------{self.accelerator.device}: new epoch: {self.epoch} global_step: {self.global_step}")
             
-            for step, inputs in enumerate(self.train_dataloader, start=self.start_step):
+            for self.step, inputs in enumerate(self.train_dataloader, start=self.start_step):
                 self.train_state.update(
                             {
-                                "epoch": epoch,
-                                "step": step,
+                                "epoch": self.epoch,
+                                "step": self.step,
                                 "global_step": self.global_step,
                             }
                         )
@@ -876,7 +879,6 @@ class PEFTTrainer:
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
-                        self.save_and_eval(self.global_step)
 
                 else:
                     for k in inputs:
@@ -887,7 +889,7 @@ class PEFTTrainer:
                     loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
-                    self.save_and_eval(self.global_step)
+                self.save_and_eval(self.global_step)
                 if self.training_args.is_cluster:
                     import hfai
                     # cluster pre-interrupt saving
@@ -928,15 +930,12 @@ class PEFTTrainer:
                     self.end_training()
                     return
 
-            self.start_step = 0
-            self.start_epoch = epoch + 1
-            self.print_log(f"epoch {epoch} finished, evaluating...")
-            # eval and save per epoch as well
-            # guarantee to have a best checkpoint folder at the end of training
-            # self.save_and_eval(self.global_step, force=True if not ( self.training_args.dev_train or self.training_args.dev_run or self.training_args.dev_test) else False)
-            self.save_and_eval(self.global_step, force=True)
-            self.print_log(f"epoch {epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
-            self.print_log(f"steps per epoch: {self.global_step/(epoch+1)}")
+            self.print_log(f"epoch {self.epoch} finished, evaluating...")
+            # To be compatible with low data size, eval per epoch as well
+            if not (self.training_args.dev_train or self.training_args.dev_run or self.training_args.dev_test):
+                self.save_and_eval(self.global_step, force=True)
+            self.print_log(f"epoch {self.epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
+            self.print_log(f"steps per epoch: {self.global_step/(self.epoch+1)}")
         
         # log best metric val at final step for easy comparison
         self.end_training()
@@ -969,6 +968,9 @@ class PEFTTrainer:
         )
         self.train_state.update(d)
     
+    def print_by_rank(self, s):
+        print(f"{self.accelerator.device}: {s}")
+    
     def print_log(self, s, print_step=True):
         """
         print log under different training system.
@@ -981,6 +983,7 @@ class PEFTTrainer:
                 print(s)
         elif self.accelerator.is_main_process:
             logger.info(s)
+
     def evaluate(self, mode="eval", step=None, during_training=True):
         """
         There are two cases calling evaluate function:
@@ -1031,15 +1034,7 @@ class PEFTTrainer:
                     print("logging folder removed, please rerun the script to restart training")
                 raise e
 
-            print(f"{self.accelerator.device}: load from existing state: ", best_cp_dir)
-            # in independent evaluation, trackers need to be initialized
-            # if not hasattr(self.accelerator, "trackers"):
-            #     self.accelerator.init_trackers(
-            #             self.training_args.run_name,
-            #             config=self.train_state.state_dict,
-            #             init_kwargs={"tensorboard": {"flush_secs": 60}},
-            #         )
-            #     print("warning: init trackers in independent evaluation. a tracker shoud be init earlier")
+            self.print_by_rank(f"load from existing state: {best_cp_dir}")
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
 
 
@@ -1297,7 +1292,7 @@ class PEFTTrainer:
 
                 cnt = len(label_host)
                 if cnt % 100 == 0:
-                    print(f"evaluated {cnt} {mode} data")
+                    self.print_log(f"evaluated {cnt} {mode} data")
                 # if cnt < 100:
                 #     # check if there are duplicated labels
                 #     # if there are, it means dataloader is not prepared for multi-gpu setup
@@ -1382,8 +1377,6 @@ class PEFTTrainer:
         # 2. not satisfied with peft, load model from self.model_cache and convert again. self.model = deepcopy(self.model_cache)
         task_type = TaskType.SEQ_2_SEQ_LM
         if self.model_args.tuning_mode == "prompt_tuning":
-
-            
             config = PromptTuningConfig(
                 task_type=task_type,
                 num_virtual_tokens=self.peft_args.prompt_len,
@@ -1548,7 +1541,11 @@ class PEFTTrainer:
         """
         self.accelerator.wait_for_everyone()
         start_time = time.time()
-        self.log({"global_step": global_step})
+        self.log(
+            {"global_step": global_step,
+             "start_epoch": self.epoch,
+             "start_step": self.step,}
+        )
         cp_folder_name = f"checkpoint-{global_step}"
         # remove old checkpoint if eval and has a better checkpoint
         if save_best_checkpoint:
@@ -1572,7 +1569,7 @@ class PEFTTrainer:
                 if save_counter > 10:
                     raise ValueError(f"{self.accelerator.device}: tried save accelerator state to {checkpoint_folder_path_to_save} after {save_counter} times but failed. please check the folder state {checkpoint_folder_path_to_save}")
 
-            print(f"{self.accelerator.device}: tried save accelerator state to {checkpoint_folder_path_to_save} after {save_counter} times")
+            self.print_by_rank(f"save accelerator state to {checkpoint_folder_path_to_save} after {save_counter} times")
         else:
             self.accelerator.wait_for_everyone()
             self.accelerator.save_state(checkpoint_folder_path_to_save)
@@ -1619,9 +1616,9 @@ class PEFTTrainer:
         # train state and model checkpoint are loaded in main process
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
         if latest_cp and not self.accelerator.is_local_main_process:
-            print(f"{self.accelerator.device}:  loading last accelerator state")
+            self.print_by_rank(f"loading last accelerator state")
             self.accelerator.load_state(latest_cp)
-            print(f"{self.accelerator.device}:  loading last train state")
+            self.print_by_rank(f"loading last train state")
             self.load_last_train_state()
 
 
@@ -1657,7 +1654,7 @@ class PEFTTrainer:
             self.best_metric_step = self.train_state.get("best_metric_step")
             self.best_metric_val = self.train_state.get("best_metric_val")
         else:
-            print(f"latest checkpoint not found in {self.training_args.output_dir}")
+            self.print_log(f"latest checkpoint not found in {self.training_args.output_dir}")
 
 
     def load_last_accelerator_state(self):
@@ -1683,7 +1680,7 @@ class PEFTTrainer:
                     # check it earlier
                     if self.training_args.is_cluster and not verify_complete_random_states(latest_cp):
                         raise ValueError(f"Not found complete random states in {latest_cp} for testing.")
-                    print(f"{self.accelerator.device}:  loading from accelerator state")
+                    self.print_by_rank(f"loading from accelerator state")
                     self.accelerator.load_state(latest_cp)
                     # time.sleep(60)
                     loaded = True
