@@ -923,17 +923,9 @@ class PEFTTrainer:
                     logging_loss = 0
 
 
-                if self.global_step > self.total_step:
+                if self.global_step >= self.total_step:
                     self.save_and_eval(self.global_step, force=True)
-                    self.print_log(f"training is already finished, {self.global_step} steps are already done")
-                    self.print_log(f"epoch {epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
-                    self.print_log("Ending training...")
-                    self.log({
-                        "train_finished": True,
-                        "best_metric_val": self.best_metric_val,
-                        "best_metric_step": self.best_metric_step,
-                    })
-                    self.accelerator.end_training()
+                    self.end_training()
                     return
 
             self.start_step = 0
@@ -947,14 +939,23 @@ class PEFTTrainer:
             self.print_log(f"steps per epoch: {self.global_step/(epoch+1)}")
         
         # log best metric val at final step for easy comparison
+        self.end_training()
+
+    def end_training(self):
+        """
+        end training for cluster
+        """
+        self.print_log(f"training is already finished, {self.global_step} steps are already done")
+        self.print_log(f"best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
+        self.print_log("Ending training...")
         self.log(
         {
             "best_metric_val": self.best_metric_val,
+            "best_metric_step": self.best_metric_step,
             "train_finished": True,
         }
         )
         self.accelerator.end_training()
-
 
 
 
@@ -1677,42 +1678,8 @@ class PEFTTrainer:
                     check_all_checkpoints_and_remove(self.training_args.output_dir)
                     latest_cp = None
 
-
                 # try to load the latest checkpoint
                 try:
-                    # print("loading from training state")
-                    # self.train_state.load_from_json(latest_cp)
-                    # self.accelerator.init_trackers(
-                    #     self.training_args.run_name,
-                    #     config=self.train_state.state_dict,
-                    #     init_kwargs={"tensorboard": {"flush_secs": 60}},
-                    # )
-                    # self.start_epoch = self.train_state.get("epoch")
-                    # self.start_step = self.train_state.get("step")
-                    # # self.start_step = int(latest_cp.split("-")[-1])
-                    # self.global_step = int(latest_cp.split("-")[-1])
-
-                    # self.test_eval_finished = self.train_state.get("test_eval_finished")
-                    # self.best_metric_step = self.train_state.get("best_metric_step")
-                    # self.best_metric_val = self.train_state.get("best_metric_val")
-                    # # if training is finished, then only load the state
-                    # # because the model checkpoint is already removed
-                    # if self.global_step >= self.total_step:
-                    #     self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
-                    #     self.print_log("Only train state is loaded...")
-                    #     self.train_finished = True
-                    #     self.train_state.update({"train_finished": True})
-                    #     self.train_state.save_to_json(latest_cp)
-                    #     return True
-                    
-                    
-                    # only train state exists in latest checkpoint
-                    # so no further state loading
-                    # if self.test_eval_finished:
-                    #     self.print_log("test evaluation is already finished,  exit...")
-                    #     exit()
-
-                    # time.sleep(60)
                     # check it earlier
                     if self.training_args.is_cluster and not verify_complete_random_states(latest_cp):
                         raise ValueError(f"Not found complete random states in {latest_cp} for testing.")
