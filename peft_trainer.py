@@ -32,9 +32,9 @@ from accelerate.utils import DistributedType
 import time
 from transformers.trainer_pt_utils import LabelSmoother
 # modules use two pacakges 
-ADAPTER_TRANSFORMERS_MODULES=[]
+ADAPTER_TRANSFORMERS_MODULES=["ia3"]
 # ADAPTER_TRANSFORMERS_MODULES=[ "compactor", "prefix_tuning", "lora_adapter", "adapter_adapter","ia3"]
-PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit", "adapter_peft", "prefix_tuning", "ia3"]
+PEFT_MODULES=["prompt_tuning", "lora_peft", "bitfit", "adapter_peft", "prefix_tuning"]
 CAUSAL_LM=["gpt", "llama", "opt"]
 
 
@@ -546,7 +546,7 @@ class PEFTTrainer:
                 # raw_datasets["train"] =  raw_datasets["train"]
 
                 # short train
-                raw_datasets["validation"] = raw_datasets["validation"].select(range(self.training_args.dev_train_data_size))
+                raw_datasets["validation"] = raw_datasets["train"].select(range(self.training_args.dev_train_data_size))
                 raw_datasets["test"] = raw_datasets["test"].select(range(self.training_args.dev_train_data_size))
                 
                 # long train
@@ -692,11 +692,9 @@ class PEFTTrainer:
                     if module.bias is None:
                         print("found none bias, init bias for ", name)
                         module.bias = torch.nn.Parameter(torch.zeros(module.out_features))
+                    # pytorch Parameter by default requires grad
                     if not module.bias.requires_grad:
-                        print("activate gradient for ", name)
                         module.bias.requires_grad = True
-                    else:
-                        print("gradient already activated for ", name)
         else:
             # NOTE: prompt tuning
             # general peft converting based on different peft config
@@ -766,7 +764,7 @@ class PEFTTrainer:
         assert abs(expected_num_train_step_per_epoch -len(self.train_dataloader)) <= 1 , f"expected_num_train_step_per_epoch {expected_num_train_step_per_epoch} != len(self.train_dataloader) {len(self.train_dataloader)}"
         
 
-
+    
 
         loss = 0
 
@@ -814,8 +812,10 @@ class PEFTTrainer:
             self.train_state.load_from_json(latest_cp)
             self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
             self.train_finished = self.train_state.get("train_finished")
-            self.start_step = int(latest_cp.split("-")[-1])
-            self.global_step = self.start_step
+            self.best_metric_val = self.train_state.get("best_metric_val")
+            self.best_metric_step = self.train_state.get("best_metric_step")
+            self.start_step = self.train_state.get("step")
+            self.global_step = int(latest_cp.split("-")[-1])
             self.start_epoch = self.train_state.get("epoch")
         print(f"{self.accelerator.device}: train_finished state: {self.train_finished}")
 
@@ -947,9 +947,21 @@ class PEFTTrainer:
                     self.print_log(f"train/lr: {last_lr}")
                     logging_loss = 0
 
-    
 
+                if self.global_step > self.total_step:
+                    self.save_and_eval(self.global_step, force=True)
+                    self.print_log(f"training is already finished, {self.global_step} steps are already done")
+                    self.print_log(f"epoch {epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
+                    self.print_log("Ending training...")
+                    self.log({
+                        "train_finished": True,
+                        "best_metric_val": self.best_metric_val,
+                        "best_metric_step": self.best_metric_step,
+                    })
+                    self.accelerator.end_training()
+                    return
 
+            self.start_step = 0
             self.print_log(f"epoch {epoch} finished, evaluating...")
             # eval and save per epoch as well
             # guarantee to have a best checkpoint folder at the end of training
@@ -1117,8 +1129,7 @@ class PEFTTrainer:
                     dataset2eval = self.traditional_test_dataset
                     dataloader2eval = self.traditional_test_dataloader
                 ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
-                if ni_eval_results is not None:
-                    self.log(ni_eval_results)
+                self.print_log("Finished test dataset evaluation...")
                 return ni_eval_results
             else:
                 
@@ -1198,8 +1209,10 @@ class PEFTTrainer:
                     mmlu_result_d[f"mmlu/{k_shot}-shot/weighted_acc"] = weighted_acc
                 self.log(mmlu_result_d)
                 if mode == "test":
+                    print("update train state test_eval_finished to True")
                     self.train_state.update({"test_eval_finished": True})
                 elif mode == "traditional_test":
+                    print("update train state traditional_test_eval_finished to True")
                     self.train_state.update({"traditional_test_eval_finished": True})
                 latest_cp = get_latest_checkpoint(self.training_args.output_dir)
                 self.train_state.save_to_json(latest_cp)
@@ -1330,6 +1343,12 @@ class PEFTTrainer:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
         self.log(results_with_mode)
+        if mode == "test":
+            print("update train state test_eval_finished to True")
+            self.train_state.update({"test_eval_finished": True})
+        elif mode == "traditional_test":
+            print("update train state traditional_test_eval_finished to True")
+            self.train_state.update({"traditional_test_eval_finished": True})
         self.train_state.save_to_json(get_latest_checkpoint(self.training_args.output_dir))
         metric="rougeL"
         self.print_log(f"{mode}/{metric}: {results_with_mode[f'{mode}/{metric}']}")
@@ -1450,18 +1469,10 @@ class PEFTTrainer:
 
 
         elif self.model_args.tuning_mode == "ia3":
-            from peft import IA3Config
-
+            from transformers.adapters import IA3Config
             config = IA3Config(
-                task_type=task_type,
-                inference_mode=False,
+                dropout=self.peft_args.dropout_rate,
             )
-            self.load_peft_module(config)
-            # from transformers.adapters import IA3Config
-
-            # config = IA3Config(
-            #     dropout=self.peft_args.dropout_rate,
-            # )
             self.load_peft_module(config)
 
         elif self.model_args.tuning_mode == "adapter_peft":
@@ -1664,12 +1675,13 @@ class PEFTTrainer:
                         init_kwargs={"tensorboard": {"flush_secs": 60}},
                     )
                     self.start_epoch = self.train_state.get("epoch")
-                    # self.start_step = self.train_state.get("step")
-                    self.start_step = int(latest_cp.split("-")[-1])
-                    self.global_step = self.start_step
+                    self.start_step = self.train_state.get("step")
+                    # self.start_step = int(latest_cp.split("-")[-1])
+                    self.global_step = int(latest_cp.split("-")[-1])
 
                     self.test_eval_finished = self.train_state.get("test_eval_finished")
                     self.best_metric_step = self.train_state.get("best_metric_step")
+                    self.best_metric_val = self.train_state.get("best_metric_val")
                     # if training is finished, then only load the state
                     # because the model checkpoint is already removed
                     if self.global_step >= self.total_step:
