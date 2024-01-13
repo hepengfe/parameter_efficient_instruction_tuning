@@ -694,7 +694,6 @@ class PEFTTrainer:
             for name, module in self.model.named_modules():
                 if hasattr(module, "bias"):
                     if module.bias is None:
-                        print("found none bias, init bias for ", name)
                         module.bias = torch.nn.Parameter(torch.zeros(module.out_features))
                     # pytorch Parameter by default requires grad
                     if not module.bias.requires_grad:
@@ -984,29 +983,23 @@ class PEFTTrainer:
         elif self.accelerator.is_main_process:
             logger.info(s)
 
-    def evaluate(self, mode="eval", step=None, during_training=True):
+    def evaluate(self, mode="eval", during_training=True):
         """
         There are two cases calling evaluate function:
         1. During training, it's called after each epoch or each eval step
         2. During test evaluation, it's called after loading the best checkpoint (dry train).
         """
+        if mode == "eval":
+            dataset2eval = self.eval_dataset
+            dataloader2eval = self.eval_dataloader
+            ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode)
+            self.log(ni_eval_results)
+            return ni_eval_results
 
 
-        if mode=="test":
-            assert step is None
-        elif mode=="eval":
-            assert step is not None
-        elif mode=="traditional_test":
-            assert step is None
-        else:
-            raise NotImplementedError(
-                "mode must be either eval or test mode"
-            )
-        self.model.eval()
-        # model = accelerate.utils.extract_model_from_parallel(self.model)
-
-        # load best checkpoint for test evaluation
-        if mode in ["test", "traditional_test"] and self.training_args.load_best_checkpoint:
+        # Generally, in test mode, trainer.model is pretrained model and we load best checkpoint model.
+        # 1. find the best checkpoint folder
+        elif mode in ["test", "traditional_test"] and self.training_args.load_best_checkpoint:
             torch.cuda.empty_cache()
             # NOTE: test evaluation is done, finish
             if self.test_eval_finished and mode == "test":
@@ -1018,10 +1011,7 @@ class PEFTTrainer:
             best_cp_dir = None
             try:
                 # during test mode, self.model is pretrained model. after loading state, it's the best checkpoint model
-                if self.data_args.dataset_name != "alpaca":
-                    best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
-                else:
-                    best_cp_dir = get_latest_checkpoint(self.training_args.output_dir)
+                best_cp_dir = get_latest_checkpoint(os.path.join(self.training_args.output_dir, "best_checkpoint"))
             except FileNotFoundError as e:
                 print("During test evaluation, found the error that will be raised later...")
                 print(f"Removing the experiment folder {self.training_args.output_dir} ...")
@@ -1037,15 +1027,18 @@ class PEFTTrainer:
             self.print_by_rank(f"load from existing state: {best_cp_dir}")
             assert best_cp_dir is not None, "It's expected to have dir for self.accelerator to load state"
 
-
+            # 2. verify complete random states. If there is missing random states, remove the best checkpoint folder. (accelerator will hang with incomplete random states).
             if self.training_args.is_cluster and not verify_complete_random_states(best_cp_dir):
                 shutil.rmtree(best_cp_dir)
                 check_all_checkpoints_and_remove(self.training_args.output_dir)
                 exit(f"Not found complete random states in {best_cp_dir} remove the best checkpoint folder: {best_cp_dir}, exiting...")
-                
-            # only in this case we need to first move loaded pretrained mdoel to cpu
-            # and load trained model weights into the model
-            # then we move model back to gpu
+            
+            # 3. load best checkpoint for test evaluation
+            # since we have loaded pretrained model in gpu and want to load trained model weights into the model within constrained gpu memory
+            # 3.1 first move loaded pretrained model to cpu
+            # 3.2 remove optimizer and scheduler as we no longer need training
+            # 3.3 load trained model weights into the model
+            # 3.4 we move model back to gpu
             if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
                 self.model = self.model.to("cpu")
                 del self.optimizer
@@ -1056,14 +1049,10 @@ class PEFTTrainer:
                 self.accelerator.wait_for_everyone()
                 # load state will load optimizer and scheduler so we load everything into cpu
                 # and then move model back to gpu
-                # self.accelerator.load_state(best_cp_dir, map_location="cpu")
                 self.accelerator.load_state(best_cp_dir)
                 self.train_state.load_from_json(best_cp_dir)
-                # print(f"Moving mdoel back to gpu {self.accelerator.device}")
-                # # time.sleep(60)
                 self.accelerator.wait_for_everyone()
                 self.model = self.model.to(self.accelerator.device)
-                
             else:
                 self.accelerator.load_state(best_cp_dir)
                 self.train_state.load_from_json(best_cp_dir)
@@ -1077,115 +1066,22 @@ class PEFTTrainer:
                     print("warning: tracker is expected to exist during training")
         
 
-        # load dataset for evaluation
-        if mode == "eval":
-            dataset2eval = self.eval_dataset
-            dataloader2eval = self.eval_dataloader
-            ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
-            self.log(ni_eval_results)
+            # free memory in test mode
+            if mode == "test":
+                dataset2eval = self.test_dataset
+                dataloader2eval = self.test_dataloader
+            elif mode == "traditional_test":
+                dataset2eval = self.traditional_test_dataset
+                dataloader2eval = self.traditional_test_dataloader
+            ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode)
+            self.print_log("Finished test dataset evaluation...")
             return ni_eval_results
-        elif mode == "test" or mode == "traditional_test":
-            if self.data_args.dataset_name != "alpaca":
-                # free memory in test mode
-                if mode == "test":
-                    dataset2eval = self.test_dataset
-                    dataloader2eval = self.test_dataloader
-                elif mode == "traditional_test":
-                    dataset2eval = self.traditional_test_dataset
-                    dataloader2eval = self.traditional_test_dataloader
-                ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode, step=step)
-                self.print_log("Finished test dataset evaluation...")
-                return ni_eval_results
-            else:
-                
-                from utils import eval_hf_model
-                from data.eval.mmlu.categories import subcategories, categories
-                mmlu_result_d = {}
-                mmlu_data_dir="data/eval/mmlu/data"
-                save_dir = os.path.join(self.training_args.output_dir , "mmlu_eval")
-                # only make dir on main process
-                # if the file exists, the condition will be false
-                # if not on main process, the condition will be false
-                if self.accelerator.is_main_process and not os.path.exists(save_dir):
-                    os.makedirs(save_dir)
-
-                subjects = sorted(
-                    [
-                        f.split("_test.csv")[0]
-                        for f in os.listdir(os.path.join(mmlu_data_dir, "test"))
-                        if "_test.csv" in f
-                    ]
-                )
-
-                if self.training_args.dev_test or self.training_args.dev_train or self.training_args.dev_run:
-                    subjects = subjects[:5]
-                for k_shot in [0, 5]:
-                    all_cors = []
-                    subcat_cors = {
-                        subcat: [] for subcat_lists in subcategories.values() for subcat in subcat_lists
-                    }
-                    cat_cors = {cat: [] for cat in categories}
-                    for subject in tqdm(subjects, desc=f"Evaluating subjects: "):
-                        dev_df = pd.read_csv(
-                            os.path.join(mmlu_data_dir, "dev", subject + "_dev.csv"), header=None
-                        )
-                        test_df = pd.read_csv(
-                            os.path.join(mmlu_data_dir, "test", subject + "_test.csv"), header=None
-                        )
+        else:
+            raise NotImplementedError("Not implemented for evaluation mode other than eval, test and traditional_test")
 
 
-                        # if args.n_instances and args.n_instances < test_df.shape[0]:
-                        #     test_df = test_df.sample(args.n_instances, random_state=42)
 
-                        cors, acc, probs = eval_hf_model(self.data_args, subject, self.model, self.tokenizer, dev_df, test_df, 1, k_shot)
-
-                        subcats = subcategories[subject]
-                        for subcat in subcats:
-                            subcat_cors[subcat].append(cors)
-                            for key in categories.keys():
-                                if subcat in categories[key]:
-                                    cat_cors[key].append(cors)
-                        all_cors.append(cors)
-                        choices = ["A", "B", "C", "D"]
-                        test_df["correct"] = cors
-                        for j in range(probs.shape[1]):
-                            choice = choices[j]
-                            test_df["choice{}_probs".format(choice)] = probs[:, j]
-                        test_df.to_csv(
-                            os.path.join(
-                                save_dir, "{}.csv".format(subject)
-                            ),
-                            index=None,
-                        )
-
-
-                    for subcat in subcat_cors:
-                        if subcat_cors[subcat]:
-                            subcat_acc = np.mean(np.concatenate(subcat_cors[subcat]))
-                        print("Average accuracy {:.3f} - {}".format(subcat_acc, subcat))
-                        mmlu_result_d[f"mmlu/{k_shot}-shot/subcat/"+subcat] = subcat_acc
-
-                    for cat in cat_cors:
-                        if cat_cors[cat]:
-                            cat_acc = np.mean(np.concatenate(cat_cors[cat]))
-                        print("Average accuracy {:.3f} - {}".format(cat_acc, cat))
-                        mmlu_result_d[f"mmlu/{k_shot}-shot/cat/"+cat] = cat_acc
-                    weighted_acc = np.mean(np.concatenate(all_cors))
-                    mmlu_result_d[f"mmlu/{k_shot}-shot/weighted_acc"] = weighted_acc
-                self.log(mmlu_result_d)
-                if mode == "test":
-                    print("update train state test_eval_finished to True")
-                    self.train_state.update({"test_eval_finished": True})
-                elif mode == "traditional_test":
-                    print("update train state traditional_test_eval_finished to True")
-                    self.train_state.update({"traditional_test_eval_finished": True})
-                latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-                self.save_train_state(latest_cp)
-                self.print_log("Finished test dataset evaluation...")
-                return mmlu_result_d
-
-
-    def evaluate_dataset(self, dataset2eval, dataloader2eval, mode="eval", step=None):
+    def evaluate_dataset(self, dataset2eval, dataloader2eval, mode="eval"):
         """
         eval mode: evaluate use loaded current model
         test mode: evaluate best model loaded from output_dir
@@ -1194,16 +1090,6 @@ class PEFTTrainer:
 
         log automatically on main process, return True if it outperform previous best checkpoint, False otherwise.
         """
-        if mode=="test":
-            assert step is None
-        elif mode=="eval":
-            assert step is not None
-        elif mode=="traditional_test":
-            assert step is None
-        else:
-            raise NotImplementedError(
-                "mode must be either eval or test mode"
-            )
         self.model.eval()
         model = accelerate.utils.extract_model_from_parallel(self.model)
         if mode == "eval":
@@ -1232,8 +1118,6 @@ class PEFTTrainer:
         label_host = []
         from tqdm import tqdm
         self.print_log(f"***** Running evaluation {mode} *****")
-        # it handles deepspeed and DDP
-
         # wait for everyone to finish prepare dataset
         with torch.no_grad():
             progress_bar = tqdm(dataloader2eval,
@@ -1244,18 +1128,12 @@ class PEFTTrainer:
                 if self.accelerator.distributed_type != DistributedType.DEEPSPEED:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.accelerator.device)
-                # if not self.use_distributed:   non deepspeed
-                # for k in inputs:
-                # inputs[k] = inputs[k].to(self.device)
                 labels = inputs.pop("labels")
                 # if distrubted data parallel object 
 
                 if self.model_args.tuning_mode in ["lora_peft", "prompt_tuning", "adapter_peft", "prefix_tuning"]: # temp PEFT lora implementation
                     input_ids = inputs.pop("input_ids")
                     attention_mask = inputs.pop("attention_mask")
-                    # print(generation_inputs.shape)
-                    # print(inputs)
-                    # exit()
                     # generation_inputs is removed from later package
                     # adapter_peft generate requires generation_inputs
                     outputs = model.generate(generation_inputs = input_ids, attention_mask=attention_mask, **inputs,
@@ -1318,7 +1196,6 @@ class PEFTTrainer:
         metric="rougeL"
         self.print_log(f"{mode}/{metric}: {results_with_mode[f'{mode}/{metric}']}")
         
-            
         return results_with_mode
 
 
@@ -1523,13 +1400,14 @@ class PEFTTrainer:
                 self.log(
                     {
                         "best_metric_val": self.best_metric_val,
-                        "best_metric_step": global_step,
+                        "best_metric_step": self.best_metric_step,
                     }
                 )
-                self.print_log(f"best_metric_val: {self.best_metric_val}, new best_metric_step: {global_step}")
                 self.print_log("saving a new best checkpoint...")
                 # save model and state
                 self.save(global_step, save_best_checkpoint=True)
+                self.print_log(f"new best_metric_step...")
+            self.print_log(f"best_metric_val: {self.best_metric_val}, best_metric_step: {self.best_metric_step}")
 
 
 
@@ -1636,6 +1514,10 @@ class PEFTTrainer:
             self.train_finished = True
             self.train_state.update({"train_finished": True})
             self.save_train_state(latest_cp)
+        
+        # some helpful info for debugging
+        self.print_log(f"start_epoch: {self.start_epoch}, start_step: {self.start_step}, global_step: {self.global_step}, total_step: {self.total_step}")
+        self.print_log(f"best_metric_step: {self.best_metric_step}, best_metric_val: {self.best_metric_val}")
 
 
     def load_last_train_state(self):
