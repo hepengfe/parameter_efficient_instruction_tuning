@@ -1,10 +1,20 @@
 # bash scripts/grid_search_1/grid_search_prefix_tuning_1.sh dev_cmd t5
+
 TRAINING_SETTINGS=(0 1)
 # LORA_RANKS=(8 32 64 128 256 512)
 
 # flip the order of the bottleneck sizes
 PREFIX_LENS=(512 256 128 32)
-BOTTLENECK_SIZES=(1024 512 256)
+
+# second search
+# PREFIX_LENS=(512 256 128 32)
+# BOTTLENECK_SIZES=(-1)
+
+
+# first search
+PREFIX_LENS=(8)
+BOTTLENECK_SIZES=(-1 1024 512 256)
+
 # DATA_FOLDERS=("default_train8_val_50" "default_train_32_val_50" "default_train_64_val_50" "default_train_128_val_50" "default_train_256_val_50" "default_train_512_val_50" "default_train_707_val_50")
 lrs=(1e-5 5e-5 1e-4 5e-4 1e-3)
 script_mode=$1
