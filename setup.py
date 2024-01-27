@@ -40,8 +40,6 @@ setup(
         "packaging>=20.0",
         "psutil",
         "pyyaml",
-        "transformers",
-        "accelerate",
     ],
     extras_require=extras,
     classifiers=[

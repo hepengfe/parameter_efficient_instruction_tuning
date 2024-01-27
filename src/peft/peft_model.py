@@ -29,7 +29,7 @@ from transformers.utils import PushToHubMixin
 
 from huggingface_hub import hf_hub_download
 
-from .tuners import LoraModel, PrefixEncoder, PromptEmbedding, PromptEncoder
+from .tuners import LoraModel, AdapterModel, PrefixEncoder, PromptEmbedding, PromptEncoder
 from .utils import (
     TRANSFORMERS_MODELS_TO_PREFIX_TUNING_POSTPROCESS_MAPPING,
     WEIGHTS_NAME,
@@ -76,6 +76,8 @@ class PeftModel(PushToHubMixin, torch.nn.Module):
         self.modules_to_save = None
         if isinstance(self.peft_config, PromptLearningConfig):
             self._setup_prompt_encoder()
+        elif self.peft_config.peft_type == PeftType.ADAPTER:
+            self.base_model = AdapterModel(peft_config, model)
         else:
             self.base_model = LoraModel(peft_config, model)
         if getattr(self.peft_config, "modules_to_save", None) is not None:
@@ -761,7 +763,6 @@ class PeftModelForSeq2SeqLM(PeftModel):
                 kwargs.pop("decoder_attention_mask", None)
                 return self.base_model(inputs_embeds=inputs_embeds,  **kwargs)
             else:
-                assert decoder_input_ids is not None or decoder_inputs_embeds is not None, "decoder_input_ids or decoder_inputs_embeds should be provided"
                 if decoder_inputs_embeds is None:
                     if decoder_input_ids is None:
                         decoder_input_ids = shift_tokens_right(

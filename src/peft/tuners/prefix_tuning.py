@@ -96,10 +96,6 @@ class PrefixEncoder(torch.nn.Module):
             
 
     def forward(self, prefix: torch.Tensor):
-
-        if self.prefix_projection:
-            self.transform.to(device)
-        
         if self.prefix_projection:
             prefix_tokens = self.embedding(prefix)
             past_key_values = self.transform(prefix_tokens)

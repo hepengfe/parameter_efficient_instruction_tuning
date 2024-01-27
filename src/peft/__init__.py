@@ -30,6 +30,8 @@ from .peft_model import (
 from .tuners import (
     LoraConfig,
     LoraModel,
+    AdapterConfig,
+    AdapterModel,
     PrefixEncoder,
     PrefixTuningConfig,
     PromptEmbedding,

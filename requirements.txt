@@ -1,11 +1,11 @@
+# --extra-index-url https://download.pytorch.org/whl/cu113 torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 
+datasets
+rouge_score
+accelerator==2023.3.10.dev1
+git+https://github.com/huggingface/transformers.git@fecf08560cd9843b569279dd6f665c987890af4c
+deepspeed==0.9.3
+tensorboard
 SentencePiece
-datasets==2.8.0
-numpy>=1.17
-packaging>=20.0
-psutil
-pyyaml
-transformers==4.25.1
-accelerate
-evaluate
-scikit-learn
-sentencepiece
+# 0.20.3 npu issue that requires by deepspeed
+accelerate==0.22.0 # npu fixed
+scipy

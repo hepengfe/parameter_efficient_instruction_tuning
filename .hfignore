@@ -1,0 +1,50 @@
+wandb
+./data
+data/
+out
+scripts/util
+src/peft.egg-info
+__pycache__
+*.sh
+.git
+*.log
+cache/model_
+# cache/saved_pretrained/
+cache/saved_pretrained/google/t5-large-lm-adapt
+cache/saved_pretrained/google/t5-small-lm-adapt
+cache/saved_pretrained/google/t5-xl-lm-adapt
+cache/saved_pretrained/google/t5-xxl-lm-adapt
+cache/saved_pretrained/gpt2
+cache/saved_pretrained/facebook/opt-350m
+cache/saved_pretrained/facebook/opt-1.3b
+cache/saved_pretrained/facebook/opt-2.7b
+cache/saved_pretrained/facebook/opt-13b
+cache/saved_pretrained/facebook/opt-6.7b
+cache/saved_pretrained/facebook/llama-7b
+cache/tmp*
+
+# cache/saved_pretrained/*.bin
+# cache/saved_pretrained/*.json
+cache/ni_dataset
+cache/tmp
+cache/packages
+cache/*.lock
+build
+
+
+adapter-transformers
+adapter-transformers/examples/
+adapter-transformers/adapter_docs/
+adapter-transformers/notebooks/
+adapter-transformers/tests*
+adapter-transformers/tests*
+adapter-transformers/.github*
+adapter-transformers/docker
+
+
+model
+peft_trainer_callback.py
+accelerate
+logs/
+# the following is optional for faster iteration, comment them when we need to push model/dataset
+cache

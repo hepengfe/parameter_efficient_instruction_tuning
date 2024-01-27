@@ -3,8 +3,9 @@ import random
 import string
 from transformers.data.data_collator import *
 from transformers import (
-    # OPTPreTrainedModel,
-    GPT2PreTrainedModel
+    OPTPreTrainedModel,
+    GPT2PreTrainedModel,
+    LlamaPreTrainedModel
 )
 logger = logging.getLogger(__name__)
 import numpy as np
@@ -15,6 +16,7 @@ class DataCollatorForNI:
 
     tokenizer: PreTrainedTokenizerBase
     model: Optional[Any] = None
+    model_arch: Optional[str] = None,
     padding: Union[bool, str, PaddingStrategy] = True
     max_source_length: Optional[int] = None
     max_target_length: Optional[int] = None
@@ -30,7 +32,7 @@ class DataCollatorForNI:
     text_only: bool=False
 
 
-    def __call__(self, batch, return_tensors=None):
+    def __call__(self, batch, eval_mode=False, return_tensors=None):
 
         if return_tensors is None:
             return_tensors = self.return_tensors
@@ -145,18 +147,16 @@ class DataCollatorForNI:
                 sources.append(self.tokenizer.decode(tokenized_source[:self.max_source_length], skip_special_tokens=True))
 
         model_inputs = {}
-        
-
         # 1. prepare labels first in str format
         if "output" in batch[0]["Instance"] and batch[0]["Instance"]["output"]:
             # Randomly select one reference if multiple are provided.
-            labels = [random.choice(ex["Instance"]["output"]) for ex in batch]
+            text_labels = [random.choice(ex["Instance"]["output"]) for ex in batch]
             # if self.text_only:
-            #     model_inputs["labels"] = labels
+            #     labels = text_labels
             # else:
             #     with self.tokenizer.as_target_tokenizer():
             #         labels = self.tokenizer(
-            #             labels,
+            #             text_labels,
             #             max_length=self.max_target_length,
             #             padding=self.padding,
             #             return_tensors=self.return_tensors,
@@ -164,77 +164,118 @@ class DataCollatorForNI:
             #             pad_to_multiple_of=self.pad_to_multiple_of
             #         )
             #     label_mask = labels["attention_mask"].bool()
-            #     model_inputs["labels"] = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
+            #     labels = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
         else:
+            text_labels = []
             labels = None
-            # model_inputs["labels"] = None
-        is_causal_lm = False
-        # is_causal_lm =  isinstance(self.model, OPTPreTrainedModel) or isinstance(self.model, GPT2PreTrainedModel)
-        if is_causal_lm and labels:
-            sources = ["".join(sl) for sl in zip(sources, labels)]
+        is_causal_lm = self.model_arch == "decoder"
+
 
         # 2. prepare model inputs first
-        if self.text_only:
-            model_inputs = {"inputs": sources}
-        else:
-            model_inputs = self.tokenizer(
-                    sources, 
-                    max_length=self.max_source_length, 
+        if not is_causal_lm:
+            with self.tokenizer.as_target_tokenizer():
+                labels = self.tokenizer(
+                    text_labels,
+                    max_length=self.max_target_length,
                     padding=self.padding,
-                    return_tensors=self.return_tensors, 
+                    return_tensors=self.return_tensors,
                     truncation=True,
-                    pad_to_multiple_of=self.pad_to_multiple_of)
-            # if is_causal_lm:
-            #     model_inputs = self.tokenizer(
-            #         sources,
-            #         max_length=self.max_source_length,
-            #         padding=self.padding,
-            #         return_tensors=self.return_tensors, 
-            #         truncation=True,
-            #         pad_to_multiple_of=self.pad_to_multiple_of,
-            #         return_overflowing_tokens=True,
-            #         return_length=True)
-            # else:
-            #     model_inputs = self.tokenizer(
-            #         sources, 
-            #         max_length=self.max_source_length, 
-            #         padding=self.padding,
-            #         return_tensors=self.return_tensors, 
-            #         truncation=True,
-            #         pad_to_multiple_of=self.pad_to_multiple_of)
+                    pad_to_multiple_of=self.pad_to_multiple_of
+                )
+            label_mask = labels["attention_mask"].bool()
+            labels = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
 
-        # 3. prepare model labels second
-        if labels and not is_causal_lm:
             if self.text_only:
-                model_inputs["labels"] = labels
+                model_inputs = {"inputs": sources}
+                model_inputs["labels"] = text_labels
             else:
-                with self.tokenizer.as_target_tokenizer():
-                    labels = self.tokenizer(
-                        labels,
-                        max_length=self.max_target_length,
+                model_inputs = self.tokenizer(
+                        sources, 
+                        max_length=self.max_source_length, 
                         padding=self.padding,
-                        return_tensors=self.return_tensors,
+                        return_tensors=self.return_tensors, 
                         truncation=True,
                         pad_to_multiple_of=self.pad_to_multiple_of
-                    )
-                label_mask = labels["attention_mask"].bool()
-                model_inputs["labels"] = labels["input_ids"].masked_fill(~label_mask, self.label_pad_token_id)
-        if is_causal_lm:
-            if self.text_only:
-                model_inputs["labels"] = model_inputs["inputs"]
-            else:
-                model_inputs["labels"] = model_inputs["input_ids"]
+                )
+                model_inputs["labels"] = labels
 
 
-        # prepare decoder_input_ids
-        if self.model is not None and not self.text_only and hasattr(self.model, "prepare_decoder_input_ids_from_labels"):
-            decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=model_inputs["labels"])
-            model_inputs["decoder_input_ids"] = decoder_input_ids
-            # elif hasattr(self.model, "prepare_inputs_for_generation"): # GPT or OPT model
-            #     # TODO: delete this
+
+            # the following code is useful if label smoothing is used
+            # it causes label leakage in eval mode
+            # one way is to build decoder input ids only in train mode
+            
+            # if self.model is not None and not self.text_only and hasattr(self.model, "prepare_decoder_input_ids_from_labels"):
+            #     decoder_input_ids = self.model.prepare_decoder_input_ids_from_labels(labels=model_inputs["labels"])
+            #     model_inputs["decoder_input_ids"] = decoder_input_ids
+
+            return model_inputs
+    
+        else:
+            example_texts = []
+            self.tokenizer.padding_side = "left"
+            assert len(sources) == len(text_labels), f"len(sources) = {len(sources)}, len(text_labels) = {len(text_labels)}"
+ 
+            for s, l in zip(sources, text_labels):
+                if not eval_mode:
+                    example_texts.append(s + "</SEP>" + l)
+                else:
+                    example_texts.append(s)
+
+            tokenized_example = self.tokenizer(
+                example_texts,
+                max_length=self.max_source_length,
+                padding="longest", # no padding for causal lm
+                return_tensors=self.return_tensors, 
+                truncation=True,
+                pad_to_multiple_of=self.pad_to_multiple_of,
+            )
+            input_ids = tokenized_example.input_ids
+            
+
+            # print("input_ids.shape at where ", input_ids.shape)
+            # print("input_ids == self.tokenizer.sep_token_id: ", input_ids == self.tokenizer.sep_token_id)
+            if not eval_mode:
+                labels = input_ids.clone()
+
+                seq_indices = torch.where(input_ids == self.tokenizer.sep_token_id)
+
+                assert len(seq_indices[1]) == len(text_labels), f"number of <\sep> is more than expected in the text. len(seq_indices[1]) = {len(seq_indices[1])}, len(text_labels) = {len(text_labels)}"
                 
-            #     model_inputs["inputs"] +=\
-            #          f" Output: {model_inputs.pop('labels')}"
+                
+                # e.g. [ remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]
+                # input_ids [ <pad> <pad> remove 3 from the number 2, 3, 1 <sep> ] 2, 1 ]]
+                # set labels to -100 before sep token under training (padding during evaluation)
+                # (tensor([0, 1]), tensor([122, 113]))
 
-        # return model_inputs, extra_model_inputs
-        return model_inputs
+                # for bs_index, seq_index in enumerate(seq_indices[1]):
+                #     labels[bs_index, :seq_index] = -100
+                # mask out prompt in the example text
+                
+                # print("input_ids.shape: ", input_ids.shape)
+                # print("seq_indices shape: ", seq_indices[0].shape, seq_indices[1].shape)
+                # print("torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1): ", torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1).shape)
+                # print("seq_indices[1].unsqueeze(1): ", seq_indices[1].unsqueeze(1).shape)
+                prompt_mask = torch.arange(input_ids.shape[1]).expand(input_ids.shape[0], -1) > seq_indices[1].unsqueeze(1)
+                labels = labels.masked_fill(~prompt_mask, -100)
+            else:
+                # labels = labels.masked_fill(~prompt_mask, self.tokenizer.pad_token_id)
+                
+                labels = self.tokenizer(
+                    text_labels, 
+                    return_tensors="pt",
+                    padding="longest",
+                    truncation=True,
+                    max_length=self.max_target_length,
+                    pad_to_multiple_of=self.pad_to_multiple_of,)["input_ids"]
+                
+
+            
+            tokenized_example["labels"] = labels
+            
+            return tokenized_example
+            
+                
+                
+
+        
