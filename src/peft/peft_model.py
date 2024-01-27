@@ -730,7 +730,7 @@ class PeftModelForSeq2SeqLM(PeftModel):
             
             new_past_key_values = []
             # check if base model has device map attribute
-            if hasattr(self.base_model, 'device_map') and len(self.base_model.device_map) > 0:
+            if hasattr(self.base_model, 'device_map') and self.base_model.device_map is not None and len(self.base_model.device_map) > 0:
                 for device_k, module_v in self.base_model.device_map.items():
                     for module in module_v:
                         new_past_key_values.append(past_key_values[module].to(device_k))
