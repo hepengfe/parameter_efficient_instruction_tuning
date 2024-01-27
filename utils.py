@@ -67,7 +67,11 @@ def flatten(s, source_char="/", flatten_char="_"):
 
 
 def get_latest_checkpoint(output_dir):
-    checkpoint_dirs = [d for d in os.listdir(output_dir) if re.match(r'^checkpoint-\d+$', d)]
+    try:
+        checkpoint_dirs = [d for d in os.listdir(output_dir) if re.match(r'^checkpoint-\d+$', d)]
+    except FileNotFoundError:
+        print(f"output_dir {output_dir} does not exist. Error captured in get_latest_checkpoint")
+        return None
     if not checkpoint_dirs:
         return None
     latest_checkpoint = max(checkpoint_dirs, key=lambda x: int(x.split('-')[1]))
