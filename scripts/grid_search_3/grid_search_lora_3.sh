@@ -1,4 +1,4 @@
-MODEL_NAMES=("google/t5-base-lm-adapt" "google/t5-large-lm-adapt" "google/t5-xl-lm-adapt" "google/t5-xxl-lm-adapt")
+MODEL_NAMES=( "google/t5-large-lm-adapt" "google/t5-base-lm-adapt" "google/t5-xl-lm-adapt" "google/t5-xxl-lm-adapt")
 script_mode=$1
 random_seed=$2
 

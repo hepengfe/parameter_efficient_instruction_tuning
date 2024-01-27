@@ -1,179 +1,43 @@
-eval_save_steps=1
-model="google/t5-small-lm-adapt"
-per_device_eval_batch_size=36
-# mode="lora"
-mode="fine_tuning"
-max_steps=320
-# evaluation_strategy="epoch"
-evaluation_strategy="steps"
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp_2gpu_1.yaml prompt_tuning.py --model_name_or_path google/t5-base-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 5000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --scheduler_type constant --warmup_ratio 0 --weight_decay 0 --label_smoothing_factor 0 --dropout_rate 0 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-base-lm-adapt_fine_tuning_None_lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-base-lm-adapt/fine_tuning/None/lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
-# 20 steps, save one checkpoint
-CUDA_VISIBLE_DEVICES=5  WANDB_MODE=disabled python prompt_tuning.py --model_name_or_path $model --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size $per_device_eval_batch_size --save_steps $eval_save_steps  --eval_steps $eval_save_steps --tuning_mode $mode --learning_rate 3e-4 --max_steps $max_steps --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir "../../data/tasks" --predict_with_generate  --max_num_instances_per_eval_task 50 --bf16 True --gradient_accumulation_steps 8 --evaluation_strategy $evaluation_strategy --dev True  --lr_scheduler_type constant
 
-# --bf16  
-# --dev True
+# no dev mode
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp_2gpu_1.yaml prompt_tuning.py --model_name_or_path google/t5-base-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 10 --save_steps 10 --tuning_mode fine_tuning --learning_rate 1e-5 --scheduler_type constant --warmup_ratio 0 --weight_decay 0 --label_smoothing_factor 0 --dropout_rate 0 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-base-lm-adapt_fine_tuning_None_lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-base-lm-adapt/fine_tuning/None/lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --random_seed 42 --expr_dir cache/tmp
 
-# ft
-#  TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0  WANDB_MODE=disabled python prompt_tuning.py --model_name_or_path google/t5-small-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 1 --save_steps 1 --tuning_mode lora --learning_rate 3e-4 --max_steps 20 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --dev --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train
 
+# self.training_args.num_train_epochs
 
-#  epoch
-#  TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0  WANDB_MODE=disabled python prompt_tuning.py --model_name_or_path google/t5-small-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 1 --save_steps 1 --tuning_mode lora --learning_rate 3e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --dev --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train
 
-# TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0  python prompt_tuning.py --model_name_or_path google/t5-small-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 1 --save_steps 10 --tuning_mode lora --learning_rate 3e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --dev --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train
+hfai python hfai_accelerate.py  launch --config_file configs/hfai/default_config_deepspeed_hfai_ft.yaml prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt  --per_device_train_batch_size 1 --per_device_eval_batch_size 50 --eval_steps 5000 --save_steps 1000  --tuning_mode off_the_shelf --learning_rate 1e-5 --scheduler_type constant --warmup_ratio 0 --weight_decay 0 --label_smoothing_factor 0 --dropout_rate 0 --num_train_epochs 0 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_test --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_off_the_shelf_None_lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/off_the_shelf/None/lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42  --random_seed 42 --expr_dir cache/tmp --is_cluster -- --nodes 1 --no_inherit --force --name ni_default_train_707_val_50_google_t5-xl-lm-adapt_off_the_shelf_None_lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42
 
-# ACCELERATE_LOG_LEVEL=
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp_3gpu_0.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 5000 --save_steps 1000 --tuning_mode lora_peft --lora_r 512 --lora_alpha 512 --lora_modules q,v --learning_rate 1e-4 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-large-lm-adapt_lora_peft_r_512_alpha_512_modules_q,v_lr_1e-4_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-large-lm-adapt/lora_peft/r_512_alpha_512_modules_q,v/lr_1e-4_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
-# TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 WANDB_MODE=offline python prompt_tuning.py --model_name_or_path google/t5-small-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 10 --save_steps 5 --tuning_mode lora --learning_rate 3e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --dev --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train --dev_run
 
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_no_dist.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 1000 --save_steps 1000 --tuning_mode lora_peft --lora_r 512 --lora_alpha 512 --lora_modules q,v --learning_rate 1e-4 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-large-lm-adapt_lora_peft_r_512_alpha_512_modules_q,v_lr_1e-4_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-large-lm-adapt/lora_peft/r_512_alpha_512_modules_q,v/lr_1e-4_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
 
-# dev training
-# TRANSFORMERS_OFFLINE=1 accelerate launch --multi_gpu  --num_processes 3 prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 500 --save_steps 500 --tuning_mode lora --lora_r 10 --learning_rate 3e-4 --num_train_epochs 3 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --dev --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train --dev_run
+* test prefix tuning
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 5000 --save_steps 1000 --tuning_mode prefix_tuning --prefix_len 8 --bottleneck_size -1 --learning_rate 1e-5 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_prefix_tuning_prefix_len_8_bottleneck_size_1024_lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/prefix_tuning/prefix_len_8_bottleneck_size_1024/lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
+* test prefix tuning on single gpu
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_no_dist.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 5000 --save_steps 1000 --tuning_mode prefix_tuning --prefix_len 8 --bottleneck_size -1 --learning_rate 1e-5 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_prefix_tuning_prefix_len_8_bottleneck_size_1024_lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/prefix_tuning/prefix_len_8_bottleneck_size_1024/lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
-# CUDA_VISIBLE_DEVICES=1,2,3   TRANSFORMERS_OFFLINE=1 WANDB_MODE=offline accelerate launch --multi_gpu  --num_processes 3 prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 2 --eval_steps 500 --save_steps 500 --tuning_mode lora --lora_r 508 --learning_rate 3e-4 --num_train_epochs 3 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --dev --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train
 
+* test bitfit
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 10 --eval_steps 5000 --save_steps 1000 --tuning_mode bitfit --bias_name encoder_decoder_bias --learning_rate 1e-3 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_bitfit_None_lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/bitfit/None/lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
 
-# fine tuning single gpu
-# CUDA_VISIBLE_DEVICES=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=offline accelerate launch prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 1000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train --dev_run
+* 
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_no_dist.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 10 --eval_steps 5000 --save_steps 1000 --tuning_mode bitfit --bias_name encoder_decoder_bias --learning_rate 1e-3 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_bitfit_None_lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/bitfit/None/lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train
 
-# TRANSFORMERS_OFFLINE=1 cannot be used in multi-gpu, I think it's related to saved pretrained
-WANDB_MODE=offline accelerate launch --multi_gpu  --num_processes 2 --gpu_ids='all' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 1000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train --dev_run
 
-# bs = 3 x 6 = 18
-WANDB_MODE=offline accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 15 --eval_steps 2000 --save_steps 2000 --tuning_mode lora --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 1 --do_train --dev_train
+* ia3
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 10 --eval_steps 5000 --save_steps 1000 --tuning_mode ia3 --learning_rate 1e-3 --scheduler_type linear --warmup_ratio 0.03 --weight_decay 0.01 --label_smoothing_factor 0 --dropout_rate 0.1 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_ia3_None_lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/ia3/None/lr_1e-5_weight_decay_0.01_dropout_rate_0.1_label_smoothing_factor_0_scheduler_linear_warmup_ratio_0.03_random_seed_42 --random_seed 42 --expr_dir cache/tmp --dev_train --overwrite_output_dir
 
 
-# ft train
-# bs = 2 * 6 * 2 = 24
-accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 1000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train --dev_train
 
 
-# A6000 machine test
-accelerate launch --multi_gpu  --num_processes 3 --gpu_ids='all' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 10 --eval_steps 1000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train --dev_train
 
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_deepspeed_peft.yaml prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 5000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --scheduler_type constant --warmup_ratio 0 --weight_decay 0 --label_smoothing_factor 0 --dropout_rate 0 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --do_traditional_test --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_fine_tuning_None_lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/fine_tuning/None/lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --random_seed 42 --expr_dir cache/tmp 
 
-accelerate launch --num_processes 6 --gpu_ids='all' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 5 --eval_steps 5000 --save_steps 5000 --tuning_mode lora --lora_r 255 --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train --dev_run
-
-
-accelerate launch --num_processes 1 --gpu_ids='2,3' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 1 --eval_steps 5000 --save_steps 5000 --tuning_mode lora --lora_r 381 --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train
-
-
-accelerate launch --num_processes 2 --gpu_ids='4,5' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 1 --eval_steps 5000 --save_steps 5000 --tuning_mode lora --lora_r 508 --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train 
-
-
-accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 1000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train --dev_run
-
-
-
-# 500 steps reached 4.1524
-# per step bs: 2 * 2 = 4
-# num_of_data = 4 * 500 = 2000
-
-
-
-# I think this version, training is not right (without acclerator)
-# 3k 3.8669
-# 6k 0.3286, predict token '0' for all instances, it's pretty similar to PEFT training + accelerator results 
-# it's no acc launch and training incorrect
-# PEFT one is acc launch and training incorrect 
-# all though it's diff, there are some similarities
-# 9k   
-CUDA_VISIBLE_DEVICES=1 python prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 6000 --save_steps 6000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train
-
-
-
-cur_metric_val
-
-# 6.7237
-# /home/murphy/.cache/huggingface/accelerate/no_dist_config_gpu0.yaml
-# low bs, high grad acc, acc launch
-# 3k 5.6388
-# 6k 6.8115
-# 9k 8.9531
-# 12k 13.2877
-# 15k 14.0093
-accelerate launch --config_file /home/murphy/.cache/huggingface/accelerate/no_dist_config_gpu0.yaml prompt_tuning.py  --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 False --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 4 --do_train --use_accelerate
-
-
-# gpu 4 5
-# /home/murphy/.cache/huggingface/accelerate/dist_config_gpu45.yaml
-# 3k 15.3302
-# 6k 17.7426
-# 9k 17.4281   no improvement?
-accelerate launch  --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu45.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 2 --do_train --use_accelerate
-
-
-# validate grad acc assumption
-WANDB_MODE=disabled accelerate launch  --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu45.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 8 --do_train --use_accelerate
-
-
-# /home/murphy/.cache/huggingface/accelerate/dist_config_gpu23.yaml
-# gradient acc = 1 + dist
-# 3k 16.1147    it has reasonable output (might be inaccurate but answer format is correct)
-# 6k 18.6458
-# 9k
-accelerate launch --main_process_port 29555 --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu23.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 1 --do_train --use_accelerate
-
-# home/murphy/.cache/huggingface/accelerate/dist_config_gpu_all.yaml
-# 3k 18.7513 (expected to be around 20 as it actually have bs=6 -> it's same as 9k steps for other training)
-# 6k  20.2314
-# 9k  21.1136 (22?) the training is improving but it's not as good as I expecte like ~35. 
-# 12k 21.1174
-# 15k 22.5378
-# 18k 21.7561
-WANDB_MODE=disabled accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' --config_file /home/murphy/.cache/huggingface/accelerate/dist_config_gpu_all.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 2 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 1 --do_train --use_accelerate
-
-
-# test deepspeed run
-WANDB_MODE=disabled accelerate launch --multi_gpu  --num_processes 6 --gpu_ids='all' --config_file /home/murphy/.cache/huggingface/accelerate/default_deepspeed_config.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 3000 --save_steps 3000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 10 --gradient_accumulation_steps 1 --do_train --use_accelerate --dev_run
-
-# official deepspeed run
-python accelerate/src/accelerate/commands/accelerate_cli.py  --config_file /home/murphy/.cache/huggingface/accelerate/default_deepspeed_config.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 2 --per_device_eval_batch_size 20 --eval_steps 2000 --save_steps 2000 --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train
-
-
-
-## commnad for dev deepspeed
-
-accelerate  launch --config_file configs/accelerate/default_config_deepspeed_dev.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train --dev_run
-
-
-# python accelerate/src/accelerate/commands/accelerate_cli.py 
-
-# dev 
-hfai venv push peit3
-hfai workspace push  --force --no_zip;  HF_ENV_NAME=peit3 hfai python accelerate_cli.py  launch --config_file configs/accelerate/default_config_deepspeed_hf.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode fine_tuning  --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 3 --do_train --dev_run --is_cluster -- --nodes 1 --no_inherit ; hfai logs -f accelerate_cli.py
-
-# dev2
-hfai workspace push  --force --no_zip;  HF_ENV_NAME=peit3 hfai python accelerate_cli.py  launch --config_file configs/accelerate/default_config_deepspeed_hf.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode fine_tuning  --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 3 --do_train --dev_run --is_cluster -- --nodes 1 --no_inherit ; hfai logs -f dev_run2
-
-
-
-# train
-hfai workspace push  --force --no_zip;  HF_ENV_NAME=peit3 hfai python accelerate_cli.py  launch --config_file /weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/configs/hfai/default_config_deepspeed_hf.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 5 --per_device_eval_batch_size 100 --eval_steps 6000 --save_steps 6000  --tuning_mode fine_tuning  --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_seps 6 --do_train --is_cluster  -- --nodes 1 --no_inherit --name 1 ; hfai logs -f 1
-
-
-# mig testing
-python accelerate_cli.py  launch --config_file /weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit/configs/hfai/default_config_deepspeed_mig.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 5 --per_device_eval_batch_size 100 --eval_steps 6000 --save_steps 6000  --tuning_mode fine_tuning  --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train --is_cluster 
-
-
-
-# no cli
-# train
-hfai workspace push  --force --no_zip;  HF_ENV_NAME=peit3 hfai python prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 4 --per_device_eval_batch_size 100 --eval_steps 6000 --save_steps 6000  --tuning_mode fine_tuning --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train --is_cluster -- --nodes 1 --no_inherit; hfai logs -f prompt_tuning.py 
-
-
-
-OMP_NUM_THREADS=5 python accelerate_cli.py  launch --config_file configs/accelerate/default_config_deepspeed.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode adapter --reduction_factor 2.29  --learning_rate 5e-4 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 6 --do_train --dev_run
-
-OMP_NUM_THREADS=5 python accelerate_cli.py  launch --config_file configs/accelerate/default_config_deepspeed.yaml prompt_tuning.py --model_name_or_path google/t5-large-lm-adapt --model_arch encoder-decoder --per_device_train_batch_size 1 --per_device_eval_batch_size 20 --eval_steps 6000 --save_steps 6000 --tuning_mode fine_tuning  --learning_rate 1e-5 --num_train_epochs 2 --dataset_name ni --data_dir "../../data/splits/default_train_707_val_50" --task_dir ../../data/tasks --predict_with_generate  --bf16 True --max_num_instances_per_eval_task 100 --gradient_accumulation_steps 3 --do_train --dev_run
-
-
-# python accelerate/src/accelerate/commands/accelerate_cli.py 
-
-
-# ddp, 1s/iteration, bs=1, 300W
-# deepspeed training, 40G RAM, 3s/iteration   bs=1, 160-210W
-# deepspeed + offload, 65G RAM, 
+accelerate launch --config_file configs/accelerate_rtx3090/default_config_ddp.yaml prompt_tuning.py --model_name_or_path google/t5-xl-lm-adapt --per_device_train_batch_size 1 --per_device_eval_batch_size 1 --eval_steps 5000 --save_steps 1000 --tuning_mode fine_tuning --learning_rate 1e-5 --scheduler_type constant --warmup_ratio 0 --weight_decay 0 --label_smoothing_factor 0 --dropout_rate 0 --num_train_epochs 4 --dataset_name ni --data_dir ../../data/splits/default_train_707_val_50 --task_dir ../../data/tasks --do_traditional_test --gradient_accumulation_steps 2 --do_train --logging_steps 250 --run_name ni_default_train_707_val_50_google_t5-xl-lm-adapt_fine_tuning_None_lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --logging_dir ni/default_train_707_val_50/google_t5-xl-lm-adapt/fine_tuning/None/lr_1e-5_weight_decay_0_dropout_rate_0_label_smoothing_factor_0_scheduler_constant_warmup_ratio_0_random_seed_42 --random_seed 42 --expr_dir cache/tmp
