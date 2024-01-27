@@ -150,6 +150,8 @@ class PEFTTrainer:
         self.epoch = 0 # current epoch
         self.step = 0 # current step at each epoch
         self.global_step = 0 # current global step
+        self.total_optimization_step = 0 # total optimization step
+        self.optimization_step = 0 # current optimization step
 
 
         self.train_finished = False
@@ -464,12 +466,14 @@ class PEFTTrainer:
 
         train_bs_per_step = self.training_args.per_device_train_batch_size * self.num_processes
         # with gradient accumulation, per gradient update step is actually multiple steps
-        if self.training_args.num_train_epochs > 0:
-            self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
-        else:
-            self.total_step = 1
+        self.total_step = self.training_args.num_train_epochs * len(self.train_dataset) // train_bs_per_step
         self.warmup_steps = self.total_step * self.training_args.warmup_ratio
         self.print_log(f"total_step: {self.total_step}, warmup_steps: {self.warmup_steps}", print_step=False)
+        import math
+        num_update_steps_per_epoch = math.ceil(len(self.train_dataloader) / (self.training_args.gradient_accumulation_steps * self.accelerator.num_processes * self.training_args.per_device_train_batch_size))
+        self.optimization_step = 0
+        self.total_optimization_step = self.training_args.num_train_epochs * num_update_steps_per_epoch
+        self.print_log(f"total_optimization_step: {self.total_optimization_step}", print_step=False)
 
         if self.model_args.tuning_mode == "fine_tuning":
             assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"
@@ -478,6 +482,10 @@ class PEFTTrainer:
         
         self.num_training_steps_for_scheduler = self.total_step * self.accelerator.num_processes
         self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
+
+        self.num_training_steps_for_scheduler = self.total_optimization_step * self.training_args.gradient_accumulation_steps * self.accelerator.num_processes
+        self.warmup_steps_for_scheduler = self.num_training_steps_for_scheduler * self.training_args.warmup_ratio
+
         
 
 
@@ -770,39 +778,15 @@ class PEFTTrainer:
     
 
         loss = 0
-
         # handle early stopping separately
-        # parallel accessing one file is fine
-        if os.path.exists(self.training_args.output_dir):
-            # if not os.listdir(self.training_args.output_dir):
-            #     print("output dir is ", self.training_args.output_dir)
-                # exit("output dir exists but empty, please double check and remove it")
-                # shutil.rmtree(self.training_args.output_dir)
-            self.print_log("load from existing state", print_step=False)
-            latest_cp = get_latest_checkpoint(self.training_args.output_dir)
-            if latest_cp is not None:
-                try:
-                    self.train_state.load_from_json(latest_cp)
-                    self.test_eval_finished =self.train_state.get("test_eval_finished")
-                    if self.test_eval_finished:
-                        self.print_log("test evaluation is already finished,  exit...")
-                        return
-                # very rare that train state is not saved correctly
-                except Exception as e:
-                    # posssibly train state is not saved correctly
-                    if self.accelerator.is_local_main_process:
-                        print(f"train state is not saved correctly, remove {latest_cp} and restart training")
-                        shutil.rmtree(latest_cp)
-                    raise e
-                
-
-        self.load_last_run_multi_proc()
-
-
-        if self.train_finished:
-            self.print_log(f"training is already finished, {self.start_epoch} epochs and {self.start_step} steps are already done")
-            self.print_log("Ending training...")
+        self.load_last_train_state() # load train state in case test is finished
+        if self.test_eval_finished or self.train_finished:
+            if self.test_eval_finished:
+                self.print_log("test evaluation is already finished,  exit training...")
+            if self.train_finished:
+                self.print_log("training is already finished, exit training...")
             return
+        self.load_last_run_multi_proc()
 
 
         self.print_log(f"Per step batch size (no grad acc): {train_bs_per_step}")
@@ -817,10 +801,10 @@ class PEFTTrainer:
             self.accelerator.log(self.training_args.to_dict())
 
             progress_bar = tqdm(
-                range(0, self.total_step),
+                # range(0, self.total_step),
+                range(0, self.total_optimization_step),
                 disable=not self.accelerator.is_local_main_process or self.training_args.is_cluster,
-                initial=self.global_step,
-                # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps
+                initial = self.optimization_step,
                 miniters=self.training_args.logging_steps,
             )
             if self.global_step > 0:
@@ -830,12 +814,22 @@ class PEFTTrainer:
                 self.print_log(f"skip first {self.start_step} steps in train_dataloader", print_step=False)
         else:
             progress_bar = tqdm(
-                range(0, self.total_step),
-                initial=self.global_step,
-                # miniters=0 if not self.training_args.is_cluster else self.training_args.logging_steps,
+                range(0, self.total_optimization_step),
+                initial = self.optimization_step,
                 miniters=self.training_args.logging_steps,
                 disable=self.training_args.is_cluster
             )
+
+        self.print_log(f"***** Running training *****")
+        self.print_log(f"  Num examples = {len(self.train_dataset)}")
+        self.print_log(f"  Num Epochs = {self.training_args.num_train_epochs}")
+        self.print_log(f"  Instantaneous batch size per device = {self.training_args.per_device_train_batch_size}")
+        self.print_log(f"  Total train batch size (w. parallel, distributed & accumulation) = {train_bs}")
+        self.print_log(f"  Gradient Accumulation steps = {self.training_args.gradient_accumulation_steps}")
+        self.print_log(f"  Total optimization steps = {self.total_optimization_step}")
+
+        # start step -> start optimization step
+        # 
 
 
         self.model.train()
@@ -844,13 +838,13 @@ class PEFTTrainer:
         for self.epoch in range(self.start_epoch, self.training_args.num_train_epochs):
             # it can show the processes to reach here
             self.print_log(f"------------{self.accelerator.device}: new epoch: {self.epoch} global_step: {self.global_step}")
-            
             for self.step, inputs in enumerate(self.train_dataloader, start=self.start_step):
                 self.train_state.update(
                             {
                                 "epoch": self.epoch,
                                 "step": self.step,
                                 "global_step": self.global_step,
+                                "optimization_step": self.optimization_step,
                             }
                         )
                 if self.use_distributed:
@@ -878,7 +872,9 @@ class PEFTTrainer:
                         self.optimizer.step()
                         self.scheduler.step()
                         self.optimizer.zero_grad()
-
+                    if self.accelerator.sync_gradients:
+                        progress_bar.update(1)
+                        self.optimization_step += 1
                 else:
                     for k in inputs:
                         inputs[k] = inputs[k].to(self.device)
@@ -888,7 +884,8 @@ class PEFTTrainer:
                     loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
-                self.save_and_eval(self.global_step)
+                # self.save_and_eval(self.global_step)
+                self.save_and_eval(self.optimization_step)
                 if self.training_args.is_cluster:
                     import hfai
                     # cluster pre-interrupt saving
@@ -905,7 +902,7 @@ class PEFTTrainer:
 
                 # log each backward step (not grad acc step)
                 self.global_step += 1
-                progress_bar.update(1)
+                # progress_bar.update(1)
                 logging_loss += loss.item()
                 
                 # logging
@@ -924,15 +921,17 @@ class PEFTTrainer:
                     logging_loss = 0
 
 
-                if self.global_step >= self.total_step:
-                    self.save_and_eval(self.global_step, force=True)
-                    self.end_training()
-                    return
-
+                # if self.global_step >= self.total_step:
+                #     self.save_and_eval(self.global_step, force=True)
+                #     self.end_training()
+                #     return
+            self.start_step = 0
             self.print_log(f"epoch {self.epoch} finished, evaluating...")
             # To be compatible with low data size, eval per epoch as well
             if not (self.training_args.dev_train or self.training_args.dev_run or self.training_args.dev_test):
-                self.save_and_eval(self.global_step, force=True)
+                # self.save_and_eval(self.global_step, force=True)
+                self.save_and_eval(self.optimization_step, force=True)
+                
             self.print_log(f"epoch {self.epoch} finished, best_metric_step: {self.best_metric_step}, best_metric_val {self.best_metric_val}")
             self.print_log(f"steps per epoch: {self.global_step/(self.epoch+1)}")
         
@@ -974,8 +973,8 @@ class PEFTTrainer:
         """
         print log under different training system.
         """
-        if self.total_step > 0 and print_step:
-            s = f"global_step {self.global_step}/{self.total_step}  ({self.global_step/self.total_step}): {s}"
+        if self.optimization_step > 0 and print_step:
+            s = f"global_optimization_step {self.optimization_step}/{self.total_optimization_step}  ({self.optimization_step/self.total_optimization_step}): {s}"
         if self.training_args.is_cluster:
             import hfai
             if hfai.distributed.get_rank() == 0:
@@ -994,6 +993,12 @@ class PEFTTrainer:
             dataloader2eval = self.eval_dataloader
             ni_eval_results =  self.evaluate_dataset(dataset2eval, dataloader2eval, mode=mode)
             self.log(ni_eval_results)
+            # NOTE: there is a bug in accelerator that finishing evaluation
+            # on evaluation dataloader
+            # will set accelerator end_of_dataloader to True thus further 
+            # affect gradient accumulation
+            if during_training:
+                self.accelerator.gradient_state.end_of_dataloader = False
             return ni_eval_results
 
 
@@ -1185,6 +1190,7 @@ class PEFTTrainer:
         for k in results:
             results_with_mode[f"{mode}/{k}"] = results[k]
         self.model.train()
+
         self.log(results_with_mode)
         if mode == "test":
             print("update train state test_eval_finished to True")
@@ -1372,22 +1378,21 @@ class PEFTTrainer:
         else:
             raise NotImplementedError(f"mode {self.model_args.tuning_mode} is not implemented")
 
-    def save_and_eval(self, global_step, force=False):
+    def save_and_eval(self, step, force=False):
         """
-        if global step satisfies condition, save and/or evaluate.
+        Two step conditions to save and evaluate:
+        1. optimization step matches save_steps/eval_steps
+        2. global step % grad acc steps == 0. The reason is that optimization step update every gradient accumulation steps.
 
         force is used in end of training or after each epoch.
         """
         force = False if self.training_args.dev_run or self.training_args.dev_train or self.training_args.dev_test else force
-        if force or global_step % self.training_args.save_steps == 0:
-            self.save(global_step)
 
-        # no evaluation for alpaca
-        if self.data_args.dataset_name == "alpaca":
-            return
+        if force or (self.optimization_step > 0 and self.global_step % self.accelerator.gradient_accumulation_steps == 0 and self.optimization_step  % self.training_args.save_steps == 0):
+            self.save(self.optimization_step)
 
-        if force or global_step % self.training_args.eval_steps == 0:
-            results = self.evaluate(step=global_step)
+        if force or (self.optimization_step > 0 and self.global_step % self.accelerator.gradient_accumulation_steps == 0 and self.optimization_step  % self.training_args.eval_steps == 0):
+            results = self.evaluate(mode="eval", during_training=True)
             if results is None:
                 return
             eval_metric_name = "eval/"+self.training_args.eval_metric
@@ -1395,7 +1400,7 @@ class PEFTTrainer:
             self.print_log(f"current metric_val: {cur_metric_val}")
             if cur_metric_val > self.best_metric_val:
                 self.best_metric_val = cur_metric_val
-                self.best_metric_step = global_step
+                self.best_metric_step = step
                 # log before save
                 self.log(
                     {
@@ -1405,7 +1410,7 @@ class PEFTTrainer:
                 )
                 self.print_log("saving a new best checkpoint...")
                 # save model and state
-                self.save(global_step, save_best_checkpoint=True)
+                self.save(step, save_best_checkpoint=True)
                 self.print_log(f"new best_metric_step...")
             self.print_log(f"best_metric_val: {self.best_metric_val}, best_metric_step: {self.best_metric_step}")
 
@@ -1488,8 +1493,11 @@ class PEFTTrainer:
     def load_last_run_multi_proc(self):
         # load last state
         if self.accelerator.is_local_main_process:
+            # first make sure load latest uncorrupted state
             self.load_last_accelerator_state()
+            # second load train state for the uncorrupted state
             self.load_last_train_state()
+            
         self.accelerator.wait_for_everyone()
         # train state and model checkpoint are loaded in main process
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
@@ -1526,16 +1534,30 @@ class PEFTTrainer:
         It only tries to load once and if failed, then remove the checkpoint folder and raise error.
         """
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+        
         if latest_cp:
-            self.start_epoch = self.train_state.get("epoch")
-            self.start_step = self.train_state.get("step")
-            self.global_step = int(latest_cp.split("-")[-1])
-            # train/test status
-            self.train_finished = self.train_state.get("train_finished")
-            self.test_eval_finished = self.train_state.get("test_eval_finished")
-            self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
-            self.best_metric_step = self.train_state.get("best_metric_step")
-            self.best_metric_val = self.train_state.get("best_metric_val")
+            try:
+                self.train_state.load_from_json(latest_cp)
+                self.start_epoch = self.train_state.get("epoch")
+                
+                self.start_step = self.train_state.get("step")
+                self.optimization_step = self.train_state.get("optimization_step")
+                self.global_step = int(latest_cp.split("-")[-1])
+                # train/test status
+                self.train_finished = self.train_state.get("train_finished")
+                self.test_eval_finished = self.train_state.get("test_eval_finished")
+                self.traditional_test_eval_finished = self.train_state.get("traditional_test_eval_finished")
+                self.best_metric_step = self.train_state.get("best_metric_step")
+                self.best_metric_val = self.train_state.get("best_metric_val")
+                if self.test_eval_finished:
+                    self.print_log("test evaluation is already finished,  exit...")
+                    return
+            except Exception as e:
+                # posssibly train state is not saved correctly
+                if self.accelerator.is_local_main_process:
+                    print(f"train state is not saved correctly, remove {latest_cp} and restart training")
+                    shutil.rmtree(latest_cp)
+                raise e
         else:
             self.print_log(f"latest checkpoint not found in {self.training_args.output_dir}")
 
