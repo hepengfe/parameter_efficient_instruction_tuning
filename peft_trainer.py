@@ -474,6 +474,9 @@ class PEFTTrainer:
         self.optimization_step = 0
         self.total_optimization_step = self.training_args.num_train_epochs * num_update_steps_per_epoch
         self.print_log(f"total_optimization_step: {self.total_optimization_step}", print_step=False)
+        self.training_args.eval_steps = self.total_optimization_step // self.training_args.eval_times
+        self.training_args.save_steps = self.total_optimization_step // self.training_args.save_times
+        self.print_log(f"eval_steps: {self.training_args.eval_steps}, save_steps: {self.training_args.save_steps}", print_step=False)
 
         if self.model_args.tuning_mode == "fine_tuning":
             assert self.warmup_steps == 0, f"constant lr for fine tuning, but got warmup steps {self.warmup_steps}"

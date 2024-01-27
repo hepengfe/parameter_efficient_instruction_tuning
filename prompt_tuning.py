@@ -10,6 +10,7 @@ from utils import flatten, build_peft_config_name, eval_hf_model
 import logging
 from logging import getLogger
 import accelerate
+import hfai
 logger = getLogger(__name__)
 logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR)
 
@@ -211,6 +212,12 @@ class TrainingArguments(Seq2SeqTrainingArguments):
         default=5000,
         metadata={ "help": "The number of steps to save the model." },
     )
+
+    eval_times: int = field(
+        default=8,
+        metadata={ "help": "The number of times to evaluate the model." },
+    )
+
     
     per_device_train_batch_size: int = field(
         default=2, metadata={"help": "Batch size per GPU/TPU core/CPU for training."}
@@ -452,13 +459,14 @@ def main():
             "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/workspaces/peit", training_args.cache_dir)
         data_args.task_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/data/tasks"
         data_args.data_dir = "/weka-jd/prod/public/permanent/group_wangyizhong/wangyizhong/data/splits/" + data_args.data_dir.split("/")[-1]
-        print("---- cluster mode ----")
-        print("logging_dir: ", training_args.logging_dir)
-        print("expr_dir: ", training_args.expr_dir)
-        print("cache_dir: ", training_args.cache_dir)
-        print("task_dir: ", data_args.task_dir)
-        print("data_dir: ", data_args.data_dir)
-        print("---- cluster mode ----")
+        if hfai.distributed.get_rank() == 0:
+            print("---- cluster mode ----")
+            print("logging_dir: ", training_args.logging_dir)
+            print("expr_dir: ", training_args.expr_dir)
+            print("cache_dir: ", training_args.cache_dir)
+            print("task_dir: ", data_args.task_dir)
+            print("data_dir: ", data_args.data_dir)
+            print("---- cluster mode ----")
         logging.getLogger().setLevel(logging.ERROR) # set all logging to error to prevent error message in warnings
     else:
         training_args.logging_dir = os.path.join("./logs", training_args.logging_dir)
@@ -535,7 +543,6 @@ def main():
         training_args.save_steps = 10
         training_args.eval_steps = 10
         training_args.dev_train_data_size = 30
-
 
         training_args.per_device_eval_batch_size = 1
         # training_args.per_device_train_batch_size = 1
