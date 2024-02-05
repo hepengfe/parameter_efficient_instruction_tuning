@@ -79,6 +79,7 @@ class TrainingState:
             "trainable_params": 0,
             "total_model_params": 0,
             "trainable_ratio": 0,
+            "optimization_step": 0,
         }
         self.file_name = "training_state.json"
 
@@ -89,6 +90,8 @@ class TrainingState:
             return False
         elif "traditional_test_eval_finished" == k:
             return False
+        elif k == "optimization_step":
+            return 0
         else:
             if hasattr(self, k):
                 return getattr(self,k)
@@ -475,7 +478,7 @@ class PEFTTrainer:
         self.total_optimization_step = self.training_args.num_train_epochs * num_update_steps_per_epoch
         self.print_log(f"total_optimization_step: {self.total_optimization_step}", print_step=False)
         self.training_args.eval_steps = self.total_optimization_step // self.training_args.eval_times
-        self.training_args.save_steps = self.total_optimization_step // self.training_args.save_times
+        self.training_args.save_steps = self.training_args.eval_steps//5
         self.print_log(f"eval_steps: {self.training_args.eval_steps}, save_steps: {self.training_args.save_steps}", print_step=False)
 
         if self.model_args.tuning_mode == "fine_tuning":
@@ -923,11 +926,12 @@ class PEFTTrainer:
                     self.print_log(f"train/lr: {last_lr}")
                     logging_loss = 0
 
-
-                # if self.global_step >= self.total_step:
-                #     self.save_and_eval(self.global_step, force=True)
-                #     self.end_training()
-                #     return
+                # NOTE: code version updated to optimization step
+                # the code below ensures backward compatibility
+                if self.global_step >= self.total_step:
+                    self.save_and_eval(self.global_step, force=True)
+                    self.end_training()
+                    return
             self.start_step = 0
             self.print_log(f"epoch {self.epoch} finished, evaluating...")
             # To be compatible with low data size, eval per epoch as well
