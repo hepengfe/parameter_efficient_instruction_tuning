@@ -1,12 +1,12 @@
 import os
-from utils import flatten, get_latest_checkpoint
+from utils import flatten, get_latest_checkpoint, remove_old_checkpoints
 import json
 import argparse
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from typing import Optional
-log_dir = "cache/tmp"
+log_dir = "tmp"
 
 "logs/ni/default_train_707_val_50/google_t5-xl-lm-adapt/lora_adapter/r_8_alpha_8_modules_qv"
 dataset="ni/default_train_707_val_50"
@@ -32,6 +32,13 @@ category_metrics = [
     ]
 category_metrics = {"_".join(category.lower().split()): metric for category, metric in category_metrics}
 eval_category_keys = ["test/" + f"{metric}_for_{category}" + "_test" for category, metric in list(category_metrics.items())]
+lr_map = {
+    "0.0001": "1e-4",
+    "0.0005": "5e-4",
+    "0.001": "1e-3",
+    "0.00001": "5e-5",
+    "0.00005": "1e-5"
+}
 
 def remove_extra_brace(file_path):
     """
@@ -78,12 +85,41 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
     train_state = None
     best_train_state = {}
     best_test_score = -1
-    d = {}
-    # if expr_type == "1":
+    from collections import OrderedDict
+    d = OrderedDict()
+    # if expr_type == "hp_search":
     #     # no random seed in expr type 1
     #     rand_seeds = [""]
     for rand_seed in rand_seeds:
         rand_seed_folders = [f for f in folders if str(rand_seed) in f]
+        if expr_type == "6": # remove
+            for f in rand_seed_folders:
+                f_path = os.path.join(search_dir, f)
+                try:
+                    lastest_cp = get_latest_checkpoint(f_path)
+                    if lastest_cp is None:
+                        raise ValueError(f"Latest checkpoint is None from {f_path}" )
+                except Exception as e:
+                    print(e)
+                    continue
+                last_train_state = os.path.join(lastest_cp, "training_state.json")
+            
+                if os.path.exists(last_train_state):
+                    try:
+                        train_state = json.load(open(last_train_state))
+                    except Exception as e:
+                        print(f"error loading {last_train_state}")
+                        # continue
+                        raise e
+
+                    if train_state["state_dict"]["test_eval_finished"] == True:
+                        # remove other checkpoints 
+                        remove_old_checkpoints(f_path, prompt_confirm=args.prompt_confirm)
+                        remove_old_checkpoints(os.path.join(f_path, "best_checkpoint"), prompt_confirm=args.prompt_confirm)
+            return
+            
+            
+
         for f in rand_seed_folders:
             # if no random seed provided
             # if rand_seed is None or str(rand_seed) not in f:
@@ -133,9 +169,9 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
 
 
             # determine key based on expr_type
-            if expr_type in ["1", "2", "3", "single", "4", "5"]:
+            if expr_type in ["hp_search", "2", "3", "single", "4", "5"]:
                 key = size_or_rank
-            # elif expr_type == "1":
+            # elif expr_type == "hp_search":
             #     key = lr
             else:
                 raise NotImplementedError(f"expr_type {expr_type} not implemented")
@@ -164,7 +200,7 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
                 #     d[size_or_rank] = d.get(size_or_rank, []) + [None]
                 #     continue
                 if "ni" in dataset:
-                    if expr_type == "1":
+                    if expr_type == "hp_search":
                         metric_key = "test/rougeL"
                         if metric_key not in train_state["state_dict"]:
                             print(f"test eval not finished for {last_train_state}")
@@ -172,6 +208,7 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
                             d[key][lr] = d[key].get(lr, []) + [None]
                             continue 
                         best_metric_val = train_state["state_dict"][metric_key]
+                        print("metric_key: ", best_metric_val)
                         d[key][lr] = d[key].get(lr, []) + [best_metric_val]
                     else:
                         # filter non-optimal lr which are not needed for expr type other than 1
@@ -196,6 +233,7 @@ def extract_expr(log_dir, dataset, model, peft_method, rand_seeds, expr_type = N
       
                                 
                                 best_metric_val = train_state["state_dict"][metric_key]
+                                
                                 d[key][metric_key] = d[key].get(metric_key, []) + [best_metric_val]
                                 print(f"parameter count: {train_state['state_dict']['trainable_params']} trainable ratio {train_state['state_dict']['trainable_ratio']} and total model params {train_state['state_dict']['total_model_params']}")
                                 if args.show_all:
@@ -299,13 +337,14 @@ def print_state_info(state_d):
     print("--------------------\n")
 
 # python expr_analysis/expr_extract.py --expr_type 1 --peft_method fine_tuning --model google/t5-xl-lm-adapt
-
+# python expr_analysis/expr_extract.py --expr_type 1 --peft_method prefix_tuning --model google/t5-xl-lm-adapt
 # python expr_analysis/expr_extract.py --expr_type 2 --peft_method prompt_tuning --model google/t5-large-lm-adapt
 # python expr_analysis/expr_extract.py --expr_type 2 --peft_method adapter_peft --model google/t5-xl-lm-adapt
 # python expr_analysis/expr_extract.py --expr_type 2 --peft_method lora_peft --model google/t5-xl-lm-adapt
 # python expr_analysis/expr_extract.py --expr_type 2 --peft_method adapter --model google/t5-xl-lm-adapt
 # python expr_analysis/expr_extract.py --expr_type 2 --peft_method lora_adapter --model google/t5-xl-lm-adapt
 # python expr_analysis/expr_extract.py --expr_type 3 --peft_method adapter_peft --model google/t5-xxl-lm-adapt
+# python expr_analysis/expr_extract.py --expr_type 6  --peft_method prompt_tuning
 if __name__ == "__main__":
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument("--log_dir", type=str, default="cache/tmp")
@@ -317,20 +356,21 @@ if __name__ == "__main__":
     arg_parser.add_argument("--plot_interest", type=str, default=None)
     arg_parser.add_argument("--lr", type=str, default="1e-4")
     arg_parser.add_argument("--show_all", action="store_true")
+    arg_parser.add_argument("--prompt_confirm", action="store_true")
     args = arg_parser.parse_args()
-    assert args.expr_type in ["single", "1", "2", "3", "4", "5"]
+    assert args.expr_type in ["single", "hp_search", "2", "3", "4", "5", "6"]
     search_dir = os.path.join(args.log_dir, args.dataset, args.model, args.peft_method)
     peft_methods = [args.peft_method]
     d = {}
     if args.expr_type == "single":
         assert len(args.random_seeds) == 1
         d = extract_expr(args.log_dir, args.dataset, args.model, args.peft_method, args.random_seeds, expr_type = "single")
-    elif args.expr_type == "1":
+    elif args.expr_type == "hp_search":
         dataset = "ni/default_train_707_val_50"
         model = "google/t5-xl-lm-adapt"
         lrs = ("1e-5", "5e-5", "1e-4", "5e-4", "1e-3")
 
-        d = extract_expr(args.log_dir, dataset, model, args.peft_method, args.random_seeds, expr_type = "1")
+        d = extract_expr(args.log_dir, dataset, model, args.peft_method, args.random_seeds, expr_type = "hp_search")
     elif args.expr_type == "2":
         # dictionary structure
         # dataset -> peft method -> random seed 
@@ -349,8 +389,14 @@ if __name__ == "__main__":
             "google/t5-xxl-lm-adapt", "facebook/opt-13b", "facebook/llama-7b"
         ]:
             print('args.model is not used')
-            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds, expr_type = "4")
-            
+            d[model] = extract_expr(args.log_dir, args.dataset, model, args.peft_method, args.random_seeds, expr_type =  args.expr_type)
+    elif args.expr_type == "6":
+        dataset = "ni/default_train_707_val_50"
+        model = "google/t5-xl-lm-adapt"
+        lrs = ("1e-5", "5e-5", "1e-4", "5e-4", "1e-3")
+
+        d = extract_expr(args.log_dir, dataset, model, args.peft_method, args.random_seeds, expr_type = args.expr_type)
+        exit()
     else:
         raise NotImplementedError(
             f"expr_type {args.expr_type} not implemented"
@@ -386,17 +432,18 @@ if __name__ == "__main__":
                     if cat_task_metric == "test/rougeL":
                         test_rougeL_rows.append({"model": model_k, "peft_k": peft_k, "cat_task_metric": cat_task_metric, "avg": avg, "metric_vals": filtered_v3})
                         
-    elif args.expr_type == "1":
+    elif args.expr_type == "hp_search":
         for peft_k, v in d.items(): # since it's lr search, only one xl model
             for lr_k, v2 in v.items():
                 if all(item is None for item in v2):
                     continue
                 filtered_v2 = [item for item in v2 if item is not None]
                 avg = sum(filtered_v2) / len(filtered_v2)
+                lr_k = convert(lr_k)
                 test_rougeL_rows.append({"lr": lr_k, "peft_k": peft_k, "cat_task_metric": "test/rougeL", "avg": avg, "metric_vals": filtered_v2})
     else:
         raise NotImplementedError(f"expr_type {args.expr_type} not implemented")
-    if args.expr_type == "1":
+    if args.expr_type == "hp_search":
         assert len(test_rougeL_rows) > 0, "no test_rougeL_rows extracted"
     else:
         assert len(rows) > 0, "no rows extracted"
@@ -415,11 +462,87 @@ if __name__ == "__main__":
     # print(f"writing to {file_name}")
     # df.to_csv(file_name)
 
-    if args.expr_type == "1":
+    if args.expr_type == "hp_search":
+        # test_rougeL_rows = sort_dict_by_numbers(test_rougeL_rows)
         test_rougeL_df = pd.DataFrame(test_rougeL_rows)
+        import re
+        def sort_df(df):
+            """
+            Sort data frame by row index and columns.
+
+            Row sorting key: numbers extracted from the index.
+            Column sorting key: floating numbers of column index labels.
+
+            df: Dataframe requires pivoted by peft_k such that this function 
+                can extract numbers from the index and sort by numbers.
+            """
+            def extract_numbers(s):
+                pattern = r'-?\d+'
+                return tuple(map(int, re.findall(pattern, s)))
+            sorted_index = sorted(df.index, key=extract_numbers)
+            df = df.reindex(sorted_index)
+            # Extract floating-point numbers from column index labels
+            column_numbers = [float(col.split('_')[0]) for col in df.columns]
+
+            # Sort the column numbers and corresponding column names
+            sorted_columns = [col for _, col in sorted(zip(column_numbers, df.columns))]
+
+            # Reorder the columns of the DataFrame
+            sorted_df = df[sorted_columns]
+            return sorted_df
+
+        def rename_index(df, rename_vars):
+            def extract_numbers(label):
+                return [int(num) for num in re.findall(r'-?\d+', label)]
+            def add_math_context(s):
+                return "\math{" + s + "}"
+            extracted_numbers = [extract_numbers(label) for label in df.index]
+            renamed_index = []
+            for numbers in extracted_numbers:
+                assert len(rename_vars) == len(numbers), f"rename_vars {rename_vars} not match with numbers {numbers}"
+                
+                # create new string
+                l = []
+                for i, num in enumerate(numbers):
+                    if num == -1:
+                        l.append(f"{rename_vars[i]}=\\text{{null}}")
+                    else:
+                        l.append(f"{rename_vars[i]}={num}")
+                renamed_index.append(
+                    add_math_context(",\\ ".join(l))
+                )
+            df.index = renamed_index
+            return df
+        
+
+
         pivoted_test_rougeL_df = test_rougeL_df.pivot_table(index='peft_k', columns=['lr',], values='avg')
+        pivoted_test_rougeL_df = sort_df(pivoted_test_rougeL_df)
+        # pivoted_test_rougeL_df = pivoted_test_rougeL_df.reindex(sorted_indexes)
+        if args.peft_method == "prefix_tuning":
+            vars = ["l","s"]
+        elif args.peft_method == "lora_peft":
+            vars = ["r"]
+        elif args.peft_method == "bitfit":
+            vars = []
+        elif args.peft_method == "adapter_peft":
+            vars = ["s"]
+        pivoted_test_rougeL_df = rename_index(pivoted_test_rougeL_df, rename_vars=vars)
+        
         test_rougeL_file_name = os.path.join(out_dir, f"{args.peft_method}_{args.lr}_test_rougeL.csv")
+        
+        # 1. extract numbers from the index
+        # 2. sort by numbers
+        # 3. format index in latex math format
+        # pivoted_test_rougeL_df = pivoted_test_rougeL_df.astype(float).round(1)
         print(pivoted_test_rougeL_df)
+        pivoted_test_rougeL_latex = pivoted_test_rougeL_df.to_latex(index=True, 
+                                     column_format='l|c|c|c|c|c|',
+                                     caption='Sample DataFrame Table',
+                                     label='tab:sample_table',
+                                     float_format=lambda x: "{:.1f}".format(x))
+        
+        print(pivoted_test_rougeL_latex)
         print(f"writing test_rougeL df to {test_rougeL_file_name}")
         pivoted_test_rougeL_df.to_csv(test_rougeL_file_name)
     elif args.expr_type in ["2"]:
@@ -443,6 +566,7 @@ if __name__ == "__main__":
         cat_df = cat_df.pivot_table(index='model', columns=['peft_k', 'cat_task_metric'], values='avg')
         cat_file_name = os.path.join(out_dir, f"{args.peft_method}_cat_{args.lr}.csv")
         print(cat_df)
+        
         print(f"writing cat df to {cat_file_name}")
         cat_df.to_csv(cat_file_name)
 
@@ -453,11 +577,13 @@ if __name__ == "__main__":
         print(f"writing test_rougeL df to {test_rougeL_file_name}")
         pivoted_test_rougeL_df.to_csv(test_rougeL_file_name)
 
+
+    # Plotting
     if args.plot_interest is None:
         exit()
     # plt.rcParams['font.family'] = 'Times'
     plt.rcParams['font.family'] = "Times New Roman"
-    if args.expr_type == "1":
+    if args.expr_type == "hp_search":
         if args.plot_interest == "peft_k":
             # found the rank, lr and training stability
             # x is rank and legends are lr
