@@ -844,7 +844,7 @@ class PEFTTrainer:
         for self.epoch in range(self.start_epoch, self.training_args.num_train_epochs):
             # it can show the processes to reach here
             self.print_log(f"------------{self.accelerator.device}: new epoch: {self.epoch} global_step: {self.global_step}")
-            for self.step, inputs in enumerate(self.train_dataloader, start=self.start_step):
+            for self.step, inputs in enumerate(self.train_dataloader, start=self.start_step): # start count step from self.start_step 
                 self.train_state.update(
                             {
                                 "epoch": self.epoch,
@@ -1505,17 +1505,23 @@ class PEFTTrainer:
             # second load train state for the uncorrupted state
             self.load_last_train_state()
             
-        self.accelerator.wait_for_everyone()
+        
         # train state and model checkpoint are loaded in main process
         latest_cp = get_latest_checkpoint(self.training_args.output_dir)
+        
+
         if latest_cp and not self.accelerator.is_local_main_process:
             # OOM issue: only load state in main process is needed?
             # self.print_by_rank(f"loading last accelerator state")
             # self.accelerator.load_state(latest_cp)
             self.print_by_rank(f"loading last train state")
             self.load_last_train_state()
+            # deepspeed requires load state in non-main processes as well
+            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                self.print_by_rank(f"loading last accelerator state")
+                self.accelerator.load_state(latest_cp)
 
-
+        self.accelerator.wait_for_everyone()
         self.accelerator.init_trackers(
                 self.training_args.run_name,
                 config=self.train_state.state_dict,
