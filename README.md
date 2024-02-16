@@ -1,7 +1,22 @@
-repo for parameter efficient instruction tuning
-currently adapted from [adapter-transformers](https://github.com/Adapter-Hub/adapter-transformers) and [peft](https://github.com/huggingface/peft).
+## Parameter efficient instruction tuning: an Empirical Study
+This repository serves as an effort to systematically to compare different parameter efficient fine-tuning methods on instruction tuning task. We use the [NI dataset](https://github.com/allenai/natural-instructions) as the benchmark dataset.
+
+PEFT method implementations are adapted from [adapter-transformers](https://github.com/Adapter-Hub/adapter-transformers) and [peft](https://github.com/huggingface/peft).
 
 
+
+
+
+## Training
+* For bash scripts to run all experiments, refer to `scripts` folder.
+* All experiments calling scripts are formatted by `scripts/hfai/hp_run.sh`. For example, to run a LoRA experimental in the development mode, run the following command.
+```bash
+bash scripts/hfai/hp_run.sh lora_peft dev
+```
+## Dataset
+* We employ [SuperNI](https://github.com/allenai/natural-instructions) as our training and evaluation datasets.
+
+## Setup
 To install the package, do the following.
 
 * `conda create -n peft python=3.8`
@@ -13,9 +28,7 @@ To install the package, do the following.
 * make sure GPT2 is under `cache/saved_pretrained/gpt2` for evaluation
 * default ni dataset dir is `../../data` due to hfai compatibility.
 
-
-* 1.10.2+cu113 by hfai platform.  "torch>=1.13.0" by peft setup.
+## Platform specific
+* hfai platform has CUDA version 11.3, and we use the corresponding pytorch version `1.10.2+cu113`.  `torch>=1.13.0` by peft setup.
 * for hfai run, refer to scripts under `scripts/hfai` folder.
 * for hfai run, make sure supress warning that contains `error` string. Otherwise, cluster will kill the job.
-
-
