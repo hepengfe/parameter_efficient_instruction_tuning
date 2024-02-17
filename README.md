@@ -26,9 +26,20 @@ To install the package, do the following.
 
 * rouge-score: `pip install rouge-score`
 * make sure GPT2 is under `cache/saved_pretrained/gpt2` for evaluation
-* default ni dataset dir is `../../data` due to hfai compatibility.
 
-## Platform specific
-* hfai platform has CUDA version 11.3, and we use the corresponding pytorch version `1.10.2+cu113`.  `torch>=1.13.0` by peft setup.
-* for hfai run, refer to scripts under `scripts/hfai` folder.
-* for hfai run, make sure supress warning that contains `error` string. Otherwise, cluster will kill the job.
+
+
+
+## HPC Platform specific
+The platform we use is [hfai HPC](https://www.high-flyer.cn/en/). Each node is equipped with A100x8 GPU, and each of our experiments is runing on a single node.
+
+This codebase is highly optimized for hfai platform, and it supports the following functionalities:
+* **Experiment Configuration**: The `hp_run.sh` scripts allows for flexible adjustments to experiment name, batch size and training framework based on fine-tuning methods.
+* **Checkpoint Management**: Since the platform is pre-emptable, our codebase supports checkpoints saving upon suspension and resuming from the last checkpoint. Each experiment is assumed to be run until complete test dataset evaluation.
+* **Training State Validation**: When saving checkpoint, we support checking the completeness of training state, training random states. Otherwise, it will delete the latest checkpoint and needs re-run the experiment loading second-to-last checkpoint.
+* **System Message and Debugging**: We let most system message output by print statement because it's more suitable for multi-process debugging, and we suppress warnings that contain `error` string to avoid job killing.
+  
+Here are some extra notes for hfai platform:
+* default ni dataset dir is `../../data` due to hfai compatibility.
+* for scripts that launch multiple jobs, refer to scripts under `scripts/hfai` folder.
+* **Pytorch and CUDA compatibility**: hfai platform has CUDA version 11.3, and [peft](https://github.com/huggingface/peft) setup requires `torch>=1.13.0`. Therefore, we use the corresponding pytorch version `1.10.2+cu113` by peft setup.
